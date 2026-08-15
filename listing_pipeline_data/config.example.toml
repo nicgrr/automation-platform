@@ -1,0 +1,53 @@
+# Example config for automation_control.listing_pipeline.
+#
+# Copy this to config.toml (gitignored -- it holds real business data:
+# eBay business policy names, image hosting details, bundle titles) and fill
+# in real values. Every value below is a placeholder except where noted.
+#
+# Card data, bundling (via Tracker's Notes column bracket tags), and pricing
+# (via the Sale Plan sheet) all come from the source .xlsx -- nothing about
+# individual cards or listings belongs in this file. This file only holds
+# account-level eBay settings and the handful of things that genuinely can't
+# be derived mechanically: bundle listing titles.
+
+[ebay]
+category_id = "183454"                       # eBay category ID for this listing type
+condition_id = "4000"                        # eBay condition ID (e.g. 4000 = "Ungraded")
+item_location = "Sydney, NSW"
+shipping_profile_name = "REPLACE_WITH_YOUR_SHIPPING_PROFILE_NAME"
+return_profile_name = "REPLACE_WITH_YOUR_RETURN_PROFILE_NAME"
+payment_profile_name = "REPLACE_WITH_YOUR_PAYMENT_PROFILE_NAME"
+game = "Pokemon TCG"                          # C:Game item specific, same for every listing
+default_condition_text = "Near Mint or Better"  # C:Card Condition item specific (fixed claim, not per-card)
+custom_label_prefix = "NIC"                   # CustomLabel becomes "{prefix}-{Sale Plan #, zero-padded}"
+site_id = "Australia"
+country = "AU"
+currency = "AUD"
+# bulk_upload_version = "1193"                # eBay File Exchange format version; only override if eBay changes it
+# default_quantity = "1"                      # quantity per listing row; only override if you list multiples of an item
+
+[images]
+base_url = "https://REPLACE_WITH_YOUR_IMAGE_HOST/cards"
+filename_pattern = "{number:02d}-{index}.jpg"  # e.g. "08-3.jpg"; {custom_label} is also available
+photos_per_card_single = 2                      # front + back for single-card listings
+photos_per_card_bundle = 1                       # one photo per card in a bundle lot
+
+[pricing]
+auto_accept_pct = "0.92"                      # Best Offer auto-accept, as a fraction of list_price
+
+[title]
+# Terms are joined in this order to build each single-card listing's eBay
+# title. "game" resolves to [ebay].game above; the rest come from the
+# matching card. If the joined title exceeds 80 characters, terms are
+# dropped one at a time from the END of this list (least searchable first)
+# until it fits. Bundle titles don't use this at all -- see [bundle_titles].
+term_order = ["game", "character", "card_number", "rarity", "set_name"]
+
+# One entry per bundle tag as it appears (verbatim, including everything
+# after the dash) in Tracker's Notes column, e.g. "[BUNDLE A - Mega
+# Evolution Double Rare lot]" -> key is "BUNDLE A - Mega Evolution Double
+# Rare lot". Bundles have no single card to build a title from, so this is
+# the one piece of per-listing data you still write by hand -- keep each
+# entry under 80 characters.
+[bundle_titles]
+"BUNDLE A - Example lot name" = "Pokemon TCG Mixed Rare Bundle Lot of 6"

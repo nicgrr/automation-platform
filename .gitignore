@@ -1,0 +1,17 @@
+.venv/
+.deps/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+listing_pipeline_data/*
+!listing_pipeline_data/config.example.toml
+captured_cards/
+*.egg-info/
