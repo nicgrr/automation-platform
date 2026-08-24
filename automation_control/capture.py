@@ -6,13 +6,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .audit import record_event
 from .auth import require_dashboard_user
 from .card_recognition import extract_card_details
 from .database import SessionLocal, get_session
+from .image_processing import auto_orient, crop_card
 from .models import CaptureBatch, CaptureBatchStatus, CapturedCard, CardCaptureStatus
 from .ui import brand_header, page
 
@@ -41,23 +42,56 @@ async def _save_photo_pair(front: UploadFile, back: UploadFile | None, settings)
     extraction/DB work so bulk uploads can save (fast, just disk I/O) inside
     the request, then extract (slow, calls the Anthropic API) as a background
     task -- the browser doesn't have to hold the request open for that part.
+    Each file is auto-oriented right after saving (cheap, no AI needed) so a
+    phone photo taken sideways/upside-down is corrected before anything else
+    -- AI-detected rotation (per card, see _process_photo) handles the
+    separate case of a card laid sideways within an otherwise upright photo.
     """
     photo_id = str(uuid.uuid4())
     photo_dir = Path(settings.captured_cards_dir) / photo_id
     photo_dir.mkdir(parents=True, exist_ok=True)
     front_path = _save_upload(front, photo_dir, "front", await front.read())
+    _try_auto_orient(front_path)
     back_path = _save_upload(back, photo_dir, "back", await back.read()) if _has_content(back) else None
+    if back_path:
+        _try_auto_orient(back_path)
     return front_path, back_path
+
+
+def _try_auto_orient(path: Path) -> None:
+    try:
+        auto_orient(path)
+    except Exception:
+        pass
+
+
+def _card_front_image(front_path: Path, index: int, extracted) -> Path:
+    """Crop this one card out of the (possibly multi-card) front photo using
+    its AI-detected bounding box, so its review page shows just this card
+    instead of the shared group photo -- otherwise a 3-card photo shows the
+    same picture on all 3 review pages with no way to tell which detected
+    name/number belongs to which physical card. Falls back to the original,
+    uncropped photo if the box is missing or malformed rather than failing
+    the whole capture over a cosmetic step.
+    """
+    if not extracted.bounding_box:
+        return front_path
+    cropped_path = front_path.parent / f"card{index}_{front_path.name}"
+    try:
+        crop_card(front_path, cropped_path, extracted.bounding_box, extracted.rotation_degrees)
+    except Exception:
+        return front_path
+    return cropped_path
 
 
 def _process_photo(front_path: Path, back_path: Path | None, settings, session: Session, user: str) -> list[CapturedCard]:
     """Extract card details from already-saved photo file(s) and create one
     CapturedCard row per card the AI finds. A photo can show more than one
     physical card (e.g. a promo lot laid out together) -- every detected card
-    gets its own review-queue row, all pointing at the same shared image
-    file(s). If the AI call fails or finds nothing, we still create a single
-    blank row so the photo isn't silently dropped -- it can be filled in by
-    hand on review.
+    gets its own review-queue row, its front image cropped from the shared
+    photo down to just that card (see _card_front_image). If the AI call
+    fails or finds nothing, we still create a single blank row so the photo
+    isn't silently dropped -- it can be filled in by hand on review.
     """
     back_path_str = str(back_path) if back_path else None
 
@@ -74,10 +108,11 @@ def _process_photo(front_path: Path, back_path: Path | None, settings, session: 
 
     records: list[CapturedCard] = []
     if extracted_list:
-        for extracted in extracted_list:
+        for index, extracted in enumerate(extracted_list):
             values = {field: (None if field in extracted.unreadable_fields else getattr(extracted, field)) for field in FIELDS}
+            card_front_path = _card_front_image(front_path, index, extracted)
             records.append(CapturedCard(
-                id=str(uuid.uuid4()), front_image_path=str(front_path), back_image_path=back_path_str,
+                id=str(uuid.uuid4()), front_image_path=str(card_front_path), back_image_path=back_path_str,
                 ai_raw_response=extracted.model_dump(), status=CardCaptureStatus.PENDING_REVIEW, **values,
             ))
     else:
@@ -250,6 +285,15 @@ def capture_bulk_status(batch_id: str, user: str = Depends(require_dashboard_use
     return HTMLResponse(page("EzBay — Bulk capture status", body, head_extra=head_extra))
 
 
+def _next_pending_card_id(session: Session, exclude_id: str) -> str | None:
+    return session.scalars(
+        select(CapturedCard.id)
+        .where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW, CapturedCard.id != exclude_id)
+        .order_by(CapturedCard.captured_at)
+        .limit(1)
+    ).first()
+
+
 @router.get("/review", response_class=HTMLResponse)
 def review_list(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> str:
     cards = session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW).order_by(CapturedCard.captured_at)).all()
@@ -260,7 +304,8 @@ def review_list(user: str = Depends(require_dashboard_user), session: Session = 
     body = (
         brand_header("Pending review")
         + f"<div class='panel'><h2>Pending review ({len(cards)})</h2><ul class='events'>{rows}</ul></div>"
-        + "<p><a class='btn' href='/cards/capture'>Capture another card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a></p>"
+        + ("<p><a class='btn' href='" + f"/cards/review/{cards[0].id}" + "'>Start reviewing</a></p>" if cards else "")
+        + "<p><a href='/cards/capture'>Capture another card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a></p>"
     )
     return page("EzBay — Review queue", body)
 
@@ -270,6 +315,8 @@ def review_form(card_id: str, user: str = Depends(require_dashboard_user), sessi
     card = session.get(CapturedCard, card_id)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
+
+    remaining = session.scalar(select(func.count()).select_from(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW))
 
     unreadable = set(card.ai_raw_response.get("unreadable_fields", [])) if isinstance(card.ai_raw_response, dict) else set()
     field_inputs = "".join(
@@ -282,10 +329,14 @@ def review_form(card_id: str, user: str = Depends(require_dashboard_user), sessi
     body = (
         brand_header("Review capture")
         + "<div class='panel'>"
-        + f"<h2>Review card</h2>"
+        + f"<h2>Review card ({remaining} pending)</h2>"
         + f"<p><img src='/cards/image/{card_id}/front' style='max-width:280px;border-radius:8px;margin-right:12px'>"
         + back_img + "</p>"
-        + f"<form method='post' action='/cards/review/{card_id}'>{field_inputs}<button>Save as reviewed</button></form>"
+        + f"<form method='post' action='/cards/review/{card_id}'>{field_inputs}"
+        + "<div style='display:flex;gap:12px'>"
+        + "<button name='action' value='approve' style='background:linear-gradient(120deg,var(--success),var(--accent))'>Approve</button>"
+        + "<button name='action' value='reject' style='background:var(--danger);color:#fff'>Disapprove</button>"
+        + "</div></form>"
         + "</div>"
     )
     return page("EzBay — Review card", body)
@@ -294,12 +345,13 @@ def review_form(card_id: str, user: str = Depends(require_dashboard_user), sessi
 @router.post("/review/{card_id}")
 def review_submit(
     card_id: str,
-    character: str = Form(...),
-    set_name: str = Form(...),
-    card_number: str = Form(...),
-    rarity: str = Form(...),
-    language: str = Form(...),
-    graded: str = Form(...),
+    action: str = Form("approve"),
+    character: str = Form(""),
+    set_name: str = Form(""),
+    card_number: str = Form(""),
+    rarity: str = Form(""),
+    language: str = Form(""),
+    graded: str = Form(""),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ):
@@ -307,18 +359,27 @@ def review_submit(
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
 
-    card.character = character
-    card.set_name = set_name
-    card.card_number = card_number
-    card.rarity = rarity
-    card.language = language
-    card.graded = graded
-    card.status = CardCaptureStatus.REVIEWED
+    if action == "reject":
+        card.status = CardCaptureStatus.REJECTED
+        audit_action = "card.reject"
+    else:
+        card.character = character
+        card.set_name = set_name
+        card.card_number = card_number
+        card.rarity = rarity
+        card.language = language
+        card.graded = graded
+        card.status = CardCaptureStatus.REVIEWED
+        audit_action = "card.review"
+
     card.reviewed_at = datetime.now(UTC)
     card.reviewed_by = user
     session.commit()
-    record_event(session, actor_type="user", actor_id=user, action="card.review", resource_type="captured_card", resource_id=card_id, outcome="success", correlation_id=_correlation_id(), details={})
+    record_event(session, actor_type="user", actor_id=user, action=audit_action, resource_type="captured_card", resource_id=card_id, outcome="success", correlation_id=_correlation_id(), details={})
 
+    next_id = _next_pending_card_id(session, card_id)
+    if next_id:
+        return RedirectResponse(f"/cards/review/{next_id}", status_code=303)
     return RedirectResponse("/cards/review", status_code=303)
 
 

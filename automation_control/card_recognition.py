@@ -7,6 +7,17 @@ from pydantic import BaseModel
 
 MODEL = "claude-opus-5"
 
+_BBOX_INSTRUCTIONS = (
+    "For each card, also return its bounding_box in the FRONT photo: "
+    "[x_min, y_min, x_max, y_max], each a fraction from 0 to 1 of the image's "
+    "width (x) or height (y), drawn tightly around just that one physical "
+    "card (not the others in frame). This is used to crop each card out into "
+    "its own image, so favor a slightly generous box over a too-tight one "
+    "that clips an edge. Also return rotation_degrees: how many degrees "
+    "clockwise the cropped box must be rotated so the card reads upright "
+    "(0, 90, 180, or 270 -- 0 if it's already upright)."
+)
+
 EXTRACTION_PROMPT_FRONT_AND_BACK = (
     "Identify every distinct Pokemon TCG card visible in these front and back "
     "photos -- there may be just one card, or several laid out together in the "
@@ -16,7 +27,7 @@ EXTRACTION_PROMPT_FRONT_AND_BACK = (
     "if slabbed). If a field for a given card is not clearly legible, list "
     "its name in that card's unreadable_fields rather than guessing a value "
     "for it. If no card is clearly identifiable in the photo, return an "
-    "empty list."
+    "empty list. " + _BBOX_INSTRUCTIONS
 )
 
 EXTRACTION_PROMPT_FRONT_ONLY = (
@@ -31,7 +42,7 @@ EXTRACTION_PROMPT_FRONT_ONLY = (
     "number isn't visible from the front alone. If a field for a given card "
     "is not clearly legible, list its name in that card's unreadable_fields "
     "rather than guessing a value for it. If no card is clearly identifiable "
-    "in the photo, return an empty list."
+    "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS
 )
 
 
@@ -43,10 +54,24 @@ class ExtractedCard(BaseModel):
     language: str
     graded: str
     unreadable_fields: list[str]
+    bounding_box: list[float] | None = None
+    rotation_degrees: int = 0
 
 
 class ExtractedCards(BaseModel):
     cards: list[ExtractedCard]
+
+
+class RotationCheck(BaseModel):
+    rotation_degrees: int
+
+
+ROTATION_CHECK_PROMPT = (
+    "This photo shows one or more Pokemon TCG cards. Determine how many "
+    "degrees clockwise the ENTIRE PHOTO must be rotated so the card text is "
+    "upright and reads left-to-right. Respond with rotation_degrees: 0, 90, "
+    "180, or 270 (0 if it's already upright)."
+)
 
 
 def _image_block(path: Path) -> dict:
@@ -71,3 +96,20 @@ def extract_card_details(front_path: Path, back_path: Path | None, api_key: str)
         output_format=ExtractedCards,
     )
     return response.parsed_output.cards
+
+
+def detect_rotation(image_path: Path, api_key: str) -> int:
+    """Ask the AI how many degrees clockwise a single already-saved photo
+    needs to be rotated to be upright. Used for retroactively fixing photos
+    captured before auto-orientation existed -- not part of the normal
+    capture flow, which gets its per-card rotation from extract_card_details
+    instead.
+    """
+    client = Anthropic(api_key=api_key)
+    response = client.messages.parse(
+        model=MODEL,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": [_image_block(image_path), {"type": "text", "text": ROTATION_CHECK_PROMPT}]}],
+        output_format=RotationCheck,
+    )
+    return response.parsed_output.rotation_degrees

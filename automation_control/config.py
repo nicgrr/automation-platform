@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     listing_pipeline_output_dir: str = "listing_pipeline_data/output"
     anthropic_api_key: str | None = None
     captured_cards_dir: str = "captured_cards"
+    pokemontcg_api_key: str | None = None
 
     @property
     def ebay_callback_url(self) -> str | None:

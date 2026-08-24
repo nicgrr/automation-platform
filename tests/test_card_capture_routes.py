@@ -116,6 +116,69 @@ def test_card_image_404_when_back_not_captured(client, session):
     assert resp.status_code == 404
 
 
+def test_review_approve_marks_reviewed_and_advances_to_next_pending(client, session):
+    from datetime import UTC, datetime
+
+    first = CapturedCard(id="first", front_image_path="f1", status=CardCaptureStatus.PENDING_REVIEW, ai_raw_response={}, captured_at=datetime(2026, 1, 1, tzinfo=UTC))
+    second = CapturedCard(id="second", front_image_path="f2", status=CardCaptureStatus.PENDING_REVIEW, ai_raw_response={}, captured_at=datetime(2026, 1, 2, tzinfo=UTC))
+    session.add_all([first, second])
+    session.commit()
+
+    resp = client.post(
+        "/cards/review/first",
+        data={"action": "approve", "character": "Pikachu", "set_name": "Base Set", "card_number": "58/102", "rarity": "Common", "language": "English", "graded": "Raw"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/cards/review/second"
+
+    session.expire_all()
+    card = session.get(CapturedCard, "first")
+    assert card.status == CardCaptureStatus.REVIEWED
+    assert card.character == "Pikachu"
+    assert card.reviewed_by == "testuser"
+
+
+def test_review_reject_marks_rejected_without_changing_fields_and_advances(client, session):
+    from datetime import UTC, datetime
+
+    first = CapturedCard(id="first", front_image_path="f1", character="Bad Read", status=CardCaptureStatus.PENDING_REVIEW, ai_raw_response={}, captured_at=datetime(2026, 1, 1, tzinfo=UTC))
+    second = CapturedCard(id="second", front_image_path="f2", status=CardCaptureStatus.PENDING_REVIEW, ai_raw_response={}, captured_at=datetime(2026, 1, 2, tzinfo=UTC))
+    session.add_all([first, second])
+    session.commit()
+
+    resp = client.post("/cards/review/first", data={"action": "reject"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/cards/review/second"
+
+    session.expire_all()
+    card = session.get(CapturedCard, "first")
+    assert card.status == CardCaptureStatus.REJECTED
+    assert card.character == "Bad Read"  # rejecting doesn't overwrite fields
+
+
+def test_review_last_pending_card_redirects_to_list_when_done(client, session):
+    only = CapturedCard(id="only", front_image_path="f1", status=CardCaptureStatus.PENDING_REVIEW, ai_raw_response={})
+    session.add(only)
+    session.commit()
+
+    resp = client.post("/cards/review/only", data={"action": "reject"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/cards/review"
+
+
+def test_review_list_excludes_rejected_and_reviewed_cards(client, session):
+    pending = CapturedCard(id="p1", front_image_path="f", status=CardCaptureStatus.PENDING_REVIEW, ai_raw_response={})
+    rejected = CapturedCard(id="r1", front_image_path="f", status=CardCaptureStatus.REJECTED, ai_raw_response={})
+    reviewed = CapturedCard(id="v1", front_image_path="f", status=CardCaptureStatus.REVIEWED, ai_raw_response={})
+    session.add_all([pending, rejected, reviewed])
+    session.commit()
+
+    resp = client.get("/cards/review")
+    assert resp.status_code == 200
+    assert "Pending review (1)" in resp.text
+
+
 def test_bulk_capture_creates_one_card_per_photo(client, session):
     fake = ExtractedCard(character="Pikachu", set_name="Base Set", card_number="58/102", rarity="Common", language="English", graded="Raw", unreadable_fields=[])
     with patch("automation_control.capture.extract_card_details", return_value=[fake]):
@@ -177,8 +240,59 @@ def test_capture_one_photo_with_multiple_cards_creates_multiple_rows(client, ses
     saved = session.query(CapturedCard).order_by(CapturedCard.character).all()
     assert len(saved) == 2
     assert {c.character for c in saved} == {"Zapdos ex", "Flareon"}
-    # both rows point at the same shared photo
+    # neither card had a bounding box, so both fall back to the shared photo
     assert saved[0].front_image_path == saved[1].front_image_path
+
+
+def _real_jpeg_bytes(size=(600, 400)):
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", size, (10, 20, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_capture_multi_card_photo_crops_each_card_to_its_own_image(client, session):
+    # Regression test for the "groups of 3 only show one name and card
+    # number" complaint: without per-card cropping, every card detected in
+    # one photo pointed at the same shared group image, so its review page
+    # showed the same picture (with no indication of which physical card
+    # its text belonged to) no matter which card you were reviewing.
+    cards = [
+        ExtractedCard(character="Zapdos ex", set_name="Promo", card_number="SVP 049", rarity="Promo", language="English", graded="Raw", unreadable_fields=[], bounding_box=[0.0, 0.0, 0.5, 1.0]),
+        ExtractedCard(character="Flareon", set_name="Promo", card_number="SVP 167", rarity="Promo", language="English", graded="Raw", unreadable_fields=[], bounding_box=[0.5, 0.0, 1.0, 1.0]),
+    ]
+    with patch("automation_control.capture.extract_card_details", return_value=cards):
+        resp = client.post(
+            "/cards/capture",
+            files={"front": ("front.jpg", io.BytesIO(_real_jpeg_bytes()), "image/jpeg")},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+
+    saved = session.query(CapturedCard).order_by(CapturedCard.character).all()
+    assert len(saved) == 2
+    paths = {c.front_image_path for c in saved}
+    assert len(paths) == 2  # each card cropped to its own distinct image
+    for path in paths:
+        assert Path(path).exists()
+
+
+def test_capture_bounding_box_crop_failure_falls_back_to_shared_photo(client, session):
+    bad_box_card = ExtractedCard(character="Pikachu", set_name="Base Set", card_number="58/102", rarity="Common", language="English", graded="Raw", unreadable_fields=[], bounding_box=[0.9, 0.9, 0.1, 0.1])
+    with patch("automation_control.capture.extract_card_details", return_value=[bad_box_card]):
+        resp = client.post(
+            "/cards/capture",
+            files={"front": ("front.jpg", io.BytesIO(_real_jpeg_bytes()), "image/jpeg")},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+    card_id = resp.headers["location"].rsplit("/", 1)[-1]
+    card = session.get(CapturedCard, card_id)
+    assert Path(card.front_image_path).exists()
+    assert card.front_image_path.endswith("front.jpg")  # fell back to the original, uncropped file
 
 
 def test_capture_no_card_detected_creates_blank_row_for_manual_entry(client, session):

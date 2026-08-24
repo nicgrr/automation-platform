@@ -1,8 +1,9 @@
 import enum
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, LargeBinary, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, LargeBinary, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -50,6 +51,14 @@ class ScheduleKind(str, enum.Enum):
 class CardCaptureStatus(str, enum.Enum):
     PENDING_REVIEW = "pending_review"
     REVIEWED = "reviewed"
+    REJECTED = "rejected"
+
+
+class PricingStatus(str, enum.Enum):
+    NOT_PRICED = "not_priced"
+    PENDING_PRICE_REVIEW = "pending_price_review"
+    PRICE_APPROVED = "price_approved"
+    PRICE_REJECTED = "price_rejected"
 
 
 class CaptureBatchStatus(str, enum.Enum):
@@ -253,6 +262,14 @@ class CapturedCard(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by: Mapped[str | None] = mapped_column(String(128))
+
+    suggested_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    price_source: Mapped[str | None] = mapped_column(String(64))
+    price_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    price_lookup_error: Mapped[str | None] = mapped_column(String(512))
+    approved_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    bundle_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    pricing_status: Mapped[PricingStatus] = mapped_column(Enum(PricingStatus), default=PricingStatus.NOT_PRICED, index=True)
 
 
 class CaptureBatch(Base):
