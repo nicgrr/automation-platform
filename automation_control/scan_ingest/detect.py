@@ -1,0 +1,447 @@
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+# Real TCG card is 63x88mm -> 0.7159. A detected cell whose short/long ratio
+# falls outside this band isn't a card (two cards merged into one band, a
+# stray object, a mis-split). Wider than the theoretical value because the
+# scanner's own edge cropping shaves a few px off inconsistently -- confirmed
+# against a real 24-card scan where two genuinely single, unmerged cards
+# measured ar=0.599 and ar=0.600 purely from per-card row-band variance
+# (their column neighbors ranged 0.62-0.69), which a 0.60 floor flagged as
+# false "not card-shaped" and skipped the whole sheet for. The actual merge
+# detector is size-based (`_split_merged_cards`); this check is a backstop,
+# so it can afford to run looser.
+MIN_ASPECT_RATIO = 0.55
+MAX_ASPECT_RATIO = 0.85
+
+# A row/column band narrower than this (as a fraction of the sheet's
+# corresponding dimension) is noise -- a scanner edge artifact or a shadow
+# line -- not a row/column of cards.
+MIN_BAND_FRACTION = 0.05
+
+# A row/column is "content" (part of a card) rather than "gap" (empty bed)
+# when its pixel standard deviation exceeds this fraction of the sheet's
+# peak row/column deviation. Card artwork is busy and varied; the empty bed
+# is near-uniform, so the two separate cleanly. Relative rather than
+# absolute so it survives different scanners, bed colors, and exposures.
+CONTENT_STD_RATIO = 0.25
+
+# A detected band whose long dimension is at least this many times the
+# sheet's median card size is treated as multiple cards touching with no
+# gap between them (confirmed against a real flatbed scan: two landscape
+# cards stacked with zero gap produced one band whose *aspect ratio* still
+# looked like a plausible single card, so the ratio check alone missed it).
+# Below 2x is deliberately not auto-split -- a merge that isn't at least
+# ~2 cards' worth is more likely a genuine oversized card/measurement noise
+# than something safe to guess a split point for.
+MERGE_SIZE_RATIO = 1.6
+
+# --- corner-accurate refinement of each detected band ---
+# The variance bands above locate cards, but only roughly: a card whose edge
+# region is low-contrast gets its band cut short (measured on a real 600 DPI
+# scan: bands 1321-1581px tall for cards that are physically ~1488px), and a
+# card lying a few degrees crooked gets an axis-aligned box with background
+# wedges in the corners. Both distort the crop once it's resized to a fixed
+# output shape, and a distorted crop is exactly what perceptual hashing
+# cannot match. So each band is re-measured: expand it, find the card's true
+# four corners, and warp that quadrilateral flat.
+
+# How far to grow a band before looking for the card's real edges -- enough
+# to recover a truncated band, small enough to usually stay off the
+# neighbouring card.
+QUAD_MARGIN = 0.10
+
+# A pixel this far (Euclidean, BGR) from the sampled background colour is
+# card rather than bed. Sampling the background from the expanded band's own
+# corners rather than assuming a colour is what makes this survive both the
+# amber bed of the earlier scans and the white bed of the later ones.
+QUAD_BACKGROUND_DISTANCE = 40.0
+
+# The found quad must fill at least this much of the expanded band, or it's
+# noise//a shadow rather than a card.
+QUAD_MIN_AREA_RATIO = 0.35
+
+# ...and must stay within these multiples of the band it came from. Guards
+# the case where expansion bleeds into an adjacent card (especially a half
+# from `_split_merged_cards`, whose neighbour is touching by definition):
+# swallowing two cards yields a quad far larger than its band, which is
+# rejected in favour of the plain axis-aligned crop.
+QUAD_MIN_BAND_RATIO = 0.6
+QUAD_MAX_BAND_RATIO = 1.4
+
+# Output crop size for each card -- matches the 63:88mm ratio
+# (750/1050 = 0.7143) at a resolution that's already good enough to use
+# directly as an eBay listing photo, per the spec.
+OUTPUT_WIDTH = 750
+OUTPUT_HEIGHT = 1050
+
+# cv2's rotate constants, keyed by degrees clockwise -- covers the case
+# (confirmed against a real scan) where every card on a sheet is placed in
+# the same non-upright orientation, e.g. sideways to fit more per sheet.
+# The grid split has no notion of which physical card edge is "up", so this
+# is a whole-sheet setting the operator sets once per placement method,
+# not something detected per card.
+_ROTATIONS = {0: None, 90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}
+
+
+@dataclass
+class DetectedCard:
+    """One card's location on the sheet, in grid position and pixel terms.
+
+    `quad` holds the card's four true corners once `_find_card_quad` has
+    refined the band (see the QUAD_* constants) -- None when refinement
+    didn't find a trustworthy card outline and the plain axis-aligned box
+    is used instead.
+    """
+    row: int
+    col: int
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    quad: np.ndarray | None = field(default=None, compare=False, repr=False)
+
+    @property
+    def size(self) -> tuple[float, float]:
+        """The card's (width, height) -- measured from the refined corners
+        when available, since a truncated or crooked band misreports both."""
+        if self.quad is not None:
+            return _quad_dimensions(self.quad)
+        return float(self.x2 - self.x1), float(self.y2 - self.y1)
+
+    @property
+    def aspect_ratio(self) -> float:
+        w, h = self.size
+        return min(w, h) / max(w, h) if max(w, h) else 0.0
+
+
+@dataclass
+class DetectionResult:
+    crop_paths: list[Path] = field(default_factory=list)
+    cards: list[DetectedCard] = field(default_factory=list)
+    rows: int = 0
+    cols: int = 0
+    count: int = 0
+    expected_count: int | None = None
+    needs_review: bool = False
+    warnings: list[str] = field(default_factory=list)
+    overlay_path: Path | None = None
+
+    @property
+    def ok(self) -> bool:
+        return not self.needs_review
+
+
+def _content_bands(std_profile: np.ndarray, min_length: int) -> list[tuple[int, int]]:
+    """Split a row- or column-wise standard-deviation profile into runs of
+    "content" (card) separated by "gap" (empty scanner bed). Returns
+    [(start, end), ...] for each content run at least `min_length` long.
+
+    This replaced a contour-based detector that failed on real scans: a
+    Pokemon card's border is yellow and the scanner bed photographs
+    amber/cream, so brightness *and* color thresholding both bleed the two
+    together. But the bed is near-uniform while card art is busy, so
+    variance separates them cleanly even when the colors don't.
+    """
+    if std_profile.size == 0:
+        return []
+    threshold = std_profile.max() * CONTENT_STD_RATIO
+    is_content = std_profile > threshold
+
+    bands: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, content in enumerate(is_content):
+        if content and start is None:
+            start = index
+        elif not content and start is not None:
+            bands.append((start, index))
+            start = None
+    if start is not None:
+        bands.append((start, len(is_content)))
+
+    return [band for band in bands if band[1] - band[0] >= min_length]
+
+
+def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], list[tuple[int, int]]]]:
+    """Column bands globally, then row bands *independently within each
+    column's own vertical strip* -- not a shared grid.
+
+    A mechanically-fed sheet has rows aligned across every column, but
+    hand-placed cards on a flatbed often don't: confirmed against a real
+    scan where the right-hand column sat lower than the left, which a
+    global cross-product of row-bands x column-bands would have merged or
+    misaligned. Detecting rows per-column handles both cases -- it
+    degrades to the shared-grid result when rows genuinely do line up.
+    """
+    gray = cv2.cvtColor(sheet, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape[:2]
+    col_bands = _content_bands(gray.std(axis=0), int(width * MIN_BAND_FRACTION))
+
+    result = []
+    for x1, x2 in col_bands:
+        strip = gray[:, x1:x2]
+        row_bands = _content_bands(strip.std(axis=1), int(height * MIN_BAND_FRACTION))
+        result.append(((x1, x2), row_bands))
+    return result
+
+
+def _split_merged_cards(cards: list[DetectedCard]) -> list[DetectedCard]:
+    """A band far taller (or wider) than its peers is almost certainly
+    several cards touching with no gap between them -- confirmed against a
+    real scan where this happened and the merged band's aspect ratio still
+    looked like a plausible single card, so ratio-checking alone missed it.
+    Splits it evenly along its long axis; the result still gets flagged for
+    review by the caller so a human can verify the split landed cleanly.
+    """
+    if len(cards) < 2:
+        return cards
+
+    heights = [c.y2 - c.y1 for c in cards]
+    widths = [c.x2 - c.x1 for c in cards]
+    median_height = sorted(heights)[len(heights) // 2]
+    median_width = sorted(widths)[len(widths) // 2]
+
+    split: list[DetectedCard] = []
+    for card in cards:
+        height, width = card.y2 - card.y1, card.x2 - card.x1
+        vertical_multiple = round(height / median_height) if median_height and height / median_height >= MERGE_SIZE_RATIO else 1
+        horizontal_multiple = round(width / median_width) if median_width and width / median_width >= MERGE_SIZE_RATIO else 1
+
+        if vertical_multiple > 1:
+            step = height // vertical_multiple
+            for i in range(vertical_multiple):
+                y1 = card.y1 + i * step
+                y2 = card.y2 if i == vertical_multiple - 1 else card.y1 + (i + 1) * step
+                split.append(DetectedCard(row=card.row, col=card.col, x1=card.x1, y1=y1, x2=card.x2, y2=y2))
+        elif horizontal_multiple > 1:
+            step = width // horizontal_multiple
+            for i in range(horizontal_multiple):
+                x1 = card.x1 + i * step
+                x2 = card.x2 if i == horizontal_multiple - 1 else card.x1 + (i + 1) * step
+                split.append(DetectedCard(row=card.row, col=card.col, x1=x1, y1=card.y1, x2=x2, y2=card.y2))
+        else:
+            split.append(card)
+    return split
+
+
+def _order_quad_points(points: np.ndarray) -> np.ndarray:
+    """Order four corners as top-left, top-right, bottom-right, bottom-left.
+
+    Uses the standard sum/difference trick, which is valid for the small
+    tilts a hand-placed card actually has (measured up to ~4 degrees); a
+    card rotated near 45 degrees would confuse it, but that isn't a
+    placement anyone makes, and `_find_card_quad`'s size guards reject the
+    result anyway.
+    """
+    ordered = np.zeros((4, 2), dtype=np.float32)
+    total = points.sum(axis=1)
+    ordered[0] = points[np.argmin(total)]
+    ordered[2] = points[np.argmax(total)]
+    diff = np.diff(points, axis=1).ravel()
+    ordered[1] = points[np.argmin(diff)]
+    ordered[3] = points[np.argmax(diff)]
+    return ordered
+
+
+def _quad_dimensions(quad: np.ndarray) -> tuple[float, float]:
+    """Width and height of an ordered quad, taking the longer of each
+    opposing pair so a slight perspective difference doesn't shrink it."""
+    width = max(float(np.linalg.norm(quad[2] - quad[3])), float(np.linalg.norm(quad[1] - quad[0])))
+    height = max(float(np.linalg.norm(quad[1] - quad[2])), float(np.linalg.norm(quad[0] - quad[3])))
+    return width, height
+
+
+def _find_card_quad(sheet: np.ndarray, card: DetectedCard) -> np.ndarray | None:
+    """The card's four true corners in sheet coordinates, or None to fall
+    back to the band's axis-aligned box.
+
+    Works by growing the band, estimating the scanner bed's colour from the
+    grown band's own corners (which are bed, not card, whenever the card is
+    even slightly inset or crooked), masking everything unlike that colour,
+    and taking the minimum-area rectangle around the largest such region.
+    """
+    height, width = sheet.shape[:2]
+    band_w, band_h = card.x2 - card.x1, card.y2 - card.y1
+    if band_w <= 0 or band_h <= 0:
+        return None
+
+    margin_x, margin_y = int(band_w * QUAD_MARGIN), int(band_h * QUAD_MARGIN)
+    x1, y1 = max(0, card.x1 - margin_x), max(0, card.y1 - margin_y)
+    x2, y2 = min(width, card.x2 + margin_x), min(height, card.y2 + margin_y)
+    band = sheet[y1:y2, x1:x2]
+    if band.size == 0:
+        return None
+
+    patch = max(3, min(band.shape[0], band.shape[1]) // 40)
+    background = np.median(
+        np.concatenate([
+            band[:patch, :patch].reshape(-1, 3), band[:patch, -patch:].reshape(-1, 3),
+            band[-patch:, :patch].reshape(-1, 3), band[-patch:, -patch:].reshape(-1, 3),
+        ]),
+        axis=0,
+    )
+    distance = np.linalg.norm(band.astype(np.float32) - background, axis=2)
+    mask = (distance > QUAD_BACKGROUND_DISTANCE).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    largest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(largest) / float(band.shape[0] * band.shape[1]) < QUAD_MIN_AREA_RATIO:
+        return None
+
+    quad = _order_quad_points(cv2.boxPoints(cv2.minAreaRect(largest)).astype(np.float32))
+    quad_w, quad_h = _quad_dimensions(quad)
+    if not (QUAD_MIN_BAND_RATIO <= quad_w / band_w <= QUAD_MAX_BAND_RATIO):
+        return None
+    if not (QUAD_MIN_BAND_RATIO <= quad_h / band_h <= QUAD_MAX_BAND_RATIO):
+        return None
+
+    quad[:, 0] += x1
+    quad[:, 1] += y1
+    return quad
+
+
+def _reading_order(cards: list[DetectedCard]) -> list[DetectedCard]:
+    """Left-to-right, top-to-bottom by centroid, tolerant of rows that
+    don't perfectly line up across columns (see
+    `_detect_columns_and_rows`) -- cluster by y using half the median card
+    height as the row-break threshold, then sort each cluster by x. Reduces
+    to plain row-major order for a well-aligned grid.
+    """
+    if not cards:
+        return []
+
+    heights = [c.y2 - c.y1 for c in cards]
+    row_threshold = (sorted(heights)[len(heights) // 2]) * 0.5
+
+    by_y = sorted(cards, key=lambda c: (c.y1 + c.y2) / 2)
+    rows: list[list[DetectedCard]] = []
+    for card in by_y:
+        center_y = (card.y1 + card.y2) / 2
+        if rows and abs(center_y - (rows[-1][-1].y1 + rows[-1][-1].y2) / 2) <= row_threshold:
+            rows[-1].append(card)
+        else:
+            rows.append([card])
+
+    ordered: list[DetectedCard] = []
+    for row in rows:
+        row.sort(key=lambda c: (c.x1 + c.x2) / 2)
+        ordered.extend(row)
+    return ordered
+
+
+def _crop_card(sheet: np.ndarray, card: DetectedCard, post_rotation_degrees: int = 0) -> np.ndarray:
+    if card.quad is not None:
+        # Warp the card's true corners flat, which simultaneously squares up
+        # a crooked card and restores a band the variance pass cut short.
+        quad_w, quad_h = _quad_dimensions(card.quad)
+        target_w, target_h = max(1, int(round(quad_w))), max(1, int(round(quad_h)))
+        destination = np.array(
+            [[0, 0], [target_w - 1, 0], [target_w - 1, target_h - 1], [0, target_h - 1]],
+            dtype=np.float32,
+        )
+        transform = cv2.getPerspectiveTransform(card.quad, destination)
+        cropped = cv2.warpPerspective(sheet, transform, (target_w, target_h))
+    else:
+        cropped = sheet[card.y1 : card.y2, card.x1 : card.x2]
+    # Resize to a canvas shaped the way the card actually lies on the bed
+    # (swap width/height for a quarter turn), *then* rotate upright -- going
+    # straight to a fixed portrait canvas would scale the two axes unequally
+    # and distort the card.
+    if post_rotation_degrees % 180 == 90:
+        target = (OUTPUT_HEIGHT, OUTPUT_WIDTH)
+    else:
+        target = (OUTPUT_WIDTH, OUTPUT_HEIGHT)
+    resized = cv2.resize(cropped, target, interpolation=cv2.INTER_AREA)
+    rotation = _ROTATIONS.get(post_rotation_degrees % 360)
+    return cv2.rotate(resized, rotation) if rotation is not None else resized
+
+
+def _draw_overlay(sheet: np.ndarray, cards: list[DetectedCard]) -> np.ndarray:
+    overlay = sheet.copy()
+    for index, card in enumerate(cards):
+        in_range = MIN_ASPECT_RATIO <= card.aspect_ratio <= MAX_ASPECT_RATIO
+        color = (0, 200, 0) if in_range else (0, 0, 220)
+        if card.quad is not None:
+            # draw what's actually cropped, not the looser band it came from
+            cv2.polylines(overlay, [card.quad.astype(np.int32)], True, color, 4)
+        else:
+            cv2.rectangle(overlay, (card.x1, card.y1), (card.x2, card.y2), color, 4)
+        label = f"{index + 1} ar={card.aspect_ratio:.2f}"
+        cv2.putText(overlay, label, (card.x1 + 12, card.y1 + 44), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 128, 0), 3)
+    return overlay
+
+
+def detect_cards(
+    sheet_path: Path, output_dir: Path, expected_count: int | None = None,
+    always_save_overlay: bool = False, post_rotation_degrees: int = 0,
+) -> DetectionResult:
+    """Detect and crop every card on a scanned sheet by finding the grid of
+    content bands (see `_content_bands`) rather than tracing each card's
+    outline -- cards sit in a regular grid on a flatbed, and the gaps
+    between them are far easier to find reliably than their yellow-on-amber
+    borders.
+
+    Cards come back in reading order (left-to-right, top-to-bottom) so
+    downstream manual correction can refer to them by position. The grid
+    shape is inferred from the scan, so a partly-filled sheet works without
+    being told the layout; pass `expected_count` to additionally assert a
+    specific number of cards.
+
+    `needs_review` is set (and an annotated overlay saved) when the count
+    doesn't match `expected_count`, when nothing was detected, or when any
+    detected cell isn't card-shaped -- the last of which catches two cards
+    touching and being read as one band.
+
+    `post_rotation_degrees` corrects for every card on the sheet being
+    placed the same non-upright way (e.g. sideways to fit more per sheet).
+    """
+    sheet = cv2.imread(str(sheet_path))
+    if sheet is None:
+        raise ValueError(f"could not read image: {sheet_path}")
+
+    columns = _detect_columns_and_rows(sheet)
+    raw_cards = [
+        DetectedCard(row=r, col=c, x1=x1, y1=y1, x2=x2, y2=y2)
+        for c, ((x1, x2), row_bands) in enumerate(columns)
+        for r, (y1, y2) in enumerate(row_bands)
+    ]
+    cards = _reading_order(_split_merged_cards(raw_cards))
+    for card in cards:
+        card.quad = _find_card_quad(sheet, card)
+
+    warnings: list[str] = []
+    if not cards:
+        warnings.append("no cards detected -- is the sheet blank, or the scan very low contrast?")
+    if len(cards) != len(raw_cards):
+        warnings.append(f"{len(cards) - len(raw_cards)} card(s) were split out of an oversized band -- verify the split landed cleanly")
+    misshapen = [index + 1 for index, card in enumerate(cards) if not (MIN_ASPECT_RATIO <= card.aspect_ratio <= MAX_ASPECT_RATIO)]
+    if misshapen:
+        warnings.append(f"card(s) {misshapen} are not card-shaped -- possibly two cards touching, or a mis-split")
+    if expected_count is not None and len(cards) != expected_count:
+        warnings.append(f"expected {expected_count} cards, found {len(cards)}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    crop_paths = []
+    for index, card in enumerate(cards):
+        crop_path = output_dir / f"card{index + 1}.jpg"
+        cv2.imwrite(str(crop_path), _crop_card(sheet, card, post_rotation_degrees))
+        crop_paths.append(crop_path)
+
+    needs_review = bool(warnings)
+    overlay_path = None
+    if needs_review or always_save_overlay:
+        overlay_path = output_dir / "overlay.jpg"
+        cv2.imwrite(str(overlay_path), _draw_overlay(sheet, cards))
+
+    max_rows = max((len(row_bands) for _, row_bands in columns), default=0)
+    return DetectionResult(
+        crop_paths=crop_paths, cards=cards, rows=max_rows, cols=len(columns),
+        count=len(cards), expected_count=expected_count, needs_review=needs_review,
+        warnings=warnings, overlay_path=overlay_path,
+    )
