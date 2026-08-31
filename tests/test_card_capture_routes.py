@@ -467,26 +467,4 @@ def test_card_image_404_when_file_missing(client, session, tmp_path):
     assert resp.status_code == 404
 
 
-def test_dashboard_photos_needed_tile_reflects_checklist_row_count(client, tmp_path):
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    (output_dir / "image_naming_checklist.csv").write_text(
-        "Listing ID,Listing,Image filename,What to shoot\n"
-        "01,Some Title,01-1.jpg,Card FRONT\n"
-        "01,Some Title,01-2.jpg,Card BACK\n"
-        "08,Bundle Title,08-1.jpg,Card A\n"
-    )
-    app.state.settings.listing_pipeline_output_dir = str(output_dir)
 
-    resp = client.get("/dashboard")
-
-    assert resp.status_code == 200
-    assert "Photos needed" in resp.text
-    assert "<div class='value'>3</div>" in resp.text
-
-
-def test_dashboard_photos_needed_tile_zero_with_no_output(client, tmp_path):
-    app.state.settings.listing_pipeline_output_dir = str(tmp_path / "no_output_here")
-    resp = client.get("/dashboard")
-    assert resp.status_code == 200
-    assert "Photos needed" in resp.text

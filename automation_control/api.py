@@ -1,4 +1,3 @@
-import csv
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -22,6 +21,7 @@ from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
 from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, InventoryItem, JobRun, ListingBuildStatus, PendingListing, PricingStatus
 from .price_review import router as pricing_router
+from .review_queue import router as review_router
 from .scan_ingest_status import router as scan_ingest_status_router
 from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, JobRead
 from .ui import brand_header, page, pill
@@ -39,6 +39,7 @@ app.include_router(pricing_router)
 app.include_router(listings_router)
 app.include_router(inventory_router)
 app.include_router(scan_ingest_status_router)
+app.include_router(review_router)
 
 
 def correlation_id() -> str:
@@ -93,61 +94,11 @@ def login(request: Request, username: str = Form(), password: str = Form(), sess
     return response
 
 
-LISTING_SUMMARY_COLUMNS = ["CustomLabel", "*Title", "*StartPrice", "BestOfferAutoAcceptPrice", "MinimumBestOfferPrice"]
-
-
-def _read_csv_rows(path: Path) -> tuple[list[str], list[list[str]]] | None:
-    if not path.exists():
-        return None
-    with open(path, newline="", encoding="utf-8") as handle:
-        rows = list(csv.reader(handle))
-    if not rows:
-        return None
-    return rows[0], rows[1:]
-
-
-def _html_table(header: list[str], rows: list[list[str]]) -> str:
-    head = "".join(f"<th>{escape(col)}</th>" for col in header)
-    body = "".join("<tr>" + "".join(f"<td>{escape(str(cell))}</td>" for cell in row) + "</tr>" for row in rows)
-    return f"<div class='table-wrap'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
-
-
-def _listing_pipeline_section(output_dir: Path) -> str:
-    bulk = _read_csv_rows(output_dir / "ebay_bulk_upload.csv")
-    checklist = _read_csv_rows(output_dir / "image_naming_checklist.csv")
-    report = _read_csv_rows(output_dir / "validation_report.csv")
-
-    if bulk is None and checklist is None and report is None:
-        return f"<div class='panel'><h2>Listing pipeline</h2><p>No output yet in {escape(str(output_dir))} — run the CLI to generate it.</p></div>"
-
-    parts = ["<div class='panel'><h2>Listing pipeline</h2>"]
-
-    if bulk:
-        header, rows = bulk
-        indices = [header.index(col) for col in LISTING_SUMMARY_COLUMNS if col in header]
-        summary_header = [header[i] for i in indices]
-        summary_rows = [[row[i] for i in indices] for row in rows]
-        parts.append(f"<h3>Listings ({len(rows)})</h3>")
-        parts.append(_html_table(summary_header, summary_rows))
-    else:
-        parts.append("<h3>Listings</h3><p>No ebay_bulk_upload.csv found.</p>")
-
-    if checklist:
-        header, rows = checklist
-        parts.append(f"<h3>Image checklist ({len(rows)} photos)</h3>")
-        parts.append(_html_table(header, rows))
-    else:
-        parts.append("<h3>Image checklist</h3><p>No image_naming_checklist.csv found.</p>")
-
-    if report:
-        header, rows = report
-        parts.append(f"<h3>Validation warnings ({len(rows)})</h3>")
-        parts.append(_html_table(header, rows) if rows else "<p>None.</p>")
-    else:
-        parts.append("<h3>Validation warnings</h3><p>No validation_report.csv found.</p>")
-
-    parts.append("</div>")
-    return "".join(parts)
+def _review_queue_size(settings) -> int:
+    """How many crops the scanner set aside. A plain directory count -- the
+    queue is files on disk, not a table."""
+    directory = Path(settings.scan_media_dir) / "needs_review"
+    return len(list(directory.glob("*.jpg"))) if directory.exists() else 0
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -159,16 +110,13 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     connected = bool(credential)
     connection_pill = pill("Connected", "ok") if connected else pill("Not connected", "bad")
     last_sync = credential.last_successful_sync_at if credential and credential.last_successful_sync_at else "Never"
-    output_dir = Path(request.app.state.settings.listing_pipeline_output_dir)
-    pipeline_html = _listing_pipeline_section(output_dir)
     pending_review_count = len(session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW)).all())
     pending_price_count = len(session.scalars(select(CapturedCard).where(CapturedCard.pricing_status == PricingStatus.PENDING_PRICE_REVIEW)).all())
     pending_listing_count = len(session.scalars(select(PendingListing).where(PendingListing.status == ListingBuildStatus.DRAFT)).all())
-    checklist = _read_csv_rows(output_dir / "image_naming_checklist.csv")
-    photo_count = len(checklist[1]) if checklist else 0
     scanned_items = session.scalars(select(InventoryItem)).all()
     scanned_holdings = len(scanned_items)
     scanned_copies = sum(i.quantity for i in scanned_items)
+    review_count = _review_queue_size(request.app.state.settings)
 
     stat_grid = (
         "<div class='stat-grid'>"
@@ -180,7 +128,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         f"<div class='stat-card'><div class='label'>Cards pending review</div><div class='value'>{pending_review_count}</div></div>"
         f"<div class='stat-card'><div class='label'>Cards pending price approval</div><div class='value'>{pending_price_count}</div></div>"
         f"<div class='stat-card'><div class='label'>Listings pending review</div><div class='value'>{pending_listing_count}</div></div>"
-        f"<div class='stat-card'><div class='label'>Photos needed</div><div class='value'>{photo_count}</div></div>"
+        f"<div class='stat-card'><div class='label'>Cards awaiting review</div><div class='value'>{review_count}</div></div>"
         f"<div class='stat-card'><div class='label'>Scanned inventory</div><div class='value'>{scanned_holdings} ({scanned_copies} copies)</div></div>"
         "</div>"
     )
@@ -191,9 +139,8 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         + stat_grid
         + f"<div class='panel'><h2>eBay Sandbox</h2><p><a class='btn' href='/auth/ebay/start'>Connect eBay Sandbox</a></p></div>"
         + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
-        + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/scan-ingest'>Scan-ingest status &amp; logs</a></p></div>"
+        + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/scan-ingest'>Scan-ingest status &amp; logs</a> &nbsp; <a href='/review'>Review queue ({review_count})</a></p></div>"
         + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
-        + pipeline_html
     )
     return page("EzBay Dashboard", body)
 
