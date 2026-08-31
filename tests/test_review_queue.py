@@ -212,3 +212,50 @@ def test_image_route_serves_a_queued_crop(client, media, session, tmp_path):
     resp = client.get(f"/review/image/{crop.name}")
     assert resp.status_code == 200
     assert resp.content == crop.read_bytes()
+
+
+def test_queue_offers_several_candidates_not_one(client, media, session, tmp_path):
+    """Across a large catalogue an unrelated card can hash closer than the
+    right one (measured: a Gothorita at distance 6 beating the correct
+    Flabebe at 8). A single confident-looking wrong answer is worse than a
+    short list, so alternatives are offered.
+
+    Three cards are given the *same* art so they all land inside the
+    distance limit. Synthesising art that is merely similar is unreliable --
+    pHash is chaotic on synthetic images, and even small edits jump 20+ --
+    and what's under test here is candidate selection, not hashing.
+    """
+    for number in ("31", "32", "33"):
+        _cache_card(session, tmp_path, number=number, name=f"Card{number}", seed=7)
+    _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.get("/review")
+
+    assert resp.text.count("name='pick'") == 3
+    for number in ("31", "32", "33"):
+        assert f"Card{number}" in resp.text
+
+
+def test_picking_a_candidate_commits_that_card(client, media, session, tmp_path):
+    """A pick carries its own set, so choosing a card from a set other than
+    the top match takes one click rather than a retype."""
+    _cache_card(session, tmp_path, set_id="xy11", number="31", name="Dewott", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide", data={"crop": crop.name, "pick": "xy11:31"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert session.scalars(select(InventoryItem)).one().card_id == "xy11-31"
+    assert not crop.exists()
+
+
+def test_a_pick_for_an_uncached_set_is_rejected(client, media, session, tmp_path):
+    _cache_card(session, tmp_path, number="31", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide", data={"crop": crop.name, "pick": "nope:1"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 400
+    assert crop.exists()

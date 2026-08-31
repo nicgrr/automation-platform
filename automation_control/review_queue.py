@@ -40,6 +40,10 @@ router = APIRouter(prefix="/review", tags=["review"])
 # A page of cards is plenty to work through in one sitting.
 PAGE_SIZE = 12
 
+# How many possible cards to offer per crop. Enough that the right one is
+# almost always present when the top match is wrong, few enough to scan.
+CANDIDATES = 3
+
 
 class _WebPrompter:
     """`start_or_resume` takes a Prompter; in unattended mode it never asks
@@ -96,22 +100,35 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
             out[crop] = None
             continue
 
-        set_id, reference = entries[order[0]]
-        # Margin over the best *other* card, which is what separates "this is
-        # the card" from "several cards look like this".
-        margin = next(
-            (int(distances[i]) - best for i in order[1:] if entries[i][1].card_id != reference.card_id),
-            None,
-        )
-        out[crop] = (
-            set_id,
-            Identification(
-                card_id=reference.card_id, number=reference.number, name=reference.name,
-                source=Source.PHASH,
-                confidence=_phash_confidence(best, margin or 0, settings.scan_phash_max_distance),
-                phash_distance=best, phash_margin=margin,
-            ),
-        )
+        # Several candidates, not one. Across ~18k cached cards an unrelated
+        # card can genuinely hash closer than the right one -- measured on a
+        # Cosmic Eclipse Flabebe whose nearest match was a Guardians Rising
+        # Gothorita at distance 6, with the correct card second at 8. One
+        # confident-looking wrong answer is worse than a short list, and
+        # picking from a list is a single click either way.
+        seen: set[str] = set()
+        candidates = []
+        for i in order[: CANDIDATES * 4]:
+            distance = int(distances[i])
+            if distance > settings.scan_phash_max_distance:
+                break
+            set_id, reference = entries[i]
+            if reference.card_id in seen:
+                continue
+            seen.add(reference.card_id)
+            margin = distance - best
+            candidates.append((
+                set_id,
+                Identification(
+                    card_id=reference.card_id, number=reference.number, name=reference.name,
+                    source=Source.PHASH,
+                    confidence=_phash_confidence(distance, margin, settings.scan_phash_max_distance),
+                    phash_distance=distance, phash_margin=margin,
+                ),
+            ))
+            if len(candidates) == CANDIDATES:
+                break
+        out[crop] = candidates or None
     return out
 
 
@@ -186,48 +203,52 @@ def review_page(
     return HTMLResponse(page("EzBay — Review queue", body))
 
 
-def _card_html(crop: Path, best, set_names: dict[str, str]) -> str:
+def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     name = crop.name
     thumb = f"<img src='/review/image/{escape(name)}' alt='' loading='lazy' decoding='async'>"
 
-    if best is None:
-        suggestion = (
+    if not candidates:
+        options = (
             "<div class='no-match'>No confident match in any cached set.</div>"
-            "<div class='hint'>If its set isn't cached yet, cache it and this will resolve itself.</div>"
+            "<div class='hint'>Type the number below if you can read it, or discard.</div>"
         )
-        prefill, set_id = "", ""
+        default_set = ""
     else:
-        set_id, identification = best
-        confidence = identification.confidence
-        kind = "ok" if confidence >= 0.75 else "warn"
-        suggestion = (
-            f"<div class='suggest'><strong>#{escape(identification.number or '')} "
-            f"{escape(identification.name or '')}</strong></div>"
-            f"<div class='hint'>{escape(set_names.get(set_id, set_id))} &middot; "
-            f"{pill(f'{confidence:.2f}', kind)} {escape(identification.source.value)}</div>"
-        )
-        prefill = identification.number or ""
+        default_set = candidates[0][0]
+        rows = []
+        for set_id, identification in candidates:
+            confidence = identification.confidence
+            kind = "ok" if confidence >= 0.75 else "warn"
+            rows.append(
+                f"<button class='pick' name='pick' value='{escape(set_id)}:{escape(identification.number or '')}'>"
+                f"<span class='pick-name'>#{escape(identification.number or '')} {escape(identification.name or '')}</span>"
+                f"<span class='pick-meta'>{escape(set_names.get(set_id, set_id))} &middot; "
+                f"d{identification.phash_distance} {pill(f'{confidence:.2f}', kind)}</span>"
+                "</button>"
+            )
+        options = "<div class='picks'>" + "".join(rows) + "</div>"
 
     return (
         "<div class='review-card'>"
         f"<a class='review-face' href='/review/image/{escape(name)}' target='_blank' rel='noopener'>{thumb}</a>"
-        f"{suggestion}"
-        f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
         "<form method='post' action='/review/decide' class='review-form'>"
         f"<input type='hidden' name='crop' value='{escape(name)}'>"
-        f"<input type='hidden' name='set_id' value='{escape(set_id)}'>"
-        f"<input name='number' value='{escape(prefill)}' placeholder='card no.' autocomplete='off'>"
+        f"<input type='hidden' name='set_id' value='{escape(default_set)}'>"
+        f"{options}"
+        f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
+        "<div class='manual'>"
+        "<input name='number' placeholder='or type a no.' autocomplete='off'>"
         "<button name='action' value='accept'>Accept</button>"
         "<button name='action' value='discard' class='ghost'>Discard</button>"
-        "</form>"
-        "</div>"
+        "</div></form></div>"
     )
 
 
 @router.post("/decide")
 def review_decide(
     crop: str = Form(...),
-    action: str = Form(...),
+    action: str = Form(""),
+    pick: str = Form(""),
     number: str = Form(""),
     set_id: str = Form(""),
     user: str = Depends(require_dashboard_user),
@@ -239,7 +260,12 @@ def review_decide(
         path.unlink(missing_ok=True)
         return RedirectResponse("/review", status_code=303)
 
-    if action != "accept":
+    # A pick button carries its own set, so choosing a card from a set other
+    # than the top match is one click rather than a retype.
+    if pick:
+        chosen_set, _, chosen_number = pick.partition(":")
+        set_id, number = chosen_set, chosen_number
+    elif action != "accept":
         raise HTTPException(status_code=400, detail=f"unknown action: {action!r}")
 
     number = (number or "").strip().lstrip("0") or ""
@@ -292,7 +318,14 @@ _STYLE = """<style>
 .no-match{font-size:13px;color:var(--status-warn,#d4a527);margin-top:7px}
 .hint{font-size:12px;color:var(--text-dim)}
 .filename{font-size:10.5px;color:var(--text-dim);opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.review-form{display:flex;gap:6px;margin-top:8px;flex-direction:row;flex-wrap:wrap;max-width:none}
+.review-form{display:flex;gap:6px;margin-top:8px;flex-direction:column;max-width:none}
+.picks{display:flex;flex-direction:column;gap:5px;margin-top:7px}
+.pick{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;
+  background:#0a0f1c;border:1px solid var(--panel-border);border-radius:9px;padding:7px 9px;cursor:pointer;color:var(--text)}
+.pick:hover{border-color:var(--accent)}
+.pick-name{font-size:13px;font-weight:600}
+.pick-meta{font-size:11px;color:var(--text-dim)}
+.manual{display:flex;gap:6px;margin-top:4px}
 .review-form input{flex:1 1 68px;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
   border-radius:8px;padding:8px;color:var(--text);font-size:13px}
 .review-form button{flex:0 0 auto;padding:8px 12px;border-radius:8px;font-size:13px;cursor:pointer;border:none;

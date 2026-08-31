@@ -20,3 +20,5 @@ scan_ingest_data/*
 !scan_ingest_data/session.env.example
 captured_cards/
 *.egg-info/
+*.db-wal
+*.db-shm
