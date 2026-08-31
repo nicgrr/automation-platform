@@ -18,8 +18,11 @@ from .capture import router as cards_router
 from .config import Settings, get_settings
 from .database import Base, engine, get_session
 from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_sandbox_client_id, valid_sandbox_runame, valid_user_access_token
-from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, JobRun, PricingStatus
+from .inventory_review import router as inventory_router
+from .listings_review import router as listings_router
+from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, InventoryItem, JobRun, ListingBuildStatus, PendingListing, PricingStatus
 from .price_review import router as pricing_router
+from .scan_ingest_status import router as scan_ingest_status_router
 from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, JobRead
 from .ui import brand_header, page, pill
 
@@ -33,6 +36,9 @@ app = FastAPI(title="EzBay Private Control Plane", version="0.2.0", lifespan=lif
 app.state.settings = get_settings()
 app.include_router(cards_router)
 app.include_router(pricing_router)
+app.include_router(listings_router)
+app.include_router(inventory_router)
+app.include_router(scan_ingest_status_router)
 
 
 def correlation_id() -> str:
@@ -157,8 +163,12 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     pipeline_html = _listing_pipeline_section(output_dir)
     pending_review_count = len(session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW)).all())
     pending_price_count = len(session.scalars(select(CapturedCard).where(CapturedCard.pricing_status == PricingStatus.PENDING_PRICE_REVIEW)).all())
+    pending_listing_count = len(session.scalars(select(PendingListing).where(PendingListing.status == ListingBuildStatus.DRAFT)).all())
     checklist = _read_csv_rows(output_dir / "image_naming_checklist.csv")
     photo_count = len(checklist[1]) if checklist else 0
+    scanned_items = session.scalars(select(InventoryItem)).all()
+    scanned_holdings = len(scanned_items)
+    scanned_copies = sum(i.quantity for i in scanned_items)
 
     stat_grid = (
         "<div class='stat-grid'>"
@@ -169,7 +179,9 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         f"<div class='stat-card'><div class='label'>Listings retrieved</div><div class='value'>{listing_count}</div></div>"
         f"<div class='stat-card'><div class='label'>Cards pending review</div><div class='value'>{pending_review_count}</div></div>"
         f"<div class='stat-card'><div class='label'>Cards pending price approval</div><div class='value'>{pending_price_count}</div></div>"
+        f"<div class='stat-card'><div class='label'>Listings pending review</div><div class='value'>{pending_listing_count}</div></div>"
         f"<div class='stat-card'><div class='label'>Photos needed</div><div class='value'>{photo_count}</div></div>"
+        f"<div class='stat-card'><div class='label'>Scanned inventory</div><div class='value'>{scanned_holdings} ({scanned_copies} copies)</div></div>"
         "</div>"
     )
 
@@ -178,7 +190,8 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         + "<p class='subtitle'>Trading card listing operations.</p>"
         + stat_grid
         + f"<div class='panel'><h2>eBay Sandbox</h2><p><a class='btn' href='/auth/ebay/start'>Connect eBay Sandbox</a></p></div>"
-        + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a></p></div>"
+        + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
+        + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/scan-ingest'>Scan-ingest status &amp; logs</a></p></div>"
         + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
         + pipeline_html
     )

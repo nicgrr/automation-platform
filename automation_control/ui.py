@@ -69,6 +69,10 @@ tr:hover td { background: rgba(94, 234, 255, 0.04); }
 ul.events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 ul.events li { font-size: 13px; color: var(--text-dim); border-left: 2px solid var(--panel-border); padding-left: 10px; }
 
+details { background: #0a0f1c; border: 1px solid var(--panel-border); border-radius: 10px; padding: 10px 14px; }
+details summary { cursor: pointer; font-size: 13px; list-style: revert; }
+details summary::marker { color: var(--accent); }
+
 form { display: flex; flex-direction: column; gap: 14px; max-width: 320px; }
 label { font-size: 13px; color: var(--text-dim); display: flex; flex-direction: column; gap: 6px; }
 input { background: #0a0f1c; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 14px; }
