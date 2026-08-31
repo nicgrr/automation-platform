@@ -284,8 +284,8 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     if not candidates:
         options = (
             "<div class='no-match'>No confident match in any cached set.</div>"
-            "<div class='hint'>Type the number as printed on the card (e.g. 166/236) &mdash; "
-            "the total identifies the set.</div>"
+            "<div class='hint'>Type the number <b>with its total</b> (e.g. 52/72) &mdash; "
+            "the total is what identifies the set.</div>"
         )
         default_set = ""
     else:
@@ -312,7 +312,7 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
         f"{options}"
         f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
         "<div class='manual'>"
-        "<input name='number' placeholder='or type 166/236' autocomplete='off' inputmode='numeric'>"
+        f"<input name='number' placeholder='{"52/72 (with total)" if not candidates else "or type a no."}' autocomplete='off'>"
         "<button name='action' value='accept'>Accept</button>"
         "<button name='action' value='discard' class='ghost'>Discard</button>"
         "</div></form></div>"
@@ -408,23 +408,25 @@ _STYLE = """<style>
   border:1px solid var(--panel-border);color:var(--text-dim);text-decoration:none;background:#0a0f1c}
 .chip:hover{border-color:var(--accent);color:var(--accent)}
 .muted{color:var(--text-dim);font-size:13px}
-.review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px}
+.review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:18px;align-items:start}
 .review-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:14px;padding:12px;
-  display:flex;flex-direction:column;gap:5px}
+  display:flex;flex-direction:column;gap:5px;min-width:0;overflow:hidden}
+.review-card>*{min-width:0;max-width:100%}
 .review-face{display:block;border-radius:9px;overflow:hidden;background:#0a0f1c;aspect-ratio:5/7}
 .review-face img{width:100%;height:100%;object-fit:contain;display:block}
 .suggest{font-size:14px;margin-top:7px}
 .no-match{font-size:13px;color:var(--status-warn,#d4a527);margin-top:7px}
 .hint{font-size:12px;color:var(--text-dim)}
-.filename{font-size:10.5px;color:var(--text-dim);opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filename{font-size:10.5px;color:var(--text-dim);opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .review-form{display:flex;gap:6px;margin-top:8px;flex-direction:column;max-width:none}
 .picks{display:flex;flex-direction:column;gap:5px;margin-top:7px}
-.pick{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;
+.pick{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;min-width:0;
   background:#0a0f1c;border:1px solid var(--panel-border);border-radius:9px;padding:7px 9px;cursor:pointer;color:var(--text)}
 .pick:hover{border-color:var(--accent)}
-.pick-name{font-size:13px;font-weight:600}
-.pick-meta{font-size:11px;color:var(--text-dim)}
-.manual{display:flex;gap:6px;margin-top:4px}
+.pick-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.pick-meta{font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.manual{display:flex;gap:6px;margin-top:4px;min-width:0}
+.manual input{min-width:0;flex:1 1 60px}
 .review-form input{flex:1 1 68px;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
   border-radius:8px;padding:8px;color:var(--text);font-size:13px}
 .review-form button{flex:0 0 auto;padding:8px 12px;border-radius:8px;font-size:13px;cursor:pointer;border:none;
