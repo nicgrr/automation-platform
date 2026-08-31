@@ -18,7 +18,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..adapters import pokemontcg_catalog
-from ..models import CardSet, CatalogCard  # noqa: F401  (CardSet re-exported for callers)
+from ..models import CardSet, CatalogCard
+from .identify import art_phash
 
 
 @dataclass
@@ -39,15 +40,21 @@ class CacheResult:
         return self.hashed > 0
 
 
-def _compute_phash(image_path: Path) -> str | None:
+def _compute_phashes(image_path: Path) -> tuple[str | None, str | None]:
+    """Whole-card and artwork-window hashes, from one decode of the file.
+
+    The artwork hash is what identifies reverse holos, whose foil pattern
+    covers everything except that window -- see identify.ART_REGION.
+    """
     try:
         with Image.open(image_path) as image:
-            return str(imagehash.phash(image.convert("RGB")))
+            rgb = image.convert("RGB")
+            return str(imagehash.phash(rgb)), str(art_phash(rgb))
     except Exception:
         # A corrupt/partial download shouldn't abort caching the whole set;
         # the card stays in the DB with phash=None and is simply skipped as
         # a pHash candidate (OCR can still match it).
-        return None
+        return None, None
 
 
 def is_cached(session: Session, set_id: str) -> bool:
@@ -148,7 +155,7 @@ def cache_set(
                 failed += 1
                 continue
         card.local_image_path = str(image_path)
-        card.phash = _compute_phash(image_path)
+        card.phash, card.art_phash = _compute_phashes(image_path)
         if card.phash:
             hashed += 1
 

@@ -58,6 +58,29 @@ _NUMBER_PATTERN = re.compile(r"(\d{1,3})\s*/\s*(\d{1,3})")
 MIN_UNAMBIGUOUS_MARGIN = 3
 AMBIGUOUS_CONFIDENCE_CAP = 0.70
 
+# The card's artwork panel, as fractions of an upright card. On a reverse
+# holo the foil pattern covers the card *except* this window, so hashing it
+# alone is far more stable for those printings -- measured on real scans, a
+# Cosmic Eclipse Pancham went from Hamming distance 14 (rank 3, beaten by an
+# unrelated Wobbuffet) to 6 and rank 1, and a Passimian from rank 7 to rank
+# 1. On non-holo cards it changes nothing: four verified plain cards ranked
+# first on both signals.
+#
+# It is a second signal, never a replacement -- full-art and Trainer cards
+# don't share this layout, so the whole-card hash still has to be consulted.
+ART_REGION = (0.06, 0.10, 0.94, 0.52)  # (x0, y0, x1, y1)
+
+
+def art_phash(image: "Image.Image"):
+    """Perceptual hash of just the artwork window. Takes an already-open
+    PIL image so callers hashing both signals only decode the file once."""
+    width, height = image.size
+    window = image.crop((
+        int(width * ART_REGION[0]), int(height * ART_REGION[1]),
+        int(width * ART_REGION[2]), int(height * ART_REGION[3]),
+    ))
+    return imagehash.phash(window)
+
 # Rotation candidates for `detect_sheet_set_and_rotation`, as clockwise
 # degrees -- matches `detect.py`'s `post_rotation_degrees` convention so the
 # result can be passed straight through.
@@ -122,6 +145,9 @@ class ReferenceCard:
     number: str
     name: str
     phash: str
+    # Optional so existing callers constructing a ReferenceCard by position
+    # keep working; only the reverse-holo signal uses it.
+    art_phash: str | None = None
 
 
 def read_card_number(image_path: Path, set_total: int | None = None) -> tuple[str | None, str | None]:

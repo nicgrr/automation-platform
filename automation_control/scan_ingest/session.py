@@ -474,7 +474,7 @@ def _load_all_catalogs(db: Session) -> dict[str, list[ReferenceCard]]:
     catalogs: dict[str, list[ReferenceCard]] = {}
     for card_set in catalog.cached_sets(db):
         refs = [
-            ReferenceCard(card_id=c.id, number=c.number, name=c.name, phash=c.phash)
+            ReferenceCard(card_id=c.id, number=c.number, name=c.name, phash=c.phash, art_phash=c.art_phash)
             for c in catalog.get_cached_cards(db, card_set.id) if c.phash
         ]
         if refs:
@@ -685,7 +685,7 @@ def run_session(
 
     card_set = db.get(CardSet, set_id)
     references = [
-        ReferenceCard(card_id=c.id, number=c.number, name=c.name, phash=c.phash)
+        ReferenceCard(card_id=c.id, number=c.number, name=c.name, phash=c.phash, art_phash=c.art_phash)
         for c in catalog.get_cached_cards(db, set_id) if c.phash
     ]
     if not references:

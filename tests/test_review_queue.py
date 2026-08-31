@@ -62,10 +62,14 @@ def _cache_card(session, tmp_path, *, set_id="xy11", number="31", name="Dewott",
                             cached_at=datetime.now(UTC)))
     ref = tmp_path / f"{set_id}-{number}.png"
     _art(seed).save(ref)
+    # Both hashes, matching what catalog._compute_phashes stores.
+    from automation_control.scan_ingest.identify import art_phash as _art_phash
     with Image.open(ref) as image:
-        phash = str(imagehash.phash(image.convert("RGB")))
+        rgb = image.convert("RGB")
+        phash = str(imagehash.phash(rgb))
+        art = str(_art_phash(rgb))
     session.add(CatalogCard(id=f"{set_id}-{number}", set_id=set_id, number=number, name=name,
-                            local_image_path=str(ref), phash=phash))
+                            local_image_path=str(ref), phash=phash, art_phash=art))
     session.commit()
 
 
@@ -318,3 +322,48 @@ def test_a_malformed_printed_total_is_reported_clearly(client, media, session, t
     assert resp.status_code == 400
     assert "166/236" in resp.json()["detail"]
     assert crop.exists()
+
+
+# --- the artwork signal (reverse holos) ------------------------------------
+
+def _holo_like(base_seed: int, size=(245, 342)) -> Image.Image:
+    """A card whose artwork window matches `base_seed` but whose surround is
+    scrambled -- the shape a reverse holo takes against flat reference art,
+    where foil covers everything except the artwork."""
+    import numpy as np
+
+    from automation_control.scan_ingest.identify import ART_REGION
+
+    base = np.array(_art(base_seed, size))
+    noise = np.array(_art(base_seed + 5000, size))
+    w, h = size
+    x0, y0, x1, y1 = ART_REGION
+    out = noise.copy()
+    out[int(h * y0):int(h * y1), int(w * x0):int(w * x1)] = \
+        base[int(h * y0):int(h * y1), int(w * x0):int(w * x1)]
+    return Image.fromarray(out)
+
+
+def test_a_card_only_the_artwork_matches_is_still_offered(client, media, session, tmp_path):
+    """Reverse holos barely resemble their reference anywhere but the
+    artwork window. Measured on real scans: a Cosmic Eclipse Pancham sat at
+    whole-card distance 14 and rank 3, behind an unrelated Wobbuffet, but
+    at artwork distance 6 and rank 1."""
+    _cache_card(session, tmp_path, set_id="xy11", number="31", name="Holo Target", seed=3300)
+    crop = media / "needs_review" / "sheet-a-card1-unidentified.jpg"
+    _holo_like(3300).save(crop)
+
+    resp = client.get("/review")
+
+    assert "Holo Target" in resp.text, "artwork-only match was not offered"
+
+
+def test_art_hash_is_confined_to_the_artwork_window(tmp_path):
+    """Changing only the surround must not change the artwork hash, which
+    is the whole reason it survives foil."""
+    from automation_control.scan_ingest.identify import art_phash
+
+    plain = _art(11)
+    holo = _holo_like(11)
+    assert art_phash(plain) == art_phash(holo)
+    assert imagehash.phash(plain) != imagehash.phash(holo)

@@ -398,6 +398,11 @@ class CatalogCard(Base):
     image_url: Mapped[str | None] = mapped_column(String(512))
     local_image_path: Mapped[str | None] = mapped_column(String(512))
     phash: Mapped[str | None] = mapped_column(String(64), index=True)
+    # Hash of just the artwork window (see scan_ingest/identify.ART_REGION).
+    # A reverse holo's foil covers everything but that window, so this is the
+    # signal that finds those printings; the whole-card phash above still
+    # covers layouts the window doesn't fit, like full-art cards.
+    art_phash: Mapped[str | None] = mapped_column(String(64), index=True)
     raw_prices: Mapped[dict | None] = mapped_column(JSON)
 
     card_set: Mapped[CardSet] = relationship()

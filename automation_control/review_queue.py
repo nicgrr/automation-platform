@@ -29,7 +29,7 @@ from .database import get_session
 from .models import CardVariant
 from .scan_ingest import catalog
 from .scan_ingest.commit import CommitRefused, commit_card
-from .scan_ingest.identify import Identification, Source, _phash_confidence
+from .scan_ingest.identify import Identification, Source, _phash_confidence, art_phash
 from .scan_ingest.session import _load_all_catalogs, start_or_resume
 from .ui import brand_header, page, pill
 
@@ -70,15 +70,26 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
     # to the entire catalogue in a single vectorised operation instead of a
     # Python loop per card. With ~14k cached cards the loop version took
     # seconds per page; this is milliseconds.
-    entries, bits = [], []
+    entries, bits, art_bits = [], [], []
     for set_id, references in catalogs.items():
         for reference in references:
             if reference.phash:
                 entries.append((set_id, reference))
                 bits.append(imagehash.hex_to_hash(reference.phash).hash.flatten())
+                art = getattr(reference, "art_phash", None)
+                art_bits.append(imagehash.hex_to_hash(art).hash.flatten() if art else None)
     if not entries:
         return {crop: None for crop in crops}
     matrix = np.array(bits, dtype=bool)
+    # Reverse holos barely resemble their flat reference art anywhere except
+    # the artwork window, so that window is matched as its own signal rather
+    # than blended into the whole-card distance. Blending was tried first --
+    # taking the smaller of the two distances -- and is actively wrong: a
+    # wrong card's good whole-card score then beats the right card's good
+    # art score (measured on a Passimian, correct card rank 1 on art alone
+    # but rank 7 once the two were combined by minimum).
+    has_art = [i for i, b in enumerate(art_bits) if b is not None]
+    art_matrix = np.array([art_bits[i] for i in has_art], dtype=bool) if has_art else None
 
     # No OCR here, deliberately: identify_card would run tesseract per crop
     # (measured at several seconds a page) to reconcile a printed number the
@@ -88,14 +99,38 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
     for crop in crops:
         try:
             with Image.open(crop) as image:
-                scan = imagehash.phash(image.convert("RGB")).hash.flatten()
+                rgb = image.convert("RGB")
+                scan = imagehash.phash(rgb).hash.flatten()
+                scan_art = art_phash(rgb).hash.flatten()
         except Exception:
             out[crop] = None
             continue
 
         distances = np.count_nonzero(matrix != scan, axis=1)
-        order = np.argsort(distances, kind="stable")
-        best = int(distances[order[0]])
+        # Each signal ranks independently; the merged shortlist below takes
+        # the best of both, so a card only one of them finds still appears.
+        ranked = list(np.argsort(distances, kind="stable"))
+        if art_matrix is not None:
+            art_distances = np.count_nonzero(art_matrix != scan_art, axis=1)
+            art_order = [has_art[i] for i in np.argsort(art_distances, kind="stable")]
+            art_lookup = {has_art[i]: int(art_distances[i]) for i in range(len(has_art))}
+            merged, seen_index = [], set()
+            for a, b in zip(ranked[:CANDIDATES * 4], art_order[:CANDIDATES * 4]):
+                for i in (a, b):
+                    if i not in seen_index:
+                        seen_index.add(i)
+                        merged.append(i)
+            order = merged
+        else:
+            art_lookup = {}
+            order = ranked[: CANDIDATES * 4]
+
+        def score(i: int) -> int:
+            """A card's distance on whichever signal found it best."""
+            return min(int(distances[i]), art_lookup.get(i, 64))
+
+        order = sorted(order, key=score)
+        best = score(order[0]) if order else 64
         if best > settings.scan_phash_max_distance:
             out[crop] = None
             continue
@@ -108,8 +143,8 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
         # picking from a list is a single click either way.
         seen: set[str] = set()
         candidates = []
-        for i in order[: CANDIDATES * 4]:
-            distance = int(distances[i])
+        for i in order:
+            distance = score(i)
             if distance > settings.scan_phash_max_distance:
                 break
             set_id, reference = entries[i]
