@@ -39,6 +39,31 @@ CONTENT_STD_RATIO = 0.25
 # than something safe to guess a split point for.
 MERGE_SIZE_RATIO = 1.6
 
+# --- rejoining a card split down its middle ---------------------------------
+# The mirror of MERGE_SIZE_RATIO above. A card's own plain text panel can be
+# as uniform as the empty bed beside it -- measured on a real Paldean Fates
+# sheet photographed on white paper, where one column of cards split into
+# 812px and 1286px pieces separated by a 94px "gap", while the genuine gap
+# between columns was 184px. Gap size alone therefore cannot separate them,
+# and neither can aspect ratio: those pieces scored 0.75 and 0.80, both
+# inside the card-shaped band.
+#
+# What does separate them is the card's real proportions. Rows are detected
+# *within* a column, so a vertical slice of a card still reports the card's
+# full height -- which makes height the trustworthy axis and lets the
+# expected width be predicted from it.
+CARD_ASPECT = 63 / 88  # 0.7159, the real card's short/long ratio
+
+# A band narrower than this fraction of the predicted card width is a piece
+# of a card rather than a card.
+FRAGMENT_WIDTH_RATIO = 0.8
+# ...and pieces are only joined while the result stays within this multiple
+# of one card, so two genuinely separate cards are never fused.
+MERGED_WIDTH_TOLERANCE = 1.25
+# How close a band must be to the predicted width to count as evidence that
+# the prediction is the right one.
+WIDTH_MATCH_TOLERANCE = 0.2
+
 # --- corner-accurate refinement of each detected band ---
 # The variance bands above locate cards, but only roughly: a card whose edge
 # region is low-contrast gets its band cut short (measured on a real 600 DPI
@@ -165,6 +190,56 @@ def _content_bands(std_profile: np.ndarray, min_length: int) -> list[tuple[int, 
     return [band for band in bands if band[1] - band[0] >= min_length]
 
 
+def _predict_card_width(column_widths: list[int], median_height: float) -> float | None:
+    """The width a card should have, given the height rows are reporting.
+
+    A card lies on the bed either landscape or portrait, so height implies
+    one of two widths. The *widest* band observed decides between them:
+    splitting a card only ever produces pieces narrower than the card, so
+    the widest band is the best available lower bound on the real width.
+
+    Counting how many bands each candidate explains was tried first and is
+    wrong -- when a card splits into two near-equal halves those halves
+    outvote the one intact card, and the detector confidently predicts a
+    half-card as the true width. The widest band can't be outvoted that way.
+
+    Returns None when the widest band matches neither candidate, which
+    happens if bands are nothing like cards. Declining is the safe failure:
+    a wrong prediction here would fuse real cards together.
+    """
+    if not column_widths or median_height <= 0:
+        return None
+    widest = max(column_widths)
+    candidates = (median_height / CARD_ASPECT, median_height * CARD_ASPECT)
+    best = min(candidates, key=lambda c: abs(widest - c))
+    if abs(widest - best) > best * WIDTH_MATCH_TOLERANCE:
+        return None
+    return best
+
+
+def _merge_fragmented_columns(col_bands: list[tuple[int, int]], expected_width: float) -> list[tuple[int, int]]:
+    """Join adjacent column bands that are pieces of one card.
+
+    Absorbs neighbours only while the running band is still materially
+    narrower than a card and the result wouldn't overshoot one -- so a
+    correctly-sized band is never touched, and two adjacent whole cards are
+    never merged into one.
+    """
+    merged: list[tuple[int, int]] = []
+    index = 0
+    while index < len(col_bands):
+        x1, x2 = col_bands[index]
+        while index + 1 < len(col_bands) and (x2 - x1) < expected_width * FRAGMENT_WIDTH_RATIO:
+            next_x1, next_x2 = col_bands[index + 1]
+            if (next_x2 - x1) > expected_width * MERGED_WIDTH_TOLERANCE:
+                break
+            x2 = next_x2
+            index += 1
+        merged.append((x1, x2))
+        index += 1
+    return merged
+
+
 def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], list[tuple[int, int]]]]:
     """Column bands globally, then row bands *independently within each
     column's own vertical strip* -- not a shared grid.
@@ -178,13 +253,26 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
     """
     gray = cv2.cvtColor(sheet, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape[:2]
+    min_row = int(height * MIN_BAND_FRACTION)
     col_bands = _content_bands(gray.std(axis=0), int(width * MIN_BAND_FRACTION))
 
-    result = []
-    for x1, x2 in col_bands:
-        strip = gray[:, x1:x2]
-        row_bands = _content_bands(strip.std(axis=1), int(height * MIN_BAND_FRACTION))
-        result.append(((x1, x2), row_bands))
+    def rows_for(x1: int, x2: int) -> list[tuple[int, int]]:
+        return _content_bands(gray[:, x1:x2].std(axis=1), min_row)
+
+    result = [((x1, x2), rows_for(x1, x2)) for x1, x2 in col_bands]
+
+    # A card split down its middle reports the *full* card height in both
+    # halves (rows are found within a column), so this first pass gives a
+    # trustworthy height even when the widths are wrong -- which is what
+    # makes predicting the true width possible. See _predict_card_width.
+    heights = [y2 - y1 for _, rows in result for y1, y2 in rows]
+    if heights:
+        median_height = sorted(heights)[len(heights) // 2]
+        expected_width = _predict_card_width([x2 - x1 for x1, x2 in col_bands], median_height)
+        if expected_width:
+            rejoined = _merge_fragmented_columns(col_bands, expected_width)
+            if rejoined != col_bands:
+                result = [((x1, x2), rows_for(x1, x2)) for x1, x2 in rejoined]
     return result
 
 

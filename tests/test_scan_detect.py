@@ -282,3 +282,69 @@ def test_detect_cards_tolerates_real_scan_variance_near_the_aspect_floor(tmp_pat
     assert result.count == 2
     assert result.ok
     assert result.warnings == []
+
+
+def _card_with_uniform_strip(seed: int, strip_at: float = 0.45, strip_w: int = 44) -> np.ndarray:
+    """A textured card carrying a plain vertical panel, like the text column
+    on a real card. That panel is what a variance detector mistakes for the
+    empty bed between cards."""
+    card = _textured_card(seed)
+    x = int(CARD_W * strip_at)
+    card[:, x : x + strip_w] = (246, 246, 246)
+    return card
+
+
+def test_detect_cards_rejoins_a_card_split_down_its_own_text_panel(tmp_path):
+    """The real failure this guards against: a Paldean Fates sheet on white
+    paper split one column of cards into 812px and 1286px pieces with a 94px
+    'gap', while the genuine gap between columns was 184px -- so gap size
+    can't separate them. Aspect ratio can't either: the pieces scored 0.75
+    and 0.80, both inside the card-shaped band.
+
+    Geometry mirrors that scan: one intact column supplying the true card
+    width, one column split by its own panel.
+    """
+    gap = 150
+    width = MARGIN * 2 + CARD_W * 2 + gap
+    height = MARGIN * 2 + CARD_H
+    sheet = np.full((height, width, 3), BG_COLOR, dtype=np.uint8)
+
+    left_x = MARGIN
+    right_x = MARGIN + CARD_W + gap
+    sheet[MARGIN : MARGIN + CARD_H, left_x : left_x + CARD_W] = _textured_card(1)
+    sheet[MARGIN : MARGIN + CARD_H, right_x : right_x + CARD_W] = _card_with_uniform_strip(2)
+
+    sheet_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(sheet_path), sheet)
+
+    result = detect_cards(sheet_path, tmp_path / "out")
+
+    assert result.count == 2, f"expected 2 cards, got {result.count}"
+    for card in result.cards:
+        w, _ = card.size
+        assert abs(w - CARD_W) < CARD_W * 0.15, f"card width {w} is not a whole card ({CARD_W})"
+
+
+def test_detect_cards_still_separates_two_genuinely_adjacent_cards(tmp_path):
+    """The flip side: rejoining must never fuse two real cards. Two whole
+    cards with a normal gap stay two cards."""
+    sheet_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(sheet_path), _make_sheet(rows=1, cols=2))
+
+    result = detect_cards(sheet_path, tmp_path / "out")
+
+    assert result.count == 2
+    for card in result.cards:
+        w, _ = card.size
+        assert abs(w - CARD_W) < CARD_W * 0.15
+
+
+def test_predict_card_width_refuses_to_guess_without_support(tmp_path):
+    """A wrong width prediction would fuse real cards, so with no band
+    matching either candidate the detector must decline to merge."""
+    from automation_control.scan_ingest.detect import _predict_card_width
+
+    # widths nowhere near height/0.716 (=1397) or height*0.716 (=716)
+    assert _predict_card_width([200, 210], median_height=1000) is None
+    # ...and a supported prediction is returned
+    assert _predict_card_width([1400, 1390], median_height=1000) is not None
