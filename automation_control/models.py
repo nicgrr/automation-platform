@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, LargeBinary, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -62,6 +62,29 @@ class PricingStatus(str, enum.Enum):
 
 
 class CaptureBatchStatus(str, enum.Enum):
+    RUNNING = "running"
+    DONE = "done"
+
+
+class ListingBuildStatus(str, enum.Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    PUBLISHED = "published"
+    FAILED = "failed"
+
+
+class CardVariant(str, enum.Enum):
+    """Which printing of a card this copy is. Not reliably detectable from a
+    flatbed scan (holo foil mostly reads as glare), so the operator sets it
+    per batch and can override it per card at confirmation time."""
+
+    NORMAL = "normal"
+    REVERSE_HOLO = "reverse_holo"
+    HOLO = "holo"
+
+
+class ScanSessionStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
 
@@ -289,3 +312,166 @@ class CaptureBatch(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_by: Mapped[str | None] = mapped_column(String(128))
+
+
+class PendingListing(Base):
+    """A listing built from priced, approved CapturedCard rows (see
+    listing_pipeline/ingest_db.py + render.py), staged here for human review
+    before it's ever sent to eBay. status moves draft -> approved (a human
+    clicked Approve on /listings/review, which also creates/decides the
+    Approval row referenced by approval_id) -> published (the Sell API
+    write in listing_pipeline/publish.py succeeded) or failed."""
+
+    __tablename__ = "pending_listings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    custom_label: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(256))
+    description_html: Mapped[str] = mapped_column(Text)
+    list_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    floor_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    category_id: Mapped[str] = mapped_column(String(32))
+    condition_id: Mapped[str] = mapped_column(String(32))
+    image_urls: Mapped[list] = mapped_column(JSON, default=list)
+    card_ids: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[ListingBuildStatus] = mapped_column(Enum(ListingBuildStatus), default=ListingBuildStatus.DRAFT, index=True)
+    ebay_listing_id: Mapped[str | None] = mapped_column(String(128))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    approval_id: Mapped[str | None] = mapped_column(ForeignKey("approvals.id"))
+
+
+class CardSet(Base):
+    """A Pokemon TCG set, cached from pokemontcg.io. Reference data for the
+    scan-ingest pipeline (automation_control/scan_ingest/), which asks the
+    operator which set they're scanning and then only has to resolve each
+    card's number *within* that set.
+
+    The upstream set id ("xy11") is a stable natural key, so it's the PK
+    directly rather than carrying a separate UUID.
+    """
+
+    __tablename__ = "card_sets"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256))
+    code: Mapped[str | None] = mapped_column(String(32), index=True)
+    series: Mapped[str | None] = mapped_column(String(128))
+    release_date: Mapped[str | None] = mapped_column(String(32))
+    printed_total: Mapped[int | None] = mapped_column(Integer)
+    total: Mapped[int | None] = mapped_column(Integer)
+    cached_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set artwork from pokemontcg.io, stored as upstream URLs rather than
+    # downloaded: they're small, the browser caches them, and the set grid
+    # is the one view where a recognisable logo does more for scanning a
+    # list than any amount of text.
+    logo_url: Mapped[str | None] = mapped_column(String(512))
+    symbol_url: Mapped[str | None] = mapped_column(String(512))
+
+
+class CatalogCard(Base):
+    """One card's reference data within a cached set -- what the physical
+    scan gets matched *against*. Named CatalogCard rather than Card to stay
+    unambiguous next to CapturedCard (the AI-vision capture flow's rows,
+    which are actual owned photographs rather than catalog reference data).
+
+    `phash` is precomputed at cache time from the downloaded reference
+    image, so identification (scan_ingest/identify.py) is a pure in-memory
+    Hamming-distance comparison against only this set's ~100-250 cards.
+
+    `raw_prices` holds whatever pricing blob (tcgplayer/cardmarket) came
+    bundled in the same set-fetch response -- captured at cache time
+    because it costs no extra API call, not because it's trusted. See
+    scan_ingest/pricing.py for the caveats and the swappable interface this
+    feeds.
+    """
+
+    __tablename__ = "catalog_cards"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    set_id: Mapped[str] = mapped_column(ForeignKey("card_sets.id"), index=True)
+    number: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(256))
+    rarity: Mapped[str | None] = mapped_column(String(128))
+    artist: Mapped[str | None] = mapped_column(String(256))
+    supertype: Mapped[str | None] = mapped_column(String(64))
+    image_url: Mapped[str | None] = mapped_column(String(512))
+    local_image_path: Mapped[str | None] = mapped_column(String(512))
+    phash: Mapped[str | None] = mapped_column(String(64), index=True)
+    raw_prices: Mapped[dict | None] = mapped_column(JSON)
+
+    card_set: Mapped[CardSet] = relationship()
+
+
+class ScanSession(Base):
+    """One sitting of scanning a single set. Survives being interrupted:
+    a session left RUNNING is offered for resume next time that set is
+    picked, so a pile spread over several days keeps one running count
+    instead of fragmenting into a session per sitting.
+    """
+
+    __tablename__ = "scan_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    set_id: Mapped[str] = mapped_column(ForeignKey("card_sets.id"), index=True)
+    status: Mapped[ScanSessionStatus] = mapped_column(Enum(ScanSessionStatus), default=ScanSessionStatus.RUNNING, index=True)
+    batch_variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant), default=CardVariant.NORMAL)
+    sheets_scanned: Mapped[int] = mapped_column(Integer, default=0)
+    cards_committed: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_by: Mapped[str | None] = mapped_column(String(128))
+
+    card_set: Mapped[CardSet] = relationship()
+
+
+class InventoryItem(Base):
+    """A physical card actually owned, as opposed to CatalogCard (what
+    exists in the world). Quantity-based rather than row-per-copy: scanning
+    a third copy of the same card in the same variant and condition
+    increments an existing row, since inventory questions are "how many do
+    I have" rather than "tell me about copy #2".
+
+    That makes (card_id, variant, condition) the natural identity, enforced
+    by a unique constraint so a concurrent double-commit can't split one
+    holding across two rows.
+    """
+
+    __tablename__ = "inventory_items"
+    __table_args__ = (UniqueConstraint("card_id", "variant", "condition", name="uq_inventory_card_variant_condition"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    card_id: Mapped[str] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
+    variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant), default=CardVariant.NORMAL, index=True)
+    condition: Mapped[str] = mapped_column(String(64), default="Near Mint")
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    scan_image_path: Mapped[str | None] = mapped_column(String(512))
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("scan_sessions.id"), index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    card: Mapped[CatalogCard] = relationship()
+
+
+class CardPrice(Base):
+    """A price observation for a catalog card, kept append-only and
+    source-tagged rather than as a single mutable column on InventoryItem.
+
+    Deliberately decoupled from ingest: pokemontcg.io's pricing proved
+    unreliable in practice, so swapping in a different source (eBay sold
+    comps) is a new `source` value written by a different adapter, with no
+    schema change and no change to scanning code.
+    """
+
+    __tablename__ = "card_prices"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    card_id: Mapped[str] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
+    variant: Mapped[CardVariant | None] = mapped_column(Enum(CardVariant))
+    source: Mapped[str] = mapped_column(String(64), index=True)
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    card: Mapped[CatalogCard] = relationship()

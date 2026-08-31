@@ -22,9 +22,31 @@ class Settings(BaseSettings):
     ebay_client_secret: str | None = None
     ebay_runame: str | None = None
     listing_pipeline_output_dir: str = "listing_pipeline_data/output"
+    listing_pipeline_config_path: str = "listing_pipeline_data/config.toml"
     anthropic_api_key: str | None = None
     captured_cards_dir: str = "captured_cards"
     pokemontcg_api_key: str | None = None
+    # Bulk scan ingest (automation_control/scan_ingest/). watch_dir is the
+    # folder scanned sheets land in -- shared to the scanning PC over Samba
+    # -- and the rest are local working directories the CLI manages itself.
+    scan_watch_dir: str = "scan_ingest_data/watch"
+    scan_archive_dir: str = "scan_ingest_data/archive"
+    scan_media_dir: str = "scan_ingest_data/media"
+    scan_cache_dir: str = "scan_ingest_data/cache"
+    # Maximum pHash Hamming distance still counted as a match. 0 is
+    # identical; a scan of the same card typically lands in the single
+    # digits, while a different card in the same set is usually well above
+    # 20. Anything above this goes to the manual-confirmation queue rather
+    # than being guessed at.
+    scan_phash_max_distance: int = 12
+    # Where the background scan-ingest service (scan-ingest.service) writes
+    # its stdout/stderr, per the unit's StandardOutput=append: -- the status
+    # page tails this rather than shelling out to journalctl.
+    scan_log_file: str = "scan_ingest_data/logs/scan-ingest.log"
+    r2_endpoint_url: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket_name: str | None = None
 
     @property
     def ebay_callback_url(self) -> str | None:
