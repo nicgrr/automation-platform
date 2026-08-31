@@ -31,10 +31,24 @@ class ImagesConfig(BaseModel):
 
 class PricingConfig(BaseModel):
     auto_accept_pct: Decimal
+    # Used only by the DB-driven capture pipeline (ingest_db.py) to derive a
+    # floor price from list_price -- the Excel-driven CLI gets floor_price
+    # straight from the Sale Plan sheet instead and never reads this field.
+    floor_price_pct: Decimal = Decimal("0.70")
 
 
 class TitleConfig(BaseModel):
     term_order: list[str]
+
+
+class ClassificationConfig(BaseModel):
+    # Cards priced below this (in AUD) are grouped into bulk lots instead of
+    # listed as singles -- see automation_control/classification.py, which
+    # runs this rule automatically at the end of each price-check pass. A
+    # human can still override the grouping on /cards/pricing before
+    # approving, so this only sets the *default* the human starts from.
+    bulk_price_threshold_aud: Decimal
+    max_lot_size: int = 8
 
 
 class PipelineConfig(BaseModel):
@@ -42,6 +56,12 @@ class PipelineConfig(BaseModel):
     images: ImagesConfig
     pricing: PricingConfig
     title: TitleConfig
+    # Only used by the DB-driven capture -> price-review pipeline
+    # (automation_control/classification.py), not by the Excel-driven CLI
+    # stages (ingest/group/render/export) -- optional so config.toml files
+    # written before this feature existed, and tests constructing
+    # PipelineConfig directly for CLI-stage tests, don't need it.
+    classification: ClassificationConfig | None = None
     # Bundle listings have no single card to derive a title from, so each
     # bundle tag (matching Tracker's Notes column, e.g. "BUNDLE A - Mega
     # Evolution Double Rare lot") needs an explicit title here.

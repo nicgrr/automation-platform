@@ -6,6 +6,7 @@ from anthropic import Anthropic
 from pydantic import BaseModel
 
 MODEL = "claude-opus-5"
+DEFAULT_GAME = "Pokemon TCG"
 
 _BBOX_INSTRUCTIONS = (
     "For each card, also return its bounding_box in the FRONT photo: "
@@ -18,32 +19,43 @@ _BBOX_INSTRUCTIONS = (
     "(0, 90, 180, or 270 -- 0 if it's already upright)."
 )
 
-EXTRACTION_PROMPT_FRONT_AND_BACK = (
-    "Identify every distinct Pokemon TCG card visible in these front and back "
-    "photos -- there may be just one card, or several laid out together in the "
-    "same shot. Return one entry per physical card. For each card, extract "
-    "character/card name, set name, card number, rarity, language, and "
-    "grading status (\"Raw\" if ungraded, or the grading company and number "
-    "if slabbed). If a field for a given card is not clearly legible, list "
-    "its name in that card's unreadable_fields rather than guessing a value "
-    "for it. If no card is clearly identifiable in the photo, return an "
-    "empty list. " + _BBOX_INSTRUCTIONS
-)
 
-EXTRACTION_PROMPT_FRONT_ONLY = (
-    "Identify every distinct Pokemon TCG card visible in this front photo -- "
-    "there may be just one card, or several laid out together in the same "
-    "shot (no back photo was provided). Return one entry per physical card. "
-    "For each card, extract character/card name, set name, card number, "
-    "rarity, and language from what's visible. For grading status, note "
-    "\"Raw\" only if the card clearly isn't in a graded slab; if it is "
-    "slabbed, read the grading company and grade off the visible label, but "
-    "list graded in that card's unreadable_fields if the certification "
-    "number isn't visible from the front alone. If a field for a given card "
-    "is not clearly legible, list its name in that card's unreadable_fields "
-    "rather than guessing a value for it. If no card is clearly identifiable "
-    "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS
-)
+class RecognitionError(Exception):
+    """The model's response didn't match the expected schema -- e.g. the
+    photo shows cards from a different game than the one asked about, or a
+    transient bad response. Distinct from a successfully-parsed empty list
+    (which just means no card was found, a normal outcome)."""
+
+
+def _extraction_prompt_front_and_back(game: str) -> str:
+    return (
+        f"Identify every distinct {game} card visible in these front and back "
+        "photos -- there may be just one card, or several laid out together in the "
+        "same shot. Return one entry per physical card. For each card, extract "
+        "character/card name, set name, card number, rarity, language, and "
+        "grading status (\"Raw\" if ungraded, or the grading company and number "
+        "if slabbed). If a field for a given card is not clearly legible, list "
+        "its name in that card's unreadable_fields rather than guessing a value "
+        "for it. If no card is clearly identifiable in the photo, return an "
+        "empty list. " + _BBOX_INSTRUCTIONS
+    )
+
+
+def _extraction_prompt_front_only(game: str) -> str:
+    return (
+        f"Identify every distinct {game} card visible in this front photo -- "
+        "there may be just one card, or several laid out together in the same "
+        "shot (no back photo was provided). Return one entry per physical card. "
+        "For each card, extract character/card name, set name, card number, "
+        "rarity, and language from what's visible. For grading status, note "
+        "\"Raw\" only if the card clearly isn't in a graded slab; if it is "
+        "slabbed, read the grading company and grade off the visible label, but "
+        "list graded in that card's unreadable_fields if the certification "
+        "number isn't visible from the front alone. If a field for a given card "
+        "is not clearly legible, list its name in that card's unreadable_fields "
+        "rather than guessing a value for it. If no card is clearly identifiable "
+        "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS
+    )
 
 
 class ExtractedCard(BaseModel):
@@ -80,13 +92,13 @@ def _image_block(path: Path) -> dict:
     return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
 
 
-def extract_card_details(front_path: Path, back_path: Path | None, api_key: str) -> list[ExtractedCard]:
+def extract_card_details(front_path: Path, back_path: Path | None, api_key: str, game: str = DEFAULT_GAME) -> list[ExtractedCard]:
     content = [_image_block(front_path)]
     if back_path is not None:
         content.append(_image_block(back_path))
-        content.append({"type": "text", "text": EXTRACTION_PROMPT_FRONT_AND_BACK})
+        content.append({"type": "text", "text": _extraction_prompt_front_and_back(game)})
     else:
-        content.append({"type": "text", "text": EXTRACTION_PROMPT_FRONT_ONLY})
+        content.append({"type": "text", "text": _extraction_prompt_front_only(game)})
 
     client = Anthropic(api_key=api_key)
     response = client.messages.parse(
@@ -95,6 +107,8 @@ def extract_card_details(front_path: Path, back_path: Path | None, api_key: str)
         messages=[{"role": "user", "content": content}],
         output_format=ExtractedCards,
     )
+    if response.parsed_output is None:
+        raise RecognitionError(f"model did not return a response matching the expected schema (game={game!r})")
     return response.parsed_output.cards
 
 

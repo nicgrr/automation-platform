@@ -14,6 +14,7 @@ from .adapters.currency import CurrencyLookupError, get_usd_to_aud_rate, usd_to_
 from .adapters.pokemontcg import PriceLookupError, PriceNotFound, lookup_price
 from .audit import record_event
 from .auth import require_dashboard_user
+from .classification import classify_pending_cards, load_pipeline_config
 from .database import SessionLocal, get_session
 from .models import CapturedCard, CardCaptureStatus, PricingStatus
 from .ui import brand_header, page
@@ -118,6 +119,18 @@ def _run_price_check(api_key: str | None, user: str) -> None:
 
                 if index < len(cards) - 1:
                     time.sleep(PACING_DELAY_SECONDS)
+
+            try:
+                pipeline_config = load_pipeline_config()
+            except Exception as exc:
+                record_event(session, actor_type="user", actor_id=user, action="card.auto_classify", resource_type="captured_card", resource_id=None, outcome="failed", correlation_id=_correlation_id(), details={"error": f"could not load classification config: {exc}"})
+            else:
+                if pipeline_config.classification is not None:
+                    classify_pending_cards(
+                        session,
+                        threshold_aud=pipeline_config.classification.bulk_price_threshold_aud,
+                        max_lot_size=pipeline_config.classification.max_lot_size,
+                    )
     finally:
         _finish_price_check(run_id)
 

@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock, patch
 
-from automation_control.card_recognition import ExtractedCard, ExtractedCards, RotationCheck, _image_block, detect_rotation, extract_card_details
+import pytest
+
+from automation_control.card_recognition import ExtractedCard, ExtractedCards, RecognitionError, RotationCheck, _image_block, detect_rotation, extract_card_details
 
 
 def test_image_block_base64_encodes_file(tmp_path):
@@ -91,6 +93,47 @@ def test_extract_card_details_propagates_api_errors(tmp_path):
             raise AssertionError("should have raised")
         except RuntimeError as exc:
             assert str(exc) == "network error"
+
+
+def test_extract_card_details_raises_recognition_error_on_unparseable_response(tmp_path):
+    # e.g. the photo shows cards from a different game than the prompt asks
+    # about -- the model's response doesn't fit ExtractedCards, and the SDK
+    # surfaces that as parsed_output=None rather than an exception.
+    front = tmp_path / "front.jpg"
+    front.write_bytes(b"front-bytes")
+    fake_response = MagicMock(parsed_output=None)
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value.messages.parse.return_value = fake_response
+        with pytest.raises(RecognitionError):
+            extract_card_details(front, None, api_key="fake-key")
+
+
+def test_extract_card_details_defaults_to_pokemon_prompt(tmp_path):
+    front = tmp_path / "front.jpg"
+    front.write_bytes(b"front-bytes")
+    fake_response = MagicMock(parsed_output=ExtractedCards(cards=[]))
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value.messages.parse.return_value = fake_response
+        extract_card_details(front, None, api_key="fake-key")
+        content = MockAnthropic.return_value.messages.parse.call_args.kwargs["messages"][0]["content"]
+        text_block = next(b for b in content if b["type"] == "text")
+        assert "Pokemon TCG" in text_block["text"]
+
+
+def test_extract_card_details_accepts_a_different_game(tmp_path):
+    front = tmp_path / "front.jpg"
+    front.write_bytes(b"front-bytes")
+    fake_response = MagicMock(parsed_output=ExtractedCards(cards=[]))
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value.messages.parse.return_value = fake_response
+        extract_card_details(front, None, api_key="fake-key", game="One Piece Card Game")
+        content = MockAnthropic.return_value.messages.parse.call_args.kwargs["messages"][0]["content"]
+        text_block = next(b for b in content if b["type"] == "text")
+        assert "One Piece Card Game" in text_block["text"]
+        assert "Pokemon TCG" not in text_block["text"]
 
 
 def test_detect_rotation_returns_degrees_from_response(tmp_path):

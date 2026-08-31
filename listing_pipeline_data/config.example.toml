@@ -51,3 +51,12 @@ term_order = ["game", "character", "card_number", "rarity", "set_name"]
 # entry under 80 characters.
 [bundle_titles]
 "BUNDLE A - Example lot name" = "Pokemon TCG Mixed Rare Bundle Lot of 6"
+
+[classification]
+# Cards priced (suggested_price, in AUD) below this are auto-grouped into
+# bulk lots by automation_control/classification.py, instead of being
+# listed as singles. A human can still override the grouping during price
+# review before approving. This only affects the DB-driven capture ->
+# price-review -> listing pipeline, not the Excel-driven CLI above.
+bulk_price_threshold_aud = "8.00"
+max_lot_size = 8   # cards per auto-grouped lot
