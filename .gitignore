@@ -13,5 +13,10 @@ htmlcov/
 *.sqlite3
 listing_pipeline_data/*
 !listing_pipeline_data/config.example.toml
+# Scan output: reference-image cache, card crops, thumbnails, and archived
+# sheets (a single 600dpi sheet is ~70MB). All reproducible from a rescan or
+# a cache-set, none of it source. Same shape as listing_pipeline_data above.
+scan_ingest_data/*
+!scan_ingest_data/session.env.example
 captured_cards/
 *.egg-info/
