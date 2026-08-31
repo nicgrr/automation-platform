@@ -294,3 +294,133 @@ def test_thumb_falls_back_to_the_original_when_resizing_fails(client, session, t
 
 def test_thumb_404s_for_unknown_item(client):
     assert client.get("/inventory/thumb/does-not-exist").status_code == 404
+
+
+# --- sorting and the whole-set view ----------------------------------------
+
+def _seed_set(session, set_id, name, release_date, printed_total=100):
+    session.add(CardSet(id=set_id, name=name, release_date=release_date, printed_total=printed_total))
+    card = CatalogCard(id=f"{set_id}-1", set_id=set_id, number="1", name=f"{name} Card")
+    session.add(card)
+    session.add(InventoryItem(card_id=card.id, variant=CardVariant.NORMAL, condition="Near Mint", quantity=1))
+    session.commit()
+
+
+def test_sets_default_to_newest_release_first(client, session):
+    _seed_set(session, "old", "Old Set", "2016/08/03")
+    _seed_set(session, "new", "New Set", "2023/03/31")
+    resp = client.get("/inventory")
+    assert resp.text.index("New Set") < resp.text.index("Old Set")
+
+
+def test_sets_can_be_sorted_oldest_first(client, session):
+    _seed_set(session, "old", "Old Set", "2016/08/03")
+    _seed_set(session, "new", "New Set", "2023/03/31")
+    resp = client.get("/inventory", params={"sort": "released_asc"})
+    assert resp.text.index("Old Set") < resp.text.index("New Set")
+
+
+def test_sets_can_be_sorted_by_name(client, session):
+    _seed_set(session, "zzz", "Zebra Set", "2016/08/03")
+    _seed_set(session, "aaa", "Alpha Set", "2023/03/31")
+    resp = client.get("/inventory", params={"sort": "name"})
+    assert resp.text.index("Alpha Set") < resp.text.index("Zebra Set")
+
+
+def test_a_set_with_no_release_date_sorts_last_not_first(client, session):
+    """An unknown date must not masquerade as the newest release."""
+    _seed_set(session, "dated", "Dated Set", "2020/01/01")
+    _seed_set(session, "undated", "Undated Set", None)
+    resp = client.get("/inventory")
+    assert resp.text.index("Dated Set") < resp.text.index("Undated Set")
+
+
+def test_unknown_sort_falls_back_rather_than_erroring(client, session):
+    _seed_set(session, "a", "A Set", "2020/01/01")
+    assert client.get("/inventory", params={"sort": "bogus"}).status_code == 200
+
+
+def test_set_page_lists_unowned_cards_too(client, session):
+    """Progress is 'x of y' -- you can only see that against the whole set,
+    so unowned cards appear dimmed with Qty: 0 rather than being hidden."""
+    _seed(session, card_id="xy11-1", number="1", name="Owned")
+    session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
+    session.commit()
+
+    resp = client.get(SET_PAGE)
+    assert "Owned" in resp.text and "NotOwned" in resp.text
+    assert "Qty: 0" in resp.text
+    assert "unowned" in resp.text
+
+
+def test_set_page_owned_only_hides_the_rest(client, session):
+    _seed(session, card_id="xy11-1", number="1", name="Owned")
+    session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
+    session.commit()
+
+    resp = client.get(SET_PAGE, params={"owned_only": "1"})
+    assert "Owned" in resp.text
+    assert "NotOwned" not in resp.text
+
+
+def test_set_page_splits_a_card_into_its_printings(client, session):
+    """The same card in normal and reverse holo are different things to own
+    and are priced differently, so each gets its own tile."""
+    session.add(CardSet(id="xy11", name="Steam Siege", printed_total=114))
+    session.add(CatalogCard(
+        id="xy11-1", set_id="xy11", number="1", name="Caterpie",
+        raw_prices={"tcgplayer": {"prices": {"normal": {"market": 0.25},
+                                             "reverseHolofoil": {"market": 0.54}}}},
+    ))
+    session.commit()
+
+    resp = client.get(SET_PAGE)
+    assert resp.text.count("Caterpie") == 2
+    assert "Normal" in resp.text and "Reverse Holo" in resp.text
+
+
+def test_set_page_shows_rarity_and_number(client, session):
+    session.add(CardSet(id="xy11", name="Steam Siege", printed_total=114))
+    session.add(CatalogCard(id="xy11-1", set_id="xy11", number="1", name="Caterpie", rarity="Common"))
+    session.commit()
+    resp = client.get(SET_PAGE)
+    assert "Common" in resp.text
+    assert "1/114" in resp.text
+
+
+def test_set_page_uses_uniform_reference_art_not_the_scan(client, session, tmp_path):
+    """Tiles are all the same size because they all come from the catalog's
+    245x342 reference art, not from scans of varying crop."""
+    _seed(session, card_id="xy11-1", number="1", name="Owned")
+    card = session.get(CatalogCard, "xy11-1")
+    card.local_image_path = str(tmp_path / "ref.png")
+    session.commit()
+
+    resp = client.get(SET_PAGE)
+    assert "/inventory/card-thumb/xy11-1" in resp.text
+
+
+def test_card_thumb_is_resized_to_the_shared_width(client, session, tmp_path, monkeypatch):
+    from PIL import Image
+    import io
+
+    monkeypatch.setattr(
+        inventory_review, "get_settings",
+        lambda: type("S", (), {"scan_media_dir": str(tmp_path / "media")})(),
+    )
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (245, 342), (10, 120, 200)).save(ref)
+    session.add(CardSet(id="xy11", name="Steam Siege", printed_total=114))
+    session.add(CatalogCard(id="xy11-1", set_id="xy11", number="1", name="Caterpie", local_image_path=str(ref)))
+    session.commit()
+
+    resp = client.get("/inventory/card-thumb/xy11-1")
+    assert resp.status_code == 200
+    assert Image.open(io.BytesIO(resp.content)).width == inventory_review.THUMB_WIDTH
+
+
+def test_card_thumb_404s_without_reference_art(client, session):
+    session.add(CardSet(id="xy11", name="Steam Siege", printed_total=114))
+    session.add(CatalogCard(id="xy11-1", set_id="xy11", number="1", name="Caterpie"))
+    session.commit()
+    assert client.get("/inventory/card-thumb/xy11-1").status_code == 404
