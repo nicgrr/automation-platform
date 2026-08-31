@@ -132,6 +132,45 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
     return out
 
 
+def _set_for_printed_total(session, printed_total: int, number: str, crop: Path, catalogs) -> str:
+    """Which cached set a "N/TOTAL" refers to.
+
+    The printed total usually identifies a set outright. A handful share one
+    (Chilling Reign and Scarlet & Violet are both /198), so where it's
+    ambiguous the crop's own art breaks the tie -- comparing only the
+    candidate sets' card #N, which is a far easier question than searching
+    the whole catalogue.
+    """
+    candidates = [
+        s.id for s in catalog.cached_sets(session)
+        if s.printed_total == printed_total and s.id in catalogs
+    ]
+    if not candidates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"no cached set has {printed_total} printed cards -- cache it first "
+                   f"(scan-ingest cache-set) and it'll be matchable",
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+
+    try:
+        with Image.open(crop) as image:
+            scan = imagehash.phash(image.convert("RGB"))
+    except Exception:
+        return candidates[0]
+
+    best, best_distance = candidates[0], None
+    for set_id in candidates:
+        reference = next((r for r in catalogs[set_id] if r.number == number and r.phash), None)
+        if reference is None:
+            continue
+        distance = scan - imagehash.hex_to_hash(reference.phash)
+        if best_distance is None or distance < best_distance:
+            best, best_distance = set_id, distance
+    return best
+
+
 def _review_dir() -> Path:
     return Path(get_settings().scan_media_dir) / "needs_review"
 
@@ -210,7 +249,8 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     if not candidates:
         options = (
             "<div class='no-match'>No confident match in any cached set.</div>"
-            "<div class='hint'>Type the number below if you can read it, or discard.</div>"
+            "<div class='hint'>Type the number as printed on the card (e.g. 166/236) &mdash; "
+            "the total identifies the set.</div>"
         )
         default_set = ""
     else:
@@ -237,7 +277,7 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
         f"{options}"
         f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
         "<div class='manual'>"
-        "<input name='number' placeholder='or type a no.' autocomplete='off'>"
+        "<input name='number' placeholder='or type 166/236' autocomplete='off' inputmode='numeric'>"
         "<button name='action' value='accept'>Accept</button>"
         "<button name='action' value='discard' class='ghost'>Discard</button>"
         "</div></form></div>"
@@ -268,16 +308,40 @@ def review_decide(
     elif action != "accept":
         raise HTTPException(status_code=400, detail=f"unknown action: {action!r}")
 
-    number = (number or "").strip().lstrip("0") or ""
-    if not set_id or not number:
-        raise HTTPException(status_code=400, detail="a set and card number are required to accept")
+    typed = (number or "").strip()
+    catalogs = _load_all_catalogs(session)
 
-    references = _load_all_catalogs(session).get(set_id)
+    # "166/236" -- exactly what's printed on the card. The denominator names
+    # the set, which matters because the typed number otherwise applies to
+    # whichever set the top match happened to be in; when every suggestion is
+    # wrong (the common case for anything reaching this queue) that set is
+    # wrong too, and there was no way to say otherwise.
+    if "/" in typed:
+        raw_number, _, raw_total = typed.partition("/")
+        number = raw_number.strip().lstrip("0") or ""
+        try:
+            printed_total = int(raw_total.strip())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"couldn't read a set size from {typed!r} -- try e.g. 166/236")
+        set_id = _set_for_printed_total(session, printed_total, number, path, catalogs)
+    else:
+        number = typed.lstrip("0") or ""
+
+    if not set_id or not number:
+        raise HTTPException(
+            status_code=400,
+            detail="a card number is required -- type it as it's printed (e.g. 166/236) to also identify the set",
+        )
+
+    references = catalogs.get(set_id)
     if not references:
         raise HTTPException(status_code=400, detail=f"set {set_id!r} is not cached")
     match = next((r for r in references if r.number == number), None)
     if match is None:
-        raise HTTPException(status_code=400, detail=f"no card #{number} in {set_id}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"no card #{number} in {set_id} -- if that's the wrong set, type the number as printed (e.g. {number}/236)",
+        )
 
     settings = get_settings()
     scan_session = start_or_resume(session, set_id, CardVariant.NORMAL, _WebPrompter(), user=user, unattended=True)

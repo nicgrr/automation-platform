@@ -55,10 +55,10 @@ def _queue(media: Path, name: str, seed: int = 1) -> Path:
     return path
 
 
-def _cache_card(session, tmp_path, *, set_id="xy11", number="31", name="Dewott", seed=1):
+def _cache_card(session, tmp_path, *, set_id="xy11", number="31", name="Dewott", seed=1, printed_total=114):
     if session.get(CardSet, set_id) is None:
         # cached_at matters: only sets marked cached are matched against.
-        session.add(CardSet(id=set_id, name="Steam Siege", printed_total=114,
+        session.add(CardSet(id=set_id, name="Steam Siege", printed_total=printed_total,
                             cached_at=datetime.now(UTC)))
     ref = tmp_path / f"{set_id}-{number}.png"
     _art(seed).save(ref)
@@ -258,4 +258,63 @@ def test_a_pick_for_an_uncached_set_is_rejected(client, media, session, tmp_path
                        follow_redirects=False)
 
     assert resp.status_code == 400
+    assert crop.exists()
+
+
+# --- typing the number as printed ------------------------------------------
+
+def test_number_typed_as_printed_identifies_the_set(client, media, session, tmp_path):
+    """The suggestions can all be wrong, and then the typed number would
+    otherwise land in whichever set the top match happened to be in. The
+    printed total names the set, so '31/114' is unambiguous."""
+    _cache_card(session, tmp_path, set_id="xy11", number="31", name="Dewott", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide",
+                       data={"crop": crop.name, "action": "accept", "set_id": "", "number": "31/114"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert session.scalars(select(InventoryItem)).one().card_id == "xy11-31"
+
+
+def test_printed_total_overrides_a_wrong_suggested_set(client, media, session, tmp_path):
+    """The exact reported failure: every suggestion was from the wrong set,
+    so typing the number alone produced 'no card #166 in ex14'."""
+    _cache_card(session, tmp_path, set_id="xy11", number="166", name="Eevee", seed=7, printed_total=236)
+    _cache_card(session, tmp_path, set_id="other", number="1", name="Decoy", seed=9, printed_total=99)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide",
+                       data={"crop": crop.name, "action": "accept",
+                             "set_id": "other", "number": "166/236"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert session.scalars(select(InventoryItem)).one().card_id == "xy11-166"
+
+
+def test_an_uncached_printed_total_says_so(client, media, session, tmp_path):
+    _cache_card(session, tmp_path, number="31", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide",
+                       data={"crop": crop.name, "action": "accept", "number": "5/999"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 400
+    assert "999 printed cards" in resp.json()["detail"]
+    assert crop.exists()
+
+
+def test_a_malformed_printed_total_is_reported_clearly(client, media, session, tmp_path):
+    _cache_card(session, tmp_path, number="31", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide",
+                       data={"crop": crop.name, "action": "accept", "number": "31/abc"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 400
+    assert "166/236" in resp.json()["detail"]
     assert crop.exists()
