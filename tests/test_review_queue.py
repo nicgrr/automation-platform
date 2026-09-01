@@ -112,12 +112,27 @@ def test_queue_says_so_when_nothing_matches(client, media, session, tmp_path):
 
 
 def test_queue_paginates(client, media, session, tmp_path):
+    """One card per page, so N queued crops means N pages."""
     _cache_card(session, tmp_path)
-    for n in range(review_queue.PAGE_SIZE + 3):
+    count = review_queue.PAGE_SIZE * 3
+    for n in range(count):
         _queue(media, f"sheet-a-card{n}-unidentified.jpg", seed=n + 20)
+
     first = client.get("/review")
-    assert "Page 1 of 2" in first.text
-    assert client.get("/review?page=2").status_code == 200
+    assert "Page 1 of 3" in first.text
+    assert client.get("/review?page=3").status_code == 200
+
+
+def test_only_one_card_is_shown_per_page(client, media, session, tmp_path):
+    """A grid of cards was unreadable on a phone -- the image is what the
+    decision is made from, so it gets the full width."""
+    _cache_card(session, tmp_path)
+    for n in range(4):
+        _queue(media, f"sheet-a-card{n}-unidentified.jpg", seed=n + 40)
+
+    resp = client.get("/review")
+
+    assert resp.text.count("class='review-card'") == 1
 
 
 # --- decisions -------------------------------------------------------------

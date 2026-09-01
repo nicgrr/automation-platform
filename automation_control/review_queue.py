@@ -35,10 +35,11 @@ from .ui import brand_header, page, pill
 
 router = APIRouter(prefix="/review", tags=["review"])
 
-# Matching a crop against every cached set costs real time (one hash of the
-# crop, then a compare against each cached card), and the catalogue grows.
-# A page of cards is plenty to work through in one sitting.
-PAGE_SIZE = 12
+# One card per page. A grid of them was cramped on a phone -- the card image
+# is the thing you actually judge from, and shrinking it to fit two columns
+# made the number unreadable, which is the whole decision. One card gets the
+# full width, and paging through is a single tap either way.
+PAGE_SIZE = 1
 
 # How many possible cards to offer per crop. Enough that the right one is
 # almost always present when the top match is wrong, few enough to scan.
@@ -403,35 +404,47 @@ def review_image(name: str, user: str = Depends(require_dashboard_user)):
 
 
 _STYLE = """<style>
-.toolbar{display:flex;gap:12px;align-items:center;margin:0 0 20px;flex-wrap:wrap}
-.chip{display:inline-flex;align-items:center;padding:8px 14px;border-radius:999px;font-size:13px;
+.toolbar{display:flex;gap:10px;align-items:center;margin:0 0 18px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;padding:10px 16px;border-radius:999px;font-size:14px;
   border:1px solid var(--panel-border);color:var(--text-dim);text-decoration:none;background:#0a0f1c}
 .chip:hover{border-color:var(--accent);color:var(--accent)}
 .muted{color:var(--text-dim);font-size:13px}
-.review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:18px;align-items:start}
-.review-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:14px;padding:12px;
-  display:flex;flex-direction:column;gap:5px;min-width:0;overflow:hidden}
+
+.review-grid{display:block;max-width:560px;margin:0 auto}
+.review-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:16px;
+  padding:16px;display:flex;flex-direction:column;gap:8px;min-width:0}
 .review-card>*{min-width:0;max-width:100%}
-.review-face{display:block;border-radius:9px;overflow:hidden;background:#0a0f1c;aspect-ratio:5/7}
+
+.review-face{display:block;border-radius:12px;overflow:hidden;background:#0a0f1c;
+  aspect-ratio:5/7;max-height:62vh;margin:0 auto}
 .review-face img{width:100%;height:100%;object-fit:contain;display:block}
-.suggest{font-size:14px;margin-top:7px}
-.no-match{font-size:13px;color:var(--status-warn,#d4a527);margin-top:7px}
-.hint{font-size:12px;color:var(--text-dim)}
-.filename{font-size:10.5px;color:var(--text-dim);opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.review-form{display:flex;gap:6px;margin-top:8px;flex-direction:column;max-width:none}
-.picks{display:flex;flex-direction:column;gap:5px;margin-top:7px}
-.pick{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;min-width:0;
-  background:#0a0f1c;border:1px solid var(--panel-border);border-radius:9px;padding:7px 9px;cursor:pointer;color:var(--text)}
+
+.suggest{font-size:15px;margin-top:6px}
+.no-match{font-size:14px;color:var(--status-warn,#d4a527);margin-top:6px}
+.hint{font-size:13px;color:var(--text-dim);line-height:1.45}
+.filename{font-size:11px;color:var(--text-dim);opacity:.65;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+.picks{display:flex;flex-direction:column;gap:7px;margin-top:8px}
+.pick{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;
+  width:100%;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
+  border-radius:11px;padding:11px 13px;cursor:pointer;color:var(--text)}
 .pick:hover{border-color:var(--accent)}
-.pick-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
-.pick-meta{font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
-.manual{display:flex;gap:6px;margin-top:4px;min-width:0}
-.manual input{min-width:0;flex:1 1 60px}
-.review-form input{flex:1 1 68px;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
-  border-radius:8px;padding:8px;color:var(--text);font-size:13px}
-.review-form button{flex:0 0 auto;padding:8px 12px;border-radius:8px;font-size:13px;cursor:pointer;border:none;
-  background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#04101a;font-weight:700}
-.review-form button.ghost{background:none;border:1px solid var(--panel-border);color:var(--text-dim);font-weight:600}
-.review-form button.ghost:hover{border-color:var(--status-critical,#f87171);color:var(--status-critical,#f87171)}
-@media (max-width:560px){.review-grid{grid-template-columns:repeat(2,1fr);gap:12px}}
+.pick-name{font-size:15px;font-weight:650;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;max-width:100%}
+.pick-meta{font-size:12.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;max-width:100%}
+
+.review-form{display:flex;gap:8px;margin-top:6px;flex-direction:column;max-width:none}
+/* wraps rather than overflowing: on a narrow phone the input and both
+   buttons don't fit on one line, and overflow hid the Discard button. */
+.manual{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;min-width:0}
+.manual input{flex:1 1 140px;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
+  border-radius:10px;padding:12px;color:var(--text);font-size:15px}
+.manual button{flex:0 0 auto;padding:12px 18px;border-radius:10px;font-size:15px;cursor:pointer;
+  border:none;background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  color:#04101a;font-weight:700}
+.manual button.ghost{background:none;border:1px solid var(--panel-border);
+  color:var(--text-dim);font-weight:600}
+.manual button.ghost:hover{border-color:var(--status-critical,#f87171);color:var(--status-critical,#f87171)}
 </style>"""
