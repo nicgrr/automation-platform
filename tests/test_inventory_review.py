@@ -424,3 +424,24 @@ def test_card_thumb_404s_without_reference_art(client, session):
     session.add(CatalogCard(id="xy11-1", set_id="xy11", number="1", name="Caterpie"))
     session.commit()
     assert client.get("/inventory/card-thumb/xy11-1").status_code == 404
+
+
+def test_grid_children_can_shrink_so_columns_stay_even(client, session, tmp_path):
+    """A nowrap card name sets its grid column's min-content width unless the
+    child can shrink, which made columns wildly uneven and pushed card images
+    outside their tiles. min-width:0 is what lets the ellipsis do its job."""
+    _seed(session, card_id="xy11-1", number="1",
+          name="A Very Long Card Name That Would Otherwise Widen Its Column")
+    resp = client.get(SET_PAGE)
+
+    assert resp.status_code == 200
+    style = resp.text[resp.text.index("<style>"):]
+    assert ".card-tile>*{min-width:0" in style.replace(" ", "")
+    assert "min-width:0" in style.replace(" ", "")
+
+
+def test_set_grid_children_can_shrink_too(client, session, tmp_path):
+    _seed(session, set_id="xy11", set_name="A Set With A Very Long Name Indeed")
+    resp = client.get("/inventory")
+    style = resp.text[resp.text.index("<style>"):].replace(" ", "")
+    assert "a.set-tile>*{min-width:0" in style
