@@ -1,7 +1,11 @@
-"""Browse the scan-ingest pipeline's inventory: what's actually been
-scanned, identified, and committed (automation_control/scan_ingest/). Read
--only -- this router shows what commit.py has already written, it never
-writes anything itself.
+"""Browse and adjust the scan-ingest pipeline's inventory: what's actually
+been scanned, identified, and committed (automation_control/scan_ingest/).
+
+Almost read-only. The single write is `inventory_adjust`, which changes how
+many of a card you hold -- and deliberately nothing else. It cannot change
+which card a holding *is*, because getting that wrong is what put a Joltik
+in the inventory as a Gengar; re-identifying is the review queue's job.
+Every adjustment is audited like the rest of this app's mutating actions.
 
 Organised set-first: the landing page is a grid of set tiles (one aggregate
 query, no card images at all), and cards live behind a set. The previous
@@ -22,11 +26,14 @@ Values are shown in AUD (converted at display time, see scan_ingest/fx.py);
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+import uuid
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .audit import record_event
 from .auth import require_dashboard_user
 from .config import get_settings
 from .database import get_session
@@ -49,6 +56,10 @@ SET_SORTS = {
     "progress": "Most collected",
 }
 CARD_SORTS = {"number": "Card number", "value_desc": "Value", "quantity_desc": "Most copies"}
+
+# What a manually-added card is assumed to be. Scanning records the real
+# condition; this is only for "I own this but never scanned it".
+DEFAULT_CONDITION = "Near Mint"
 
 # TCGPlayer's own printing keys, which is how we learn a card exists in a
 # reverse-holo or holo printing at all -- the catalog's card record doesn't
@@ -115,6 +126,38 @@ def _sort_control(options: dict[str, str], current: str, name: str = "sort") -> 
         f"<select name='{name}' onchange=\"location.search=new URLSearchParams("
         f"Object.assign(Object.fromEntries(new URLSearchParams(location.search)),{{{name}:this.value}}))\">"
         f"{opts}</select></label>"
+    )
+
+
+
+def _edit_controls(set_id: str, card: CatalogCard, variant: CardVariant,
+                   quantity: int, sort: str, owned_only: str) -> str:
+    """Per-card quantity controls.
+
+    Every button is its own form post rather than JavaScript, so the page
+    keeps working the way the rest of this app does and a mis-tap is a
+    normal browser action. `back` carries the current view so a change
+    doesn't dump you at the top of an unfiltered set.
+    """
+    back = f"/inventory/set/{escape(set_id)}?sort={escape(sort)}" + ("&owned_only=1" if owned_only else "")
+    common = (
+        f"<input type='hidden' name='card_id' value='{escape(card.id)}'>"
+        f"<input type='hidden' name='variant' value='{escape(variant.value)}'>"
+        f"<input type='hidden' name='back' value='{escape(back)}'>"
+    )
+    if not quantity:
+        return (
+            "<form class='card-edit' method='post' action='/inventory/adjust'>"
+            f"{common}<button name='action' value='add' class='add'>+ Add</button></form>"
+        )
+    return (
+        "<form class='card-edit' method='post' action='/inventory/adjust'>"
+        f"{common}"
+        "<button name='action' value='dec' aria-label='One fewer'>&minus;</button>"
+        f"<span class='qty'>{quantity}</span>"
+        "<button name='action' value='add' aria-label='One more'>+</button>"
+        "<button name='action' value='remove' class='ghost' aria-label='Remove all'>Remove</button>"
+        "</form>"
     )
 
 
@@ -315,24 +358,33 @@ def inventory_set(
             f"<img src='/inventory/card-thumb/{escape(card.id)}' alt='' loading='lazy' decoding='async'>"
             if card.local_image_path else "<span class='no-art'>no image</span>"
         )
-        # An owned card links to your own scan; an unowned one has nothing
-        # to show, so it stays inert rather than a dead link.
-        href = f"/inventory/image/{held[0].id}" if held and held[0].scan_image_path else None
-        classes = "card-tile" + ("" if quantity else " unowned")
-        open_tag = f"<a class='{classes}' href='{href}'>" if href else f"<div class='{classes}'>"
-        close_tag = "</a>" if href else "</div>"
-
-        tiles.append(
-            f"{open_tag}"
+        # An owned card's face links to your own scan; an unowned one has
+        # nothing to show, so it stays inert rather than a dead link. The
+        # tile itself is never a link -- it holds the edit controls, and
+        # buttons inside an anchor is not valid markup.
+        scan_href = f"/inventory/image/{held[0].id}" if held and held[0].scan_image_path else None
+        face_block = (
+            f"<a class='card-face' href='{scan_href}'>{face}"
+            f"{f'<span class=qty-badge>x{quantity}</span>' if quantity > 1 else ''}</a>"
+            if scan_href else
             f"<div class='card-face'>{face}"
             f"{f'<span class=qty-badge>x{quantity}</span>' if quantity > 1 else ''}</div>"
+        )
+        # Searchable without a round trip: the whole set is already on the
+        # page, so filtering it is a keystroke rather than a request.
+        haystack = f"{card.name} {card.number} {card.rarity or ''} {variant.value}".lower()
+
+        tiles.append(
+            f"<div class='card-tile{'' if quantity else ' unowned'}' data-find='{escape(haystack)}'>"
+            f"{face_block}"
             f"<div class='card-name'>{escape(card.name)}</div>"
             f"<div class='card-sub'>{escape(card_set.name)}</div>"
             f"<div class='card-sub'>{escape(card.rarity or 'Unknown')} &bull; {escape(card.number)}/{printed}</div>"
             f"<div class='card-sub'>{escape(variant.value.replace('_', ' ').title())}</div>"
             f"<div class='card-price'>{_money(row['price'])}</div>"
             f"<div class='card-qty{'' if quantity else ' zero'}'>Qty: {quantity}</div>"
-            f"{close_tag}"
+            + _edit_controls(set_id, card, variant, quantity, sort, owned_only)
+            + "</div>"
         )
 
     header = (
@@ -354,12 +406,16 @@ def inventory_set(
         + f"<p class='subtitle'><a href='/inventory'>&larr; All sets</a></p>"
         + header
         + "<div class='toolbar'>"
+        + "<input id='card-search' class='search-box' type='search' "
+          "placeholder='Find a card by name or number…' autocomplete='off'>"
         + f"<a class='chip' href='{toggle_href}'>{toggle_label}</a>"
         + _sort_control(CARD_SORTS, sort)
         + "</div>"
-        + (f"<div class='card-grid'>{''.join(tiles)}</div>" if tiles
+        + "<div class='found' id='found'></div>"
+        + (f"<div class='card-grid' id='card-grid'>{''.join(tiles)}</div>" if tiles
            else "<div class='panel'><p>No cards to show.</p></div>")
         + _STYLE
+        + _CARD_SEARCH_SCRIPT
     )
     return HTMLResponse(page(f"EzBay — {card_set.name}", body))
 
@@ -369,6 +425,81 @@ def _sort_number(number: str) -> tuple[int, str]:
     for the non-numeric ones some sets have (promos, 'SWSH001')."""
     digits = "".join(ch for ch in number if ch.isdigit())
     return (int(digits) if digits else 0, number)
+
+
+
+@router.post("/adjust")
+def inventory_adjust(
+    card_id: str = Form(...),
+    variant: str = Form(...),
+    action: str = Form(...),
+    back: str = Form("/inventory"),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    """Change how many of a card you hold.
+
+    The only writing this router does. Kept deliberately narrow: it adjusts
+    quantity on an existing holding, creates one for a card you own but
+    never scanned, or removes one entirely -- it cannot change which card a
+    holding *is*, because getting that wrong is what put a Joltik in the
+    inventory as a Gengar. Re-identifying is the review queue's job.
+    """
+    card = session.get(CatalogCard, card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail=f"unknown card {card_id!r}")
+    try:
+        printing = CardVariant(variant)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"unknown variant: {variant!r}")
+
+    held = list(session.scalars(select(InventoryItem).where(
+        InventoryItem.card_id == card.id, InventoryItem.variant == printing)))
+    if len(held) > 1:
+        # Several conditions of the same printing: which one to change isn't
+        # ours to guess, and guessing would silently edit the wrong holding.
+        raise HTTPException(
+            status_code=400,
+            detail=f"{card.name} is held in {len(held)} conditions -- adjust it from the CLI so the right one is chosen",
+        )
+    item = held[0] if held else None
+
+    if action == "add":
+        if item is None:
+            item = InventoryItem(card_id=card.id, variant=printing, condition=DEFAULT_CONDITION, quantity=1)
+            session.add(item)
+            outcome, quantity = "created", 1
+        else:
+            item.quantity += 1
+            outcome, quantity = "incremented", item.quantity
+    elif action == "dec":
+        if item is None:
+            raise HTTPException(status_code=400, detail="nothing to decrement")
+        item.quantity -= 1
+        outcome, quantity = ("removed", 0) if item.quantity <= 0 else ("decremented", item.quantity)
+        if item.quantity <= 0:
+            session.delete(item)
+    elif action == "remove":
+        if item is None:
+            raise HTTPException(status_code=400, detail="nothing to remove")
+        session.delete(item)
+        outcome, quantity = "removed", 0
+    else:
+        raise HTTPException(status_code=400, detail=f"unknown action: {action!r}")
+
+    session.commit()
+    record_event(
+        session, actor_type="user", actor_id=user, action="inventory.adjust",
+        resource_type="inventory_item", resource_id=card.id, outcome="success",
+        correlation_id=str(uuid.uuid4()),
+        details={"card_id": card.id, "card_name": card.name, "number": card.number,
+                 "set_id": card.set_id, "variant": printing.value,
+                 "change": action, "result": outcome, "quantity": quantity},
+    )
+    # Only our own set pages are acceptable destinations -- `back` comes
+    # from a form field, and an open redirect is not worth the convenience.
+    destination = back if back.startswith("/inventory") else "/inventory"
+    return RedirectResponse(destination, status_code=303)
 
 
 # --- images ----------------------------------------------------------------
@@ -494,6 +625,17 @@ a.card-tile:hover{border-color:var(--accent)}
 .card-qty{font-size:12px;color:var(--text-dim)}
 .card-qty.zero{color:var(--text-dim);opacity:.75}
 
+.card-edit{display:flex;align-items:center;gap:6px;margin-top:9px;max-width:none;min-width:0}
+.card-edit button{flex:0 0 auto;min-width:34px;padding:7px 9px;border-radius:8px;font-size:14px;
+  font-weight:700;cursor:pointer;border:1px solid var(--panel-border);background:#0a0f1c;color:var(--text)}
+.card-edit button:hover{border-color:var(--accent);color:var(--accent)}
+.card-edit button.add{flex:1 1 auto;background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  color:#04101a;border:none}
+.card-edit button.ghost{flex:1 1 auto;font-size:12px;font-weight:600;color:var(--text-dim)}
+.card-edit button.ghost:hover{border-color:var(--status-critical,#f87171);color:var(--status-critical,#f87171)}
+.card-edit .qty{flex:1 1 auto;text-align:center;font-size:14px;font-weight:650;font-variant-numeric:tabular-nums}
+.found{font-size:13px;color:var(--text-dim);margin:-8px 0 14px;min-height:1em}
+
 @media (max-width:560px){
   .set-grid{grid-template-columns:repeat(2,1fr);gap:14px}
   .set-art{height:84px}
@@ -501,6 +643,24 @@ a.card-tile:hover{border-color:var(--accent)}
   .set-header-logo{width:92px}
 }
 </style>"""
+
+_CARD_SEARCH_SCRIPT = """<script>
+(function(){
+  var box=document.getElementById('card-search'), grid=document.getElementById('card-grid'),
+      found=document.getElementById('found');
+  if(!box||!grid)return;
+  var tiles=[].slice.call(grid.querySelectorAll('.card-tile'));
+  box.addEventListener('input',function(){
+    var q=box.value.trim().toLowerCase(), shown=0;
+    tiles.forEach(function(t){
+      var hit=!q||(t.getAttribute('data-find')||'').indexOf(q)>-1;
+      t.style.display=hit?'':'none';
+      if(hit)shown++;
+    });
+    found.textContent=q?(shown+' of '+tiles.length+' cards'):'';
+  });
+})();
+</script>"""
 
 _SEARCH_SCRIPT = """<script>
 (function(){

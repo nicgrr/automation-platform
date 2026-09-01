@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from automation_control import inventory_review
@@ -445,3 +445,119 @@ def test_set_grid_children_can_shrink_too(client, session, tmp_path):
     resp = client.get("/inventory")
     style = resp.text[resp.text.index("<style>"):].replace(" ", "")
     assert "a.set-tile>*{min-width:0" in style
+
+
+# --- searching and editing from the set page -------------------------------
+
+def test_set_page_offers_a_card_search(client, session, tmp_path):
+    """The whole set is already on the page, so filtering it should be a
+    keystroke rather than a request."""
+    _seed(session, card_id="xy11-31", number="31", name="Dewott")
+    resp = client.get(SET_PAGE)
+    assert "id='card-search'" in resp.text
+    assert "data-find=" in resp.text
+    assert "dewott" in resp.text.lower()
+
+
+def test_owned_card_offers_quantity_controls(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", name="Dewott", quantity=2)
+    resp = client.get(SET_PAGE)
+    assert "value='dec'" in resp.text
+    assert "value='remove'" in resp.text
+
+
+def test_unowned_card_offers_add_only(client, session, tmp_path):
+    _seed(session, card_id="xy11-1", number="1", name="Owned")
+    session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
+    session.commit()
+
+    resp = client.get(SET_PAGE)
+
+    assert "+ Add" in resp.text
+    # a card you don't own has nothing to remove
+    assert resp.text.count("value='remove'") == 1
+
+
+def test_add_increments_an_existing_holding(client, session, tmp_path):
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/adjust",
+                       data={"card_id": "xy11-31", "variant": "normal", "action": "add",
+                             "back": SET_PAGE}, follow_redirects=False)
+    assert resp.status_code == 303
+    session.expire_all()
+    assert session.get(InventoryItem, item.id).quantity == 2
+
+
+def test_add_creates_a_holding_for_a_card_never_scanned(client, session, tmp_path):
+    """You can own a card the scanner never saw."""
+    session.add(CardSet(id="xy11", name="Steam Siege", printed_total=114, cached_at=datetime.now(UTC)))
+    session.add(CatalogCard(id="xy11-31", set_id="xy11", number="31", name="Dewott"))
+    session.commit()
+
+    client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
+                                           "action": "add", "back": SET_PAGE}, follow_redirects=False)
+
+    item = session.scalars(select(InventoryItem)).one()
+    assert item.card_id == "xy11-31" and item.quantity == 1
+
+
+def test_decrement_removes_the_row_at_zero(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
+                                           "action": "dec", "back": SET_PAGE}, follow_redirects=False)
+    assert session.scalars(select(InventoryItem)).all() == []
+
+
+def test_remove_clears_the_whole_holding(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=5)
+    client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
+                                           "action": "remove", "back": SET_PAGE}, follow_redirects=False)
+    assert session.scalars(select(InventoryItem)).all() == []
+
+
+def test_every_change_is_audited(client, session, tmp_path):
+    """Inventory is the record of what you own; a silent edit to it would
+    be indistinguishable from a bug."""
+    from automation_control.models import AuditEvent
+
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
+                                           "action": "add", "back": SET_PAGE}, follow_redirects=False)
+
+    event = session.scalars(select(AuditEvent).where(AuditEvent.action == "inventory.adjust")).one()
+    assert event.details["change"] == "add"
+    assert event.details["quantity"] == 2
+
+
+def test_adjust_refuses_when_several_conditions_are_held(client, session, tmp_path):
+    """Which condition to change isn't ours to guess, and guessing would
+    silently edit the wrong holding."""
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    session.add(InventoryItem(card_id="xy11-31", variant=CardVariant.NORMAL,
+                              condition="Played", quantity=1))
+    session.commit()
+
+    resp = client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
+                                                  "action": "add", "back": SET_PAGE},
+                       follow_redirects=False)
+
+    assert resp.status_code == 400
+    assert "2 conditions" in resp.json()["detail"]
+
+
+def test_adjust_will_not_redirect_off_site(client, session, tmp_path):
+    """`back` arrives from a form field; an open redirect isn't worth the
+    convenience of remembering the view."""
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/adjust",
+                       data={"card_id": "xy11-31", "variant": "normal", "action": "add",
+                             "back": "https://example.com/phish"}, follow_redirects=False)
+    assert resp.headers["location"] == "/inventory"
+
+
+def test_adjust_rejects_unknown_card_and_action(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    assert client.post("/inventory/adjust", data={"card_id": "nope", "variant": "normal",
+                                                  "action": "add"}, follow_redirects=False).status_code == 404
+    assert client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
+                                                  "action": "explode"}, follow_redirects=False).status_code == 400
