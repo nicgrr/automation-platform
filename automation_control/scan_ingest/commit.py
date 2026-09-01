@@ -84,12 +84,11 @@ def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str,
     destination_dir = media_dir / "cards"
     destination_dir.mkdir(parents=True, exist_ok=True)
     destination = destination_dir / f"{set_code}-{number}-{variant.value}-{_condition_slug(condition)}.jpg"
-    # plain copy, not copy2: copy2's copystat step needs to own the
-    # destination file to update its timestamp, which fails on an
-    # overwrite-in-place when the file was last written by a different
-    # system user (e.g. the background service vs. a manual reprocess run)
-    # -- and there's no reason to preserve a crop's original mtime anyway.
-    shutil.copy(source, destination)
+    # copyfile, not copy/copy2: those also set mode and timestamps on the
+    # destination, which requires owning it. This file may have been written
+    # by a different system user (the background service vs. a manual
+    # reprocess or a web review), and only its contents need replacing.
+    shutil.copyfile(source, destination)
     return destination
 
 

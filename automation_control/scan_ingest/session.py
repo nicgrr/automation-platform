@@ -128,12 +128,11 @@ def _set_aside_for_review(crop_path: Path, media_dir: Path, sheet_name: str, ind
     review_dir.mkdir(parents=True, exist_ok=True)
     label = f"{identification.number}-{identification.name}" if identification.card_id else "unidentified"
     destination = review_dir / f"{Path(sheet_name).stem}-card{index}-{label}.jpg"
-    # plain copy, not copy2: this crop is freshly rendered, so there's no
-    # original timestamp worth preserving -- and copy2's copystat step needs
-    # to own the destination file, which fails when the background service
-    # (running as one system user) and a manual reprocess run (as another)
-    # both write into this shared folder and a filename collides.
-    shutil.copy(crop_path, destination)
+    # copyfile, not copy/copy2: those also set mode and timestamps on the
+    # destination, which requires owning it. The service, a manual reprocess
+    # and the web review all write into this shared folder as different
+    # users, and only the contents need replacing.
+    shutil.copyfile(crop_path, destination)
     return destination
 
 

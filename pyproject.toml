@@ -32,4 +32,8 @@ include = ["automation_control*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The project root, so tests can import both automation_control (installed
+# as a package) and scripts/ (maintenance tools, not part of the
+# distribution but with behaviour worth testing).
+pythonpath = ["."]
 asyncio_mode = "auto"

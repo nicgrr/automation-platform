@@ -21,33 +21,64 @@ are replaced, so the review step still decides what becomes inventory.
 import argparse
 import re
 import shutil
+import sys
+import time
 from pathlib import Path
 
 import imagehash
+import numpy as np
 from PIL import Image
 
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.scan_ingest.detect import detect_cards
-from automation_control.scan_ingest.identify import detect_sheet_set_and_rotation
+from automation_control.scan_ingest.identify import art_phash, detect_sheet_set_and_rotation
 from automation_control.scan_ingest.session import _load_all_catalogs
 
 CROP_NAME = re.compile(r"^(sheet-[\d-]+?)-card(\d+)-")
+NO_MATCH = 64  # a full-width Hamming distance: worse than any real match
 
 
-def _best_distance(path: Path, catalogs) -> int:
-    """Closest Hamming distance to any cached reference card."""
-    try:
-        with Image.open(path) as image:
-            scan = imagehash.phash(image.convert("RGB"))
-    except Exception:
-        return 999
-    best = 999
-    for references in catalogs.values():
-        for reference in references:
-            if reference.phash:
-                best = min(best, scan - imagehash.hex_to_hash(reference.phash))
-    return best
+class Matcher:
+    """Closest distance from an image to any cached reference card.
+
+    Holds every reference hash as a bit-matrix so each image is one
+    vectorised comparison rather than a Python loop over ~20k cards -- the
+    loop version made a full pass take hours.
+
+    Both signals are consulted: the whole card, and the artwork window that
+    identifies reverse holos (see identify.ART_REGION). Here they're
+    combined by taking the better of the two, which is right for this
+    narrow question -- "did this crop get closer to *something* real?" --
+    even though it would be wrong for choosing between candidates.
+    """
+
+    def __init__(self, catalogs):
+        whole, art = [], []
+        for references in catalogs.values():
+            for reference in references:
+                if not reference.phash:
+                    continue
+                whole.append(imagehash.hex_to_hash(reference.phash).hash.flatten())
+                if reference.art_phash:
+                    art.append(imagehash.hex_to_hash(reference.art_phash).hash.flatten())
+        self.whole = np.array(whole, dtype=bool) if whole else None
+        self.art = np.array(art, dtype=bool) if art else None
+
+    def best_distance(self, path: Path) -> int:
+        if self.whole is None:
+            return NO_MATCH
+        try:
+            with Image.open(path) as image:
+                rgb = image.convert("RGB")
+                scan = imagehash.phash(rgb).hash.flatten()
+                scan_art = art_phash(rgb).hash.flatten()
+        except Exception:
+            return NO_MATCH
+        best = int(np.count_nonzero(self.whole != scan, axis=1).min())
+        if self.art is not None:
+            best = min(best, int(np.count_nonzero(self.art != scan_art, axis=1).min()))
+        return best
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,13 +100,23 @@ def main(argv: list[str] | None = None) -> int:
     with SessionLocal() as db:
         catalogs = _load_all_catalogs(db)
     if not catalogs:
-        print("error: no sets cached to match against", file=__import__("sys").stderr)
+        print("error: no sets cached to match against", file=sys.stderr)
         return 1
 
+    matcher = Matcher(catalogs)
     resheets: dict[str, list[Path]] = {}
-    improved = unchanged = orphaned = 0
+    improved = unchanged = orphaned = vanished = 0
+    started = time.time()
 
-    for crop in crops:
+    for position, crop in enumerate(crops, start=1):
+        # The queue is worked by hand while this runs, so a crop listed at
+        # startup may since have been accepted or discarded. Writing to it
+        # would resurrect a card the operator has already dealt with -- and
+        # invite committing it twice -- so a crop that's gone is left gone.
+        if not crop.exists():
+            vanished += 1
+            continue
+
         match = CROP_NAME.match(crop.name)
         if not match:
             continue
@@ -99,18 +140,33 @@ def main(argv: list[str] | None = None) -> int:
             unchanged += 1
             continue
 
-        old = _best_distance(crop, catalogs)
-        new = _best_distance(fresh[index - 1], catalogs)
-        if new < old:
-            print(f"  {crop.name[:58]:<58} {old:>3} -> {new:>3}")
-            if not args.dry_run:
-                shutil.copy(fresh[index - 1], crop)
-            improved += 1
-        else:
+        old = matcher.best_distance(crop)
+        new = matcher.best_distance(fresh[index - 1])
+        if new >= old:
             unchanged += 1
+            continue
+
+        print(f"  [{position}/{len(crops)}] {crop.name[:54]:<54} {old:>3} -> {new:>3}", flush=True)
+        if not args.dry_run:
+            # Re-checked immediately before writing: the gap between the
+            # scan above and this copy is the only window in which the
+            # operator could have settled it.
+            if crop.exists():
+                # copyfile, not copy/copy2: those also set mode/times on the
+                # destination, which requires owning it. These crops are written
+                # by the scan service under a different user, so only the contents
+                # can be replaced.
+                shutil.copyfile(fresh[index - 1], crop)
+            else:
+                vanished += 1
+                continue
+        improved += 1
 
     verb = "would improve" if args.dry_run else "improved"
-    print(f"\n{verb} {improved}; {unchanged} left as-is; {orphaned} had no archived sheet.")
+    print(
+        f"\n{verb} {improved}; {unchanged} left as-is; {orphaned} had no archived sheet; "
+        f"{vanished} were settled while this ran. ({time.time() - started:.0f}s)"
+    )
     return 0
 
 
