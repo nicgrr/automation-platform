@@ -55,7 +55,8 @@ def _queue(media: Path, name: str, seed: int = 1) -> Path:
     return path
 
 
-def _cache_card(session, tmp_path, *, set_id="xy11", number="31", name="Dewott", seed=1, printed_total=114):
+def _cache_card(session, tmp_path, *, set_id="xy11", number="31", name="Dewott", seed=1,
+                printed_total=114, rarity=None):
     if session.get(CardSet, set_id) is None:
         # cached_at matters: only sets marked cached are matched against.
         session.add(CardSet(id=set_id, name="Steam Siege", printed_total=printed_total,
@@ -69,7 +70,7 @@ def _cache_card(session, tmp_path, *, set_id="xy11", number="31", name="Dewott",
         phash = str(imagehash.phash(rgb))
         art = str(_art_phash(rgb))
     session.add(CatalogCard(id=f"{set_id}-{number}", set_id=set_id, number=number, name=name,
-                            local_image_path=str(ref), phash=phash, art_phash=art))
+                            local_image_path=str(ref), phash=phash, art_phash=art, rarity=rarity))
     session.commit()
 
 
@@ -382,3 +383,63 @@ def test_art_hash_is_confined_to_the_artwork_window(tmp_path):
     holo = _holo_like(11)
     assert art_phash(plain) == art_phash(holo)
     assert imagehash.phash(plain) != imagehash.phash(holo)
+
+
+# --- rarity and printing ---------------------------------------------------
+
+def test_candidates_show_rarity(client, media, session, tmp_path):
+    """'Common' vs 'Rare Holo' is often the quickest way to tell two
+    similar-looking candidates apart."""
+    _cache_card(session, tmp_path, number="31", name="Dewott", seed=7, rarity="Rare Holo")
+    _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.get("/review")
+
+    assert "Rare Holo" in resp.text
+
+
+def test_printing_can_be_chosen(client, media, session, tmp_path):
+    _cache_card(session, tmp_path, number="31", seed=7)
+    _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.get("/review")
+
+    assert "name='variant'" in resp.text
+    assert "Reverse Holo" in resp.text
+
+
+def test_accepting_records_the_chosen_printing(client, media, session, tmp_path):
+    """Foil isn't reliably detectable from a flatbed scan -- it mostly reads
+    as glare -- so it has to be stated, and it matters: a reverse holo is a
+    different holding at a different price."""
+    _cache_card(session, tmp_path, set_id="xy11", number="31", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide",
+                       data={"crop": crop.name, "pick": "xy11:31", "variant": "reverse_holo"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert session.scalars(select(InventoryItem)).one().variant is CardVariant.REVERSE_HOLO
+
+
+def test_printing_defaults_to_normal_when_not_sent(client, media, session, tmp_path):
+    _cache_card(session, tmp_path, set_id="xy11", number="31", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    client.post("/review/decide", data={"crop": crop.name, "pick": "xy11:31"},
+                follow_redirects=False)
+
+    assert session.scalars(select(InventoryItem)).one().variant is CardVariant.NORMAL
+
+
+def test_an_unknown_printing_is_rejected(client, media, session, tmp_path):
+    _cache_card(session, tmp_path, set_id="xy11", number="31", seed=7)
+    crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.post("/review/decide",
+                       data={"crop": crop.name, "pick": "xy11:31", "variant": "sparkly"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 400
+    assert crop.exists()

@@ -160,6 +160,7 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
                     source=Source.PHASH,
                     confidence=_phash_confidence(distance, margin, settings.scan_phash_max_distance),
                     phash_distance=distance, phash_margin=margin,
+                    note=reference.rarity or None,
                 ),
             ))
             if len(candidates) == CANDIDATES:
@@ -278,6 +279,26 @@ def review_page(
     return HTMLResponse(page("EzBay — Review queue", body))
 
 
+
+def _printing_picker(selected: CardVariant = CardVariant.NORMAL) -> str:
+    """Which printing this copy is.
+
+    Foil is not reliably detectable from a flatbed scan -- it mostly reads
+    as glare -- so it has to be stated. It matters: a reverse holo is a
+    different holding at a different price, and everything accepted here
+    was previously filed as a normal print regardless.
+    """
+    options = "".join(
+        f"<option value='{v.value}'{' selected' if v is selected else ''}>"
+        f"{v.value.replace('_', ' ').title()}</option>"
+        for v in CardVariant
+    )
+    return (
+        "<label class='printing'>Printing"
+        f"<select name='variant'>{options}</select></label>"
+    )
+
+
 def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     name = crop.name
     thumb = f"<img src='/review/image/{escape(name)}' alt='' loading='lazy' decoding='async'>"
@@ -298,25 +319,28 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
             rows.append(
                 f"<button class='pick' name='pick' value='{escape(set_id)}:{escape(identification.number or '')}'>"
                 f"<span class='pick-name'>#{escape(identification.number or '')} {escape(identification.name or '')}</span>"
-                f"<span class='pick-meta'>{escape(set_names.get(set_id, set_id))} &middot; "
+                f"<span class='pick-meta'>{escape(set_names.get(set_id, set_id))}"
+                f"{' &middot; ' + escape(identification.note) if identification.note else ''} &middot; "
                 f"d{identification.phash_distance} {pill(f'{confidence:.2f}', kind)}</span>"
                 "</button>"
             )
         options = "<div class='picks'>" + "".join(rows) + "</div>"
 
+    placeholder = "52/72 (with total)" if not candidates else "or type a no."
     return (
         "<div class='review-card'>"
-        f"<a class='review-face' href='/review/image/{escape(name)}' target='_blank' rel='noopener'>{thumb}</a>"
-        "<form method='post' action='/review/decide' class='review-form'>"
-        f"<input type='hidden' name='crop' value='{escape(name)}'>"
-        f"<input type='hidden' name='set_id' value='{escape(default_set)}'>"
-        f"{options}"
-        f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
-        "<div class='manual'>"
-        f"<input name='number' placeholder='{"52/72 (with total)" if not candidates else "or type a no."}' autocomplete='off'>"
-        "<button name='action' value='accept'>Accept</button>"
-        "<button name='action' value='discard' class='ghost'>Discard</button>"
-        "</div></form></div>"
+        + f"<a class='review-face' href='/review/image/{escape(name)}' target='_blank' rel='noopener'>{thumb}</a>"
+        + "<form method='post' action='/review/decide' class='review-form'>"
+        + f"<input type='hidden' name='crop' value='{escape(name)}'>"
+        + f"<input type='hidden' name='set_id' value='{escape(default_set)}'>"
+        + options
+        + _printing_picker()
+        + f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
+        + "<div class='manual'>"
+        + f"<input name='number' placeholder='{placeholder}' autocomplete='off'>"
+        + "<button name='action' value='accept'>Accept</button>"
+        + "<button name='action' value='discard' class='ghost'>Discard</button>"
+        + "</div></form></div>"
     )
 
 
@@ -327,6 +351,7 @@ def review_decide(
     pick: str = Form(""),
     number: str = Form(""),
     set_id: str = Form(""),
+    variant: str = Form(""),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ):
@@ -380,7 +405,12 @@ def review_decide(
         )
 
     settings = get_settings()
-    scan_session = start_or_resume(session, set_id, CardVariant.NORMAL, _WebPrompter(), user=user, unattended=True)
+    try:
+        printing = CardVariant(variant) if variant else CardVariant.NORMAL
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"unknown printing: {variant!r}")
+
+    scan_session = start_or_resume(session, set_id, printing, _WebPrompter(), user=user, unattended=True)
     identification = Identification(
         card_id=match.card_id, number=match.number, name=match.name,
         source=Source.PHASH, confidence=1.0, note="confirmed in web review",
@@ -388,7 +418,7 @@ def review_decide(
     try:
         commit_card(
             session, identification, path, Path(settings.scan_media_dir),
-            variant=CardVariant.NORMAL, condition="Near Mint",
+            variant=printing, condition="Near Mint",
             scan_session=scan_session, user=user, allow_unconfirmed=True,
         )
     except CommitRefused as exc:
@@ -438,6 +468,10 @@ _STYLE = """<style>
 .review-form{display:flex;gap:8px;margin-top:6px;flex-direction:column;max-width:none}
 /* wraps rather than overflowing: on a narrow phone the input and both
    buttons don't fit on one line, and overflow hid the Discard button. */
+.printing{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;
+  color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+.printing select{flex:1 1 auto;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
+  border-radius:10px;padding:10px;color:var(--text);font-size:14px;text-transform:none;letter-spacing:normal}
 .manual{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;min-width:0}
 .manual input{flex:1 1 140px;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
   border-radius:10px;padding:12px;color:var(--text);font-size:15px}

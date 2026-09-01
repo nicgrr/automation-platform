@@ -148,6 +148,9 @@ class ReferenceCard:
     # Optional so existing callers constructing a ReferenceCard by position
     # keep working; only the reverse-holo signal uses it.
     art_phash: str | None = None
+    # Shown when confirming a card by hand -- "Common" vs "Rare Holo" is
+    # often the quickest way to tell two similar candidates apart.
+    rarity: str | None = None
 
 
 def read_card_number(image_path: Path, set_total: int | None = None) -> tuple[str | None, str | None]:
