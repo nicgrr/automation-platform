@@ -25,6 +25,7 @@ from ..models import CardSet, CardVariant, CatalogCard, ScanSession, ScanSession
 from . import catalog
 from .commit import CommitRefused, commit_card, inventory_totals
 from .detect import detect_cards
+from .foil import assess_foil
 from .pricing import PokemonTcgPriceSource, PriceSource, price_and_record
 from .identify import Identification, ReferenceCard, Source, best_set_by_art, detect_sheet_set_and_rotation, identify_card, read_set_totals
 
@@ -434,6 +435,9 @@ def process_sheet(
             crop_path, references, set_total=set_total,
             max_phash_distance=settings.scan_phash_max_distance,
         )
+        identified_card = db.get(CatalogCard, identification.card_id) if identification.card_id else None
+        if identified_card is not None:
+            prompter.notify(f"  Card {index}: {assess_foil(crop_path, identified_card).log_summary()}")
         if unattended and identification.needs_confirmation:
             saved_to = _set_aside_for_review(crop_path, Path(settings.scan_media_dir), sheet_path.name, index, identification)
             label = f"#{identification.number} {identification.name}" if identification.card_id else "(unidentified)"
