@@ -75,7 +75,7 @@ STEM = "sheet-20260901-101500-000001"
 def test_says_ready_when_nothing_is_waiting(client, tree):
     resp = client.get("/feed")
     assert resp.status_code == 200
-    assert "Ready — scan the next eight" in resp.text
+    assert "Ready — scan the next nine" in resp.text
 
 
 def test_says_busy_while_a_sheet_is_still_queued(client, tree):
@@ -85,7 +85,7 @@ def test_says_busy_while_a_sheet_is_still_queued(client, tree):
     resp = client.get("/feed")
 
     assert "Working through 1 sheet" in resp.text
-    assert "Ready — scan the next eight" not in resp.text
+    assert "Ready — scan the next nine" not in resp.text
 
 
 def test_a_sheet_left_behind_does_not_block_scanning(client, tree):
@@ -103,7 +103,7 @@ def test_a_sheet_left_behind_does_not_block_scanning(client, tree):
 
     resp = client.get("/feed")
 
-    assert "Ready — scan the next eight" in resp.text
+    assert "Ready — scan the next nine" in resp.text
     assert "1 earlier sheet" in resp.text
 
 

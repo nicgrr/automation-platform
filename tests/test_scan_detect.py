@@ -325,6 +325,32 @@ def test_detect_cards_rejoins_a_card_split_down_its_own_text_panel(tmp_path):
         assert abs(w - CARD_W) < CARD_W * 0.15, f"card width {w} is not a whole card ({CARD_W})"
 
 
+def test_detect_cards_rejoins_rows_split_inside_all_nine_cards(tmp_path):
+    """A 3x3 landscape layout can put a low-variance horizontal boundary
+    through every card.  With no intact row for calibration, the card width
+    must provide the expected full height so 18 halves become nine cards.
+    """
+    rows, cols = 3, 3
+    sheet = _make_sheet(rows, cols)
+    strip_y = CARD_H // 2 - 25
+    for row in range(rows):
+        for col in range(cols):
+            y = MARGIN + row * (CARD_H + GAP) + strip_y
+            x = MARGIN + col * (CARD_W + GAP)
+            sheet[y : y + 50, x : x + CARD_W] = (246, 246, 246)
+
+    sheet_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(sheet_path), sheet)
+    result = detect_cards(sheet_path, tmp_path / "out")
+
+    assert (result.rows, result.cols) == (3, 3)
+    assert result.count == 9
+    assert result.ok
+    for card in result.cards:
+        _, height = card.size
+        assert abs(height - CARD_H) < CARD_H * 0.15
+
+
 def test_detect_cards_still_separates_two_genuinely_adjacent_cards(tmp_path):
     """The flip side: rejoining must never fuse two real cards. Two whole
     cards with a normal gap stay two cards."""

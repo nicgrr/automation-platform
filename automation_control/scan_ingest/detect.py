@@ -240,6 +240,23 @@ def _merge_fragmented_columns(col_bands: list[tuple[int, int]], expected_width: 
     return merged
 
 
+def _merge_fragmented_rows(row_bands: list[tuple[int, int]], expected_height: float) -> list[tuple[int, int]]:
+    """Join adjacent row bands that are pieces of one physical card."""
+    merged: list[tuple[int, int]] = []
+    index = 0
+    while index < len(row_bands):
+        y1, y2 = row_bands[index]
+        while index + 1 < len(row_bands) and (y2 - y1) < expected_height * FRAGMENT_WIDTH_RATIO:
+            next_y1, next_y2 = row_bands[index + 1]
+            if (next_y2 - y1) > expected_height * MERGED_WIDTH_TOLERANCE:
+                break
+            y2 = next_y2
+            index += 1
+        merged.append((y1, y2))
+        index += 1
+    return merged
+
+
 def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], list[tuple[int, int]]]]:
     """Column bands globally, then row bands *independently within each
     column's own vertical strip* -- not a shared grid.
@@ -259,7 +276,30 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
     def rows_for(x1: int, x2: int) -> list[tuple[int, int]]:
         return _content_bands(gray[:, x1:x2].std(axis=1), min_row)
 
-    result = [((x1, x2), rows_for(x1, x2)) for x1, x2 in col_bands]
+    initial = [((x1, x2), rows_for(x1, x2)) for x1, x2 in col_bands]
+    # Decide orientation across the sheet, not independently per column.
+    # One column may have every card split into two near-equal fragments,
+    # while another still contains an intact card.  The latter is the only
+    # reliable evidence of the full height (the current real 3x3 layout is
+    # exactly this case).
+    observed_heights = [y2 - y1 for _, rows in initial for y1, y2 in rows]
+    median_width = sorted((x2 - x1 for x1, x2 in col_bands))[len(col_bands) // 2] if col_bands else 0
+    tallest = max(observed_heights, default=0)
+    portrait = (
+        abs(tallest - median_width / CARD_ASPECT) < abs(tallest - median_width * CARD_ASPECT)
+        if median_width and tallest else False
+    )
+
+    result = []
+    for (x1, x2), rows in initial:
+        expected_height = (x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT
+        # With only one or two bands, a portrait card and two touching
+        # landscape cards are geometrically indistinguishable.  Keep the
+        # old size-based split path for that sparse case.  Three or more
+        # rows provide enough repeated layout evidence to rejoin safely.
+        if len(rows) >= 3:
+            rows = _merge_fragmented_rows(rows, expected_height)
+        result.append(((x1, x2), rows))
 
     # A card split down its middle reports the *full* card height in both
     # halves (rows are found within a column), so this first pass gives a
@@ -272,7 +312,13 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
         if expected_width:
             rejoined = _merge_fragmented_columns(col_bands, expected_width)
             if rejoined != col_bands:
-                result = [((x1, x2), rows_for(x1, x2)) for x1, x2 in rejoined]
+                result = []
+                for x1, x2 in rejoined:
+                    rows = rows_for(x1, x2)
+                    expected_height = (x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT
+                    if len(rows) >= 3:
+                        rows = _merge_fragmented_rows(rows, expected_height)
+                    result.append(((x1, x2), rows))
     return result
 
 

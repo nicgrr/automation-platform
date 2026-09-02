@@ -1,8 +1,8 @@
 """A live feed of sheets as they're scanned.
 
-The gap this fills is the pause between sheets: you put eight cards on the
+The gap this fills is the pause between sheets: you put nine cards on the
 glass, press the button, and then have no idea whether it worked or whether
-it's safe to load the next eight. The log answers that, eventually, if you
+it's safe to load the next nine. The log answers that, eventually, if you
 go looking. This shows it -- the scan itself, what came off it, and one
 plain statement of whether the scanner is free.
 
@@ -120,8 +120,8 @@ def _readiness() -> tuple[str, str, str]:
     )
     if processing:
         return "warn", f"Working through {processing} sheet{'s' if processing != 1 else ''}", \
-            "Wait for this to finish before scanning the next eight." + stuck_note
-    return "ok", "Ready — scan the next eight", \
+            "Wait for this to finish before scanning the next nine." + stuck_note
+    return "ok", "Ready — scan the next nine", \
         "Nothing being processed. Put the next cards on the glass and press the button." + stuck_note
 
 

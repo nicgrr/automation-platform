@@ -1,7 +1,7 @@
 # Bulk card scan ingest
 
 Digitises physical Pokémon cards into the `InventoryItem` table by scanning
-8-up sheets on the flatbed, splitting them into per-card crops, identifying
+9-up sheets on the flatbed, splitting them into per-card crops, identifying
 each card against a cached set catalogue, and committing the confident ones.
 
 Code lives in `automation_control/scan_ingest/`. Nothing here talks to eBay
