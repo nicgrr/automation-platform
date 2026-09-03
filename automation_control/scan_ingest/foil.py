@@ -93,6 +93,19 @@ def _surface_metrics(scan_path: Path, card: CatalogCard) -> dict[str, float]:
             "body_bias": whole_distance - art_distance,
             "art_glare": art_glare,
             "body_glare": body_glare,
+            # Same "which region differs more" question as body_bias, but
+            # from a literal photometric signal (bright, low-saturation
+            # pixels) instead of similarity-to-reference -- an independent
+            # measurement of the same thing, not a restatement of it. Kept
+            # as its own metric (not folded into the suggestion) because a
+            # spot-check against tonight's real log data found the two
+            # signals disagreeing on the two most glare-heavy cards logged
+            # so far (body_bias strongly negative -- "suggests holo" --
+            # while glare sat entirely on the body, not the art). With no
+            # confirmed-holo sample yet to say which signal was right, that
+            # disagreement is exactly the kind of thing shadow mode exists
+            # to surface, not paper over with an invented confidence boost.
+            "glare_bias": body_glare - art_glare,
         }
     except Exception:
         return {}
@@ -115,4 +128,16 @@ def assess_foil(scan_path: Path, card: CatalogCard) -> FoilAssessment:
         suggestion, reason = CardVariant.HOLO, "artwork differs from reference more than card body"
     elif CardVariant.NORMAL in candidates and bias is not None and abs(bias) < 4:
         suggestion, reason = CardVariant.NORMAL, "no strong regional foil bias"
+
+    # Note whether the independent glare signal points the same way, purely
+    # as calibration context -- see the comment on glare_bias above for why
+    # this stays informational rather than adjusting confidence: agreement
+    # here isn't yet confirmed to mean anything, only logged so it can be
+    # checked against real holo/reverse-holo cards once some exist.
+    glare_bias = metrics.get("glare_bias")
+    if suggestion in (CardVariant.HOLO, CardVariant.REVERSE_HOLO) and glare_bias is not None:
+        expected_sign = 1 if suggestion is CardVariant.REVERSE_HOLO else -1
+        agrees = (glare_bias > 0) == (expected_sign > 0) if glare_bias != 0 else False
+        reason += "; glare direction agrees" if agrees else "; glare direction disagrees"
+
     return FoilAssessment(candidates, suggestion, 0.50 if suggestion else 0.0, reason, metrics)
