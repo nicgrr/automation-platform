@@ -289,15 +289,21 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
         abs(tallest - median_width / CARD_ASPECT) < abs(tallest - median_width * CARD_ASPECT)
         if median_width and tallest else False
     )
+    # With only one or two bands *anywhere on the sheet*, a portrait card and
+    # two touching landscape cards are geometrically indistinguishable, so
+    # there's nothing trustworthy to rejoin with -- keep the old size-based
+    # split path. But once *any* column supplies three or more bands, that
+    # evidence is sheet-wide (it fed `tallest` above), not column-local: a
+    # short column whose one card split into just two fragments (confirmed
+    # against a real 11-card irregular sheet, where the split card was alone
+    # in its column) still deserves the rejoin, and gating on *that* column's
+    # own count alone silently skipped it.
+    trustworthy_evidence = any(len(rows) >= 3 for _, rows in initial)
 
     result = []
     for (x1, x2), rows in initial:
         expected_height = (x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT
-        # With only one or two bands, a portrait card and two touching
-        # landscape cards are geometrically indistinguishable.  Keep the
-        # old size-based split path for that sparse case.  Three or more
-        # rows provide enough repeated layout evidence to rejoin safely.
-        if len(rows) >= 3:
+        if trustworthy_evidence:
             rows = _merge_fragmented_rows(rows, expected_height)
         result.append(((x1, x2), rows))
 
@@ -316,7 +322,7 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
                 for x1, x2 in rejoined:
                     rows = rows_for(x1, x2)
                     expected_height = (x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT
-                    if len(rows) >= 3:
+                    if trustworthy_evidence:
                         rows = _merge_fragmented_rows(rows, expected_height)
                     result.append(((x1, x2), rows))
     return result

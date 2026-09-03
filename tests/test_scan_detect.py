@@ -351,6 +351,40 @@ def test_detect_cards_rejoins_rows_split_inside_all_nine_cards(tmp_path):
         assert abs(height - CARD_H) < CARD_H * 0.15
 
 
+def test_detect_cards_rejoins_a_lone_split_card_using_evidence_from_another_column(tmp_path):
+    """The real failure this guards against: an 11-card irregular sheet
+    where one column held a single card (its own text panel splitting it
+    into two row fragments) while a *different* column had three intact,
+    genuinely gapped cards to calibrate height from. The row-rejoin logic
+    used to gate on "this column has 3+ bands of its own", which a lone
+    split card can never satisfy -- the fix trusts sheet-wide evidence
+    instead, since the height it establishes doesn't depend on which
+    column supplied it.
+    """
+    rows, cols = 3, 2
+    sheet = _make_sheet(rows, cols)
+    # Column 0 keeps its three genuine, gapped cards untouched -- that's
+    # the trustworthy evidence. Column 1's single top card (the other two
+    # cells are cleared to background) gets a low-variance strip through
+    # its own middle, mirroring a card's own text panel.
+    top_x = MARGIN + CARD_W + GAP
+    sheet[MARGIN : MARGIN + CARD_H, top_x : top_x + CARD_W] = _textured_card(99)
+    strip_y = MARGIN + CARD_H // 2 - 25
+    sheet[strip_y : strip_y + 50, top_x : top_x + CARD_W] = (246, 246, 246)
+    for row in (1, 2):
+        y = MARGIN + row * (CARD_H + GAP)
+        sheet[y : y + CARD_H, top_x : top_x + CARD_W] = BG_COLOR
+
+    sheet_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(sheet_path), sheet)
+    result = detect_cards(sheet_path, tmp_path / "out")
+
+    assert result.count == 4, f"expected 4 cards (3 + the split one rejoined), got {result.count}"
+    for card in result.cards:
+        _, height = card.size
+        assert abs(height - CARD_H) < CARD_H * 0.15, f"card height {height} is not a whole card ({CARD_H})"
+
+
 def test_detect_cards_still_separates_two_genuinely_adjacent_cards(tmp_path):
     """The flip side: rejoining must never fuse two real cards. Two whole
     cards with a normal gap stay two cards."""
