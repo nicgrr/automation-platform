@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # 20. Anything above this goes to the manual-confirmation queue rather
     # than being guessed at.
     scan_phash_max_distance: int = 12
+    # A count above this can only be over-fragmentation -- the physical bed
+    # never holds more than this many cards at once -- so it's checked
+    # unconditionally on every sheet regardless of layout, unlike
+    # --expected-count (an exact match, which every smaller or
+    # partly-filled sheet would otherwise fail).
+    scan_max_cards_per_sheet: int = 9
     # Where the background scan-ingest service (scan-ingest.service) writes
     # its stdout/stderr, per the unit's StandardOutput=append: -- the status
     # page tails this rather than shelling out to journalctl.

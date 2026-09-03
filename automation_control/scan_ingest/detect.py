@@ -519,6 +519,7 @@ def _draw_overlay(sheet: np.ndarray, cards: list[DetectedCard]) -> np.ndarray:
 
 def detect_cards(
     sheet_path: Path, output_dir: Path, expected_count: int | None = None,
+    max_count: int | None = None,
     always_save_overlay: bool = False, post_rotation_degrees: int = 0,
 ) -> DetectionResult:
     """Detect and crop every card on a scanned sheet by finding the grid of
@@ -533,10 +534,19 @@ def detect_cards(
     being told the layout; pass `expected_count` to additionally assert a
     specific number of cards.
 
+    `max_count` is a looser, one-sided version of the same idea: the
+    physical bed only ever holds so many cards at once, so a count above
+    that ceiling can *only* mean over-fragmentation (bands wrongly split
+    into more pieces than there are real cards), never extra cards that
+    need explaining -- unlike `expected_count`, which every smaller,
+    partly-filled sheet would otherwise fail to match. Flagging it here
+    turns a vague "oversized band" warning into a message that says
+    outright that the count is impossible, not just unexpected.
+
     `needs_review` is set (and an annotated overlay saved) when the count
-    doesn't match `expected_count`, when nothing was detected, or when any
-    detected cell isn't card-shaped -- the last of which catches two cards
-    touching and being read as one band.
+    doesn't match `expected_count`, exceeds `max_count`, when nothing was
+    detected, or when any detected cell isn't card-shaped -- the last of
+    which catches two cards touching and being read as one band.
 
     `post_rotation_degrees` corrects for every card on the sheet being
     placed the same non-upright way (e.g. sideways to fit more per sheet).
@@ -565,6 +575,8 @@ def detect_cards(
         warnings.append(f"card(s) {misshapen} are not card-shaped -- possibly two cards touching, or a mis-split")
     if expected_count is not None and len(cards) != expected_count:
         warnings.append(f"expected {expected_count} cards, found {len(cards)}")
+    if max_count is not None and len(cards) > max_count:
+        warnings.append(f"found {len(cards)} cards, more than the {max_count} the bed can physically hold -- this is fragmentation, not extra cards")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     crop_paths = []

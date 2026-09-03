@@ -62,6 +62,7 @@ class FakeSettings:
     scan_media_dir: str
     scan_cache_dir: str
     scan_phash_max_distance: int = 12
+    scan_max_cards_per_sheet: int = 9
 
 
 @pytest.fixture

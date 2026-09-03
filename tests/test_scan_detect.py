@@ -101,6 +101,23 @@ def test_detect_cards_flags_review_on_expected_count_mismatch(tmp_path):
     assert result.overlay_path is not None and result.overlay_path.exists()
 
 
+def test_detect_cards_flags_review_when_count_exceeds_physical_max(tmp_path):
+    """max_count is a one-sided ceiling, not an exact match: a count above
+    it can only be fragmentation (the bed can't hold more), but a count
+    below it is a perfectly normal partly-filled sheet and must not be
+    flagged."""
+    sheet_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(sheet_path), _make_sheet(rows=2, cols=2))
+
+    over = detect_cards(sheet_path, tmp_path / "over", max_count=3)
+    assert over.needs_review
+    assert any("more than the 3" in w for w in over.warnings)
+
+    under = detect_cards(sheet_path, tmp_path / "under", max_count=9)
+    assert under.count == 4
+    assert not under.needs_review
+
+
 def test_detect_cards_accepts_matching_expected_count(tmp_path):
     sheet_path = tmp_path / "sheet.png"
     cv2.imwrite(str(sheet_path), _make_sheet(rows=4, cols=2))

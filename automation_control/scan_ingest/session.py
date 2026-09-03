@@ -405,6 +405,7 @@ def process_sheet(
     work_dir = Path(settings.scan_media_dir) / "work" / scan_session.id / sheet_path.stem
     detection = detect_cards(
         sheet_path, work_dir, expected_count=expected_count,
+        max_count=settings.scan_max_cards_per_sheet,
         always_save_overlay=False, post_rotation_degrees=post_rotation_degrees,
     )
 
