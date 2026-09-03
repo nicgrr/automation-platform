@@ -105,13 +105,8 @@ def _review_queue_size(settings) -> int:
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> str:
-    credential = session.get(EbayCredential, 1)
-    listing_count = len(session.scalars(select(EbayListing)).all())
     events = session.scalars(select(AuditEvent).order_by(desc(AuditEvent.occurred_at)).limit(10)).all()
     event_html = "".join(f"<li>{escape(str(e.occurred_at))} — {escape(e.action)} — {escape(e.outcome)}</li>" for e in events) or "<li>No events</li>"
-    connected = bool(credential)
-    connection_pill = pill("Connected", "ok") if connected else pill("Not connected", "bad")
-    last_sync = credential.last_successful_sync_at if credential and credential.last_successful_sync_at else "Never"
     pending_review_count = len(session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW)).all())
     pending_price_count = len(session.scalars(select(CapturedCard).where(CapturedCard.pricing_status == PricingStatus.PENDING_PRICE_REVIEW)).all())
     pending_listing_count = len(session.scalars(select(PendingListing).where(PendingListing.status == ListingBuildStatus.DRAFT)).all())
@@ -120,26 +115,30 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     scanned_copies = sum(i.quantity for i in scanned_items)
     review_count = _review_queue_size(request.app.state.settings)
 
+    # Grouped by which pipeline the number belongs to -- "pending review"
+    # (single capture) and "awaiting review" (bulk scan) sat side by side as
+    # one flat, same-looking grid before, which read as one confusing number
+    # split in two rather than two different queues.
     stat_grid = (
+        "<div class='stat-group'>"
+        "<h3 class='group-label'>Bulk scan pipeline</h3>"
         "<div class='stat-grid'>"
-        f"<div class='stat-card'><div class='label'>Platform status</div><div class='value'>{pill('OK', 'ok')}</div></div>"
-        f"<div class='stat-card'><div class='label'>eBay connection</div><div class='value'>{connection_pill}</div></div>"
-        f"<div class='stat-card'><div class='label'>eBay environment</div><div class='value'>{pill('Sandbox', 'neutral')}</div></div>"
-        f"<div class='stat-card'><div class='label'>Last successful sync</div><div class='value'>{escape(str(last_sync))}</div></div>"
-        f"<div class='stat-card'><div class='label'>Listings retrieved</div><div class='value'>{listing_count}</div></div>"
-        f"<div class='stat-card'><div class='label'>Cards pending review</div><div class='value'>{pending_review_count}</div></div>"
-        f"<div class='stat-card'><div class='label'>Cards pending price approval</div><div class='value'>{pending_price_count}</div></div>"
+        f"<div class='stat-card'><div class='label'>Scanned inventory</div><div class='value'>{scanned_holdings} <span class='value-sub'>({scanned_copies} copies)</span></div></div>"
+        f"<div class='stat-card'><div class='label'>Awaiting review</div><div class='value'>{review_count}</div></div>"
+        "</div></div>"
+        "<div class='stat-group'>"
+        "<h3 class='group-label'>Single capture &amp; listings</h3>"
+        "<div class='stat-grid'>"
+        f"<div class='stat-card'><div class='label'>Pending review</div><div class='value'>{pending_review_count}</div></div>"
+        f"<div class='stat-card'><div class='label'>Pending price approval</div><div class='value'>{pending_price_count}</div></div>"
         f"<div class='stat-card'><div class='label'>Listings pending review</div><div class='value'>{pending_listing_count}</div></div>"
-        f"<div class='stat-card'><div class='label'>Cards awaiting review</div><div class='value'>{review_count}</div></div>"
-        f"<div class='stat-card'><div class='label'>Scanned inventory</div><div class='value'>{scanned_holdings} ({scanned_copies} copies)</div></div>"
-        "</div>"
+        "</div></div>"
     )
 
     body = (
-        brand_header("Private Control Plane")
+        f"<div class='brand-row'>{brand_header('Private Control Plane')}{pill('Platform OK', 'ok')}</div>"
         + "<p class='subtitle'>Trading card listing operations.</p>"
         + stat_grid
-        + f"<div class='panel'><h2>eBay Sandbox</h2><p><a class='btn' href='/auth/ebay/start'>Connect eBay Sandbox</a></p></div>"
         + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
         + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/feed'>Scan feed</a> &nbsp; <a href='/scan-ingest'>Status &amp; logs</a> &nbsp; <a href='/review'>Review queue ({review_count})</a></p></div>"
         + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
