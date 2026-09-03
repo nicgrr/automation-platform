@@ -63,6 +63,7 @@ class FakeSettings:
     scan_cache_dir: str
     scan_phash_max_distance: int = 12
     scan_max_cards_per_sheet: int = 9
+    anthropic_api_key: str | None = None
 
 
 @pytest.fixture
@@ -477,6 +478,81 @@ def test_unattended_sets_aside_a_misshapen_card_without_skipping_its_sheet(db, s
     saved = list(set_aside_dir.glob("*.jpg"))
     assert len(saved) == 1
     assert "not-card-shaped" in saved[0].name
+
+
+def test_unattended_uses_vision_to_resolve_a_misshapen_card(db, settings, monkeypatch):
+    """With vision available, a misshapen card that Claude can actually read
+    (mirrors a real false-positive shape flag on an otherwise intact card)
+    commits normally instead of being set aside -- vision is tried before
+    giving up, not instead of the shape check.
+    """
+    sheet_path = _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1, 2], rows=2, cols=1)
+    detection = detect_cards(sheet_path, Path(settings.scan_media_dir) / "work" / "probe")
+    detection.misshapen = [2]
+    detection.structural_issue = False
+    detection.needs_review = True
+    detection.warnings = ["card(s) [2] are not card-shaped -- possibly two cards touching, or a mis-split"]
+    monkeypatch.setattr(session_mod, "detect_cards", lambda *a, **k: detection)
+
+    settings.anthropic_api_key = "fake-key"
+    _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])
+    monkeypatch.setattr(
+        session_mod, "identify_card_via_vision",
+        lambda crop, refs, api_key: Identification("xy11-2", "2", "Card 2", Source.VISION, 0.90),
+    )
+
+    prompter = ScriptedPrompter()
+    scan_session = run_session(db, "xy11", settings, prompter, max_sheets=1, max_wait=0.5, poll_interval=0.01, unattended=True)
+
+    assert prompter.questions == []
+    assert scan_session.cards_committed == 2
+    card_ids = {item.card_id for item in db.scalars(select(InventoryItem)).all()}
+    assert card_ids == {"xy11-1", "xy11-2"}
+    assert list((Path(settings.scan_media_dir) / "needs_review").glob("*.jpg")) == []
+
+
+def test_unattended_uses_vision_as_a_second_opinion_when_phash_fails(db, settings, monkeypatch):
+    """A crop OCR and pHash both give up on (an uncached printing, a low-DPI
+    scan) gets one more shot from vision before it costs a human's
+    attention.
+    """
+    _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1], rows=1, cols=1)
+    settings.anthropic_api_key = "fake-key"
+    _patch_identify(monkeypatch, [Identification(None, None, None, Source.NONE, 0.0)])
+    monkeypatch.setattr(
+        session_mod, "identify_card_via_vision",
+        lambda crop, refs, api_key: Identification("xy11-1", "1", "Card 1", Source.VISION, 0.90),
+    )
+
+    prompter = ScriptedPrompter()
+    scan_session = run_session(db, "xy11", settings, prompter, max_sheets=1, max_wait=0.5, poll_interval=0.01, unattended=True)
+
+    assert prompter.questions == []
+    assert scan_session.cards_committed == 1
+    assert db.scalars(select(InventoryItem)).one().card_id == "xy11-1"
+
+
+def test_unattended_a_weak_vision_guess_does_not_override_a_usable_phash_label(db, settings, monkeypatch):
+    """Vision only takes over when it does *better* than the original guess
+    -- a weak vision guess must not clobber a phash guess that's already
+    queued for review under its own (better) label.
+    """
+    _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1], rows=1, cols=1)
+    settings.anthropic_api_key = "fake-key"
+    _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.PHASH, 0.5)])
+    monkeypatch.setattr(
+        session_mod, "identify_card_via_vision",
+        lambda crop, refs, api_key: Identification(
+            None, None, "Mystery Card", Source.VISION, 0.0, note="Claude could not read a name off this crop",
+        ),
+    )
+
+    prompter = ScriptedPrompter()
+    run_session(db, "xy11", settings, prompter, max_sheets=1, max_wait=0.5, poll_interval=0.01, unattended=True)
+
+    saved = list((Path(settings.scan_media_dir) / "needs_review").glob("*.jpg"))
+    assert len(saved) == 1
+    assert "1-Card 1" in saved[0].name  # kept the phash guess's label, not vision's
 
 
 def test_unattended_skips_a_bad_detection_without_asking(db, settings, monkeypatch):

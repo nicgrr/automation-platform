@@ -31,6 +31,8 @@ import numpy as np
 import pytesseract
 from PIL import Image
 
+from ..card_recognition import ExtractedCard, extract_card_details
+
 # Where the collector number sits on the card, as fractions of the crop.
 # The corner depends on the era, so both are tried rather than guessed at:
 # XY/SM print it bottom-RIGHT beside the illustrator credit (verified on
@@ -113,6 +115,7 @@ class Source(str, Enum):
     BOTH = "both"           # OCR and pHash agree -- strongest evidence
     OCR = "ocr"             # number read cleanly, pHash unavailable/silent
     PHASH = "phash"         # art matched, number unreadable
+    VISION = "vision"       # OCR and pHash both gave up; Claude read it directly
     CONFLICT = "conflict"   # signals disagree -- always needs a human
     NONE = "none"           # nothing matched
 
@@ -418,3 +421,95 @@ def detect_sheet_set_and_rotation(
     if len(best_distances) < min(min_confident_matches, len(crop_paths)):
         return None
     return best_key
+
+
+# --- vision fallback ---------------------------------------------------
+# A last resort for a crop neither signal above could place -- read it
+# directly rather than compare it, either because it's genuinely
+# unidentifiable by pHash/OCR (low resolution, an uncached printing) or
+# because its *geometry* is off (see detect.DetectionResult.misshapen) in a
+# way that corrupts pHash without necessarily corrupting what's legible in
+# the image. Confirmed against a real flagged crop: an aspect ratio of 0.86
+# against a 0.85 ceiling (a false-positive "not card-shaped" flag on an
+# otherwise-intact card) still read cleanly as "Miraidon" in one call.
+#
+# Costs a real API call per crop, so callers only reach this after the free
+# signals have already given up -- never as a first attempt.
+
+VISION_NUMBER_MATCH_CONFIDENCE = 0.90
+VISION_NAME_MATCH_CONFIDENCE = 0.60
+
+_LEADING_NUMBER = re.compile(r"\d{1,3}")
+
+
+def _normalize_vision_number(raw: str | None) -> str | None:
+    """"151/198" or "#151" or "151" -> "151". Claude is asked for the same
+    printed string OCR reads, so the same leading-integer extraction OCR's
+    own regex does applies here too -- just tolerant of a few more of the
+    ways a model might phrase it (a leading '#', descriptive text)."""
+    if not raw:
+        return None
+    match = _LEADING_NUMBER.search(raw)
+    return str(int(match.group(0))) if match else None
+
+
+def resolve_vision_extraction(extracted: ExtractedCard, references: list[ReferenceCard]) -> Identification:
+    """Match one Claude-read card against the set already known to be on
+    this sheet. Claude is asked what it sees on the card, never which
+    catalogue id that corresponds to -- this is pure lookup against
+    `references`, not a second opinion on which set the sheet belongs to.
+
+    A read number is authoritative the same way OCR's own is: unlike a
+    name, two cards in the same set never share one. A read name alone is
+    only trusted when it resolves to exactly one reference -- a name shared
+    across printings (an alt-art, a different rarity in the same set) makes
+    it ambiguous, and an ambiguous name is worth exactly as much as no name
+    at all.
+    """
+    number = _normalize_vision_number(extracted.card_number)
+    if number:
+        match = next((r for r in references if r.number == number), None)
+        if match:
+            return Identification(
+                card_id=match.card_id, number=match.number, name=match.name,
+                source=Source.VISION, confidence=VISION_NUMBER_MATCH_CONFIDENCE,
+                note=f"Claude read #{number} ({extracted.character})",
+            )
+
+    name = (extracted.character or "").strip().lower()
+    if name:
+        name_matches = [r for r in references if r.name.strip().lower() == name]
+        if len(name_matches) == 1:
+            match = name_matches[0]
+            return Identification(
+                card_id=match.card_id, number=match.number, name=match.name,
+                source=Source.VISION, confidence=VISION_NAME_MATCH_CONFIDENCE,
+                note=f"Claude read the name ({extracted.character}) but not a usable number",
+            )
+
+    note = (
+        f"Claude read {extracted.character!r}, but no card in this set matches"
+        if extracted.character else "Claude could not read a name off this crop"
+    )
+    return Identification(
+        card_id=None, number=None, name=extracted.character or None,
+        source=Source.VISION, confidence=0.0, note=note,
+    )
+
+
+def identify_card_via_vision(image_path: Path, references: list[ReferenceCard], api_key: str) -> Identification | None:
+    """Ask Claude to read the crop directly. Returns None (never raises) on
+    any failure -- an API outage or a malformed response must not take an
+    unattended run down, and the caller already has a perfectly good
+    fallback (set the card aside) for when this can't help either.
+    """
+    try:
+        extracted = extract_card_details(image_path, None, api_key=api_key)
+    except Exception:
+        return None
+    if not extracted:
+        return Identification(
+            card_id=None, number=None, name=None, source=Source.VISION,
+            confidence=0.0, note="Claude found no card in this crop",
+        )
+    return resolve_vision_extraction(extracted[0], references)

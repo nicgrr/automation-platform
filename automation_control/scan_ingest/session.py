@@ -27,7 +27,7 @@ from .commit import CommitRefused, commit_card, inventory_totals
 from .detect import detect_cards
 from .foil import assess_foil
 from .pricing import PokemonTcgPriceSource, PriceSource, price_and_record
-from .identify import Identification, ReferenceCard, Source, best_set_by_art, detect_sheet_set_and_rotation, identify_card, read_set_totals
+from .identify import Identification, ReferenceCard, Source, best_set_by_art, detect_sheet_set_and_rotation, identify_card, identify_card_via_vision, read_set_totals
 
 POLL_INTERVAL_SECONDS = 2.0
 # Scanners write incrementally; a file that appeared mid-write would be
@@ -451,19 +451,40 @@ def process_sheet(
         card = db.get(CatalogCard, card_id)
         return price_source.get_price(card, variant) if card else None
 
+    api_key = settings.anthropic_api_key
     misshapen = set(detection.misshapen)
     for index, crop_path in enumerate(detection.crop_paths, start=1):
         if unattended and index in misshapen:
-            saved_to = _set_aside_for_review(
-                crop_path, Path(settings.scan_media_dir), sheet_path.name, index, label="not-card-shaped",
+            # A misshapen crop's own pHash is exactly the signal the shape
+            # check calls into doubt, so identify_card isn't worth trying
+            # here -- go straight to the one signal that doesn't depend on
+            # the crop's geometry. If Claude can't place it either (or
+            # there's no key configured), it falls to the same set-aside as
+            # always; if it can, `identification` carries on into the
+            # ordinary identify/commit path below like any other card.
+            identification = identify_card_via_vision(crop_path, references, api_key) if api_key else None
+            if identification is None:
+                saved_to = _set_aside_for_review(
+                    crop_path, Path(settings.scan_media_dir), sheet_path.name, index, label="not-card-shaped",
+                )
+                prompter.notify(f"  Card {index}: not card-shaped -- set aside for review: {saved_to}")
+                outcome.set_aside += 1
+                continue
+        else:
+            identification = identify_card(
+                crop_path, references, set_total=set_total,
+                max_phash_distance=settings.scan_phash_max_distance,
             )
-            prompter.notify(f"  Card {index}: not card-shaped -- set aside for review: {saved_to}")
-            outcome.set_aside += 1
-            continue
-        identification = identify_card(
-            crop_path, references, set_total=set_total,
-            max_phash_distance=settings.scan_phash_max_distance,
-        )
+            # OCR and pHash both fell short of auto-commit -- one more shot
+            # before this card costs a human's attention. Only takes over
+            # when it does *better* (a resolved, confirmable match); a weak
+            # vision guess never overwrites a phash guess that's already as
+            # good or better.
+            if unattended and identification.needs_confirmation and api_key:
+                vision = identify_card_via_vision(crop_path, references, api_key)
+                if vision is not None and not vision.needs_confirmation:
+                    identification = vision
+
         identified_card = db.get(CatalogCard, identification.card_id) if identification.card_id else None
         if identified_card is not None:
             prompter.notify(f"  Card {index}: {assess_foil(crop_path, identified_card).log_summary()}")

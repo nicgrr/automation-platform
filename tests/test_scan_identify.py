@@ -5,8 +5,12 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from automation_control.card_recognition import ExtractedCard
 from automation_control.scan_ingest import identify as identify_mod
-from automation_control.scan_ingest.identify import Identification, ReferenceCard, Source, detect_sheet_set_and_rotation, identify_card, read_card_number
+from automation_control.scan_ingest.identify import (
+    Identification, ReferenceCard, Source, detect_sheet_set_and_rotation, identify_card,
+    identify_card_via_vision, read_card_number, resolve_vision_extraction,
+)
 
 
 def _write_image(path, seed: int, size=(750, 1050)):
@@ -348,3 +352,69 @@ class _FakeHash:
 
     def __sub__(self, other):
         return self.distance
+
+
+# --- vision fallback ---
+
+def _extracted(character="Card 1", card_number="1/198", unreadable_fields=None):
+    return ExtractedCard(
+        character=character, set_name="", card_number=card_number, rarity="",
+        language="English", graded="Raw", unreadable_fields=unreadable_fields or [],
+    )
+
+
+def test_resolve_vision_extraction_prefers_a_read_number():
+    refs = [ReferenceCard("set-1", "1", "Card 1", "0" * 16), ReferenceCard("set-2", "2", "Card 2", "f" * 16)]
+    # the read name matches a *different* card than the read number --
+    # numbers are authoritative, exactly like OCR's own number is.
+    result = resolve_vision_extraction(_extracted(character="Card 2", card_number="1/198"), refs)
+    assert result.card_id == "set-1"
+    assert result.source is Source.VISION
+    assert not result.needs_confirmation
+
+
+def test_resolve_vision_extraction_falls_back_to_a_unique_name_match():
+    refs = [ReferenceCard("set-1", "1", "Card 1", "0" * 16), ReferenceCard("set-2", "2", "Card 2", "f" * 16)]
+    result = resolve_vision_extraction(_extracted(character="Card 2", card_number=""), refs)
+    assert result.card_id == "set-2"
+    assert result.needs_confirmation  # a name alone isn't strong enough to auto-commit
+
+
+def test_resolve_vision_extraction_refuses_an_ambiguous_name():
+    refs = [
+        ReferenceCard("set-1", "1", "Charizard", "0" * 16),
+        ReferenceCard("set-2", "2", "Charizard", "f" * 16),  # e.g. two rarities sharing a name
+    ]
+    result = resolve_vision_extraction(_extracted(character="Charizard", card_number=""), refs)
+    assert result.card_id is None
+    assert "Charizard" in result.note
+
+
+def test_resolve_vision_extraction_handles_nothing_legible():
+    result = resolve_vision_extraction(_extracted(character="", card_number=""), [])
+    assert result.card_id is None
+    assert result.source is Source.VISION
+    assert result.confidence == 0.0
+
+
+def test_identify_card_via_vision_matches_the_first_extracted_card(tmp_path, monkeypatch):
+    refs = [ReferenceCard("set-1", "1", "Card 1", "0" * 16)]
+    monkeypatch.setattr(identify_mod, "extract_card_details", lambda *a, **k: [_extracted(character="Card 1", card_number="1/198")])
+    result = identify_card_via_vision(tmp_path / "crop.jpg", refs, api_key="fake")
+    assert result.card_id == "set-1"
+
+
+def test_identify_card_via_vision_returns_none_on_api_failure(tmp_path, monkeypatch):
+    """An outage must not take an unattended run down -- the caller already
+    has a plain set-aside fallback for when this can't help either."""
+    def boom(*args, **kwargs):
+        raise RuntimeError("network error")
+    monkeypatch.setattr(identify_mod, "extract_card_details", boom)
+    assert identify_card_via_vision(tmp_path / "crop.jpg", [], api_key="fake") is None
+
+
+def test_identify_card_via_vision_handles_no_card_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(identify_mod, "extract_card_details", lambda *a, **k: [])
+    result = identify_card_via_vision(tmp_path / "crop.jpg", [], api_key="fake")
+    assert result.card_id is None
+    assert result.source is Source.VISION
