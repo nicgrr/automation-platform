@@ -29,6 +29,19 @@ MIN_BAND_FRACTION = 0.05
 # absolute so it survives different scanners, bed colors, and exposures.
 CONTENT_STD_RATIO = 0.25
 
+# See the retry inside _content_bands: a single detected band covering at
+# least this fraction of the profile is treated as "the default threshold
+# found no gaps," not "there's genuinely one giant card."
+STUCK_BAND_FRACTION = 0.6
+
+# The steeper threshold tried only in that one situation. Confirmed against a
+# real scan that this recovers three real, evenly-sized columns (~1550-1650px
+# each) where the default threshold saw one 4906px band -- and confirmed
+# against every other sheet processed so far that this ratio is never even
+# reached for them, since they already produce more than one band at the
+# default.
+FALLBACK_CONTENT_STD_RATIO = 0.4
+
 # A detected band whose long dimension is at least this many times the
 # sheet's median card size is treated as multiple cards touching with no
 # gap between them (confirmed against a real flatbed scan: two landscape
@@ -160,7 +173,9 @@ class DetectionResult:
         return not self.needs_review
 
 
-def _content_bands(std_profile: np.ndarray, min_length: int) -> list[tuple[int, int]]:
+def _content_bands(
+    std_profile: np.ndarray, min_length: int, ratio: float = CONTENT_STD_RATIO
+) -> list[tuple[int, int]]:
     """Split a row- or column-wise standard-deviation profile into runs of
     "content" (card) separated by "gap" (empty scanner bed). Returns
     [(start, end), ...] for each content run at least `min_length` long.
@@ -173,7 +188,7 @@ def _content_bands(std_profile: np.ndarray, min_length: int) -> list[tuple[int, 
     """
     if std_profile.size == 0:
         return []
-    threshold = std_profile.max() * CONTENT_STD_RATIO
+    threshold = std_profile.max() * ratio
     is_content = std_profile > threshold
 
     bands: list[tuple[int, int]] = []
@@ -187,7 +202,27 @@ def _content_bands(std_profile: np.ndarray, min_length: int) -> list[tuple[int, 
     if start is not None:
         bands.append((start, len(is_content)))
 
-    return [band for band in bands if band[1] - band[0] >= min_length]
+    bands = [band for band in bands if band[1] - band[0] >= min_length]
+
+    # A single band spanning most of the sheet means the default threshold
+    # never found a gap at all -- confirmed against a real scan where every
+    # card sat slightly rotated, so each one's silver border dipped into what
+    # should have been the gap at a different height, keeping that column's
+    # variance elevated everywhere except the outer margins. Retrying with a
+    # steeper threshold only in that specific situation (never when the
+    # default already found >1 band) recovers the real gaps without touching
+    # sheets the default already splits correctly -- those bands can be
+    # narrower than a genuine card (a card's own low-variance text panel), but
+    # that's exactly what the existing fragment-rejoin pass downstream exists
+    # to repair, using this axis's own trustworthy evidence from elsewhere.
+    if ratio == CONTENT_STD_RATIO and len(bands) == 1:
+        band_width = bands[0][1] - bands[0][0]
+        if band_width >= std_profile.size * STUCK_BAND_FRACTION:
+            retried = _content_bands(std_profile, min_length, ratio=FALLBACK_CONTENT_STD_RATIO)
+            if len(retried) > 1:
+                return retried
+
+    return bands
 
 
 def _predict_card_width(column_widths: list[int], median_height: float) -> float | None:

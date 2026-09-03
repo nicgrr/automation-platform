@@ -455,6 +455,37 @@ def test_detect_cards_splits_two_columns_touching_with_no_gap(tmp_path):
         assert abs(h - CARD_H) < CARD_H * 0.15, f"card height {h} is not a whole card ({CARD_H})"
 
 
+def test_content_bands_retries_a_weak_gap_that_never_clears_the_default_threshold(tmp_path):
+    """The real failure this guards against: a scan where every card sat
+    slightly rotated, so each one's silver border dipped into what should
+    have been the gap at a different height along its column -- keeping
+    that column's overall variance elevated everywhere except the sheet's
+    outer margins. The default threshold (relative to the sheet's peak
+    variance) never dropped low enough anywhere between real columns, so
+    the whole content region came back as a single band spanning the sheet
+    -- confirmed against a real 3x3 sheet where the true columns were three
+    ~1550-1650px bands but the default threshold produced one 4906px band.
+
+    Mirrors that shape directly on the profile: two content regions at the
+    peak, and a gap that sits above the default threshold (0.25x peak) but
+    below the fallback one (0.4x peak) tried only when the default leaves a
+    single band spanning most of the profile.
+    """
+    from automation_control.scan_ingest.detect import CONTENT_STD_RATIO, _content_bands
+
+    peak = 80.0
+    weak_gap = 30.0  # > 0.25*80=20 (invisible by default) but < 0.4*80=32
+    profile = np.array([peak] * 300 + [weak_gap] * 40 + [peak] * 300)
+
+    # Sanity check: at the plain default ratio, this gap reads as "content"
+    # (i.e. is invisible as a gap) -- the input reproduces the bug, not just
+    # the fix.
+    threshold = profile.max() * CONTENT_STD_RATIO
+    assert weak_gap > threshold
+
+    assert _content_bands(profile, min_length=50) == [(0, 300), (340, 640)]
+
+
 def test_predict_card_width_refuses_to_guess_without_support(tmp_path):
     """A wrong width prediction would fuse real cards, so with no band
     matching either candidate the detector must decline to merge."""
