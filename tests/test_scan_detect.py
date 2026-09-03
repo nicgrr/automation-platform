@@ -416,6 +416,45 @@ def test_detect_cards_still_separates_two_genuinely_adjacent_cards(tmp_path):
         assert abs(w - CARD_W) < CARD_W * 0.15
 
 
+def test_detect_cards_splits_two_columns_touching_with_no_gap(tmp_path):
+    """The real failure this guards against: a 3x3 sheet where two columns
+    sat flush against each other with no gap, so column-detection saw one
+    band twice the normal width instead of two. That fused band used to
+    corrupt the whole sheet, not just itself: with only two raw column
+    bands (fused, and the one genuine column), the old sorted-median picked
+    the fused, inflated width as "the" card width -- so trusting *any*
+    column's own width for its expected row height (including the genuine
+    column's) was unsafe. This asserts the fix's two halves together: the
+    fused band gets split back into two real columns, and the genuine
+    column's rows are never miscalibrated by the fused one's width along
+    the way.
+    """
+    rows = 3
+    height = MARGIN * 2 + rows * CARD_H + (rows - 1) * GAP
+    width = MARGIN * 2 + CARD_W * 3 + GAP
+    sheet = np.full((height, width, 3), BG_COLOR, dtype=np.uint8)
+
+    fused_x0 = MARGIN
+    fused_x1 = MARGIN + CARD_W
+    genuine_x = MARGIN + CARD_W * 2 + GAP
+    for row in range(rows):
+        y = MARGIN + row * (CARD_H + GAP)
+        seed = row * 3
+        sheet[y : y + CARD_H, fused_x0 : fused_x0 + CARD_W] = _textured_card(seed + 1)
+        sheet[y : y + CARD_H, fused_x1 : fused_x1 + CARD_W] = _textured_card(seed + 2)
+        sheet[y : y + CARD_H, genuine_x : genuine_x + CARD_W] = _textured_card(seed + 3)
+
+    sheet_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(sheet_path), sheet)
+    result = detect_cards(sheet_path, tmp_path / "out")
+
+    assert result.count == 9, f"expected 9 cards (fused band split back into 2 columns), got {result.count}"
+    for card in result.cards:
+        w, h = card.size
+        assert abs(w - CARD_W) < CARD_W * 0.15, f"card width {w} is not a whole card ({CARD_W})"
+        assert abs(h - CARD_H) < CARD_H * 0.15, f"card height {h} is not a whole card ({CARD_H})"
+
+
 def test_predict_card_width_refuses_to_guess_without_support(tmp_path):
     """A wrong width prediction would fuse real cards, so with no band
     matching either candidate the detector must decline to merge."""

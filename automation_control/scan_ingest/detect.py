@@ -257,6 +257,42 @@ def _merge_fragmented_rows(row_bands: list[tuple[int, int]], expected_height: fl
     return merged
 
 
+def _presplit_oversized_columns(col_bands: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Split a column band that's really N cards touching with no gap,
+    before row-detection ever runs on it -- a strip spanning two side-by-
+    side cards produces a row profile that's the union of both cards'
+    internal transitions, not either card's real rows, so waiting until
+    afterward (as the final `_split_merged_cards` safety net does) is too
+    late to recover cleanly.
+
+    Uses the *narrowest* band as the one-card reference, on the same
+    reasoning as the orientation decision above: a merge only ever makes a
+    band wider, so the narrowest band is never itself a merge. It can still
+    be a fragment (then this splits nothing, since nothing looks 1.6x
+    *that* -- the existing fragment-rejoin pass elsewhere handles narrow
+    pieces instead).
+    """
+    if len(col_bands) < 2:
+        return col_bands
+    narrowest = min(x2 - x1 for x1, x2 in col_bands)
+    if not narrowest:
+        return col_bands
+
+    split: list[tuple[int, int]] = []
+    for x1, x2 in col_bands:
+        width = x2 - x1
+        multiple = round(width / narrowest) if width / narrowest >= MERGE_SIZE_RATIO else 1
+        if multiple > 1:
+            step = width // multiple
+            for i in range(multiple):
+                piece_x1 = x1 + i * step
+                piece_x2 = x2 if i == multiple - 1 else x1 + (i + 1) * step
+                split.append((piece_x1, piece_x2))
+        else:
+            split.append((x1, x2))
+    return split
+
+
 def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], list[tuple[int, int]]]]:
     """Column bands globally, then row bands *independently within each
     column's own vertical strip* -- not a shared grid.
@@ -283,11 +319,20 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
     # reliable evidence of the full height (the current real 3x3 layout is
     # exactly this case).
     observed_heights = [y2 - y1 for _, rows in initial for y1, y2 in rows]
-    median_width = sorted((x2 - x1 for x1, x2 in col_bands))[len(col_bands) // 2] if col_bands else 0
+    # The *narrowest* band, not the median: two real columns fused with no
+    # gap between them only ever makes a band wider, never narrower, so with
+    # as few as two raw column bands the median can land squarely on a fused
+    # one (confirmed against a real sheet: two columns, widths 3278 and
+    # 1597 -- the true single-column width -- where sorted-median picked
+    # 3278). A genuinely fragmented column would pull the narrowest *below*
+    # the true width instead, which is the safer direction to be wrong in:
+    # it degrades to a looser orientation guess rather than actively
+    # trusting a merged band's inflated size.
+    narrowest_width = min((x2 - x1 for x1, x2 in col_bands), default=0)
     tallest = max(observed_heights, default=0)
     portrait = (
-        abs(tallest - median_width / CARD_ASPECT) < abs(tallest - median_width * CARD_ASPECT)
-        if median_width and tallest else False
+        abs(tallest - narrowest_width / CARD_ASPECT) < abs(tallest - narrowest_width * CARD_ASPECT)
+        if narrowest_width and tallest else False
     )
     # With only one or two bands *anywhere on the sheet*, a portrait card and
     # two touching landscape cards are geometrically indistinguishable, so
@@ -299,10 +344,21 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
     # in its column) still deserves the rejoin, and gating on *that* column's
     # own count alone silently skipped it.
     trustworthy_evidence = any(len(rows) >= 3 for _, rows in initial)
+    # One expected height for the *whole sheet*, from the narrowest column's
+    # width -- not each column's own width re-derived per column. A column
+    # that's itself a fusion of two real columns would otherwise predict its
+    # own, inflated expected height from that same fused width (confirmed
+    # against the same real sheet: column 1's genuinely intact rows, ~2100px
+    # each, stayed correctly unmerged only because this is now a *shared*
+    # target derived from column 2's narrow, correct width instead of
+    # column 1's own 3278px band).
+    shared_expected_height = (
+        narrowest_width / CARD_ASPECT if portrait else narrowest_width * CARD_ASPECT
+    ) if narrowest_width else 0.0
 
     result = []
     for (x1, x2), rows in initial:
-        expected_height = (x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT
+        expected_height = shared_expected_height or ((x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT)
         if trustworthy_evidence:
             rows = _merge_fragmented_rows(rows, expected_height)
         result.append(((x1, x2), rows))
@@ -312,19 +368,32 @@ def _detect_columns_and_rows(sheet: np.ndarray) -> list[tuple[tuple[int, int], l
     # trustworthy height even when the widths are wrong -- which is what
     # makes predicting the true width possible. See _predict_card_width.
     heights = [y2 - y1 for _, rows in result for y1, y2 in rows]
+    final_cols = col_bands
     if heights:
         median_height = sorted(heights)[len(heights) // 2]
         expected_width = _predict_card_width([x2 - x1 for x1, x2 in col_bands], median_height)
         if expected_width:
-            rejoined = _merge_fragmented_columns(col_bands, expected_width)
-            if rejoined != col_bands:
-                result = []
-                for x1, x2 in rejoined:
-                    rows = rows_for(x1, x2)
-                    expected_height = (x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT
-                    if trustworthy_evidence:
-                        rows = _merge_fragmented_rows(rows, expected_height)
-                    result.append(((x1, x2), rows))
+            final_cols = _merge_fragmented_columns(col_bands, expected_width)
+
+    # Only now -- with fragments already rejoined into whole cards above --
+    # is the narrowest remaining band trustworthy as a one-card reference
+    # for the opposite problem, two cards fused with no gap between them.
+    # Checking earlier risked the narrowest band being a fragment instead
+    # (confirmed: doing this before the rejoin above split a perfectly
+    # intact card in an existing test, because the still-unrejoined
+    # fragment next to it was narrower still).
+    presplit_cols = _presplit_oversized_columns(final_cols)
+    if presplit_cols != final_cols:
+        final_cols = presplit_cols
+
+    if final_cols != col_bands:
+        result = []
+        for x1, x2 in final_cols:
+            rows = rows_for(x1, x2)
+            expected_height = shared_expected_height or ((x2 - x1) / CARD_ASPECT if portrait else (x2 - x1) * CARD_ASPECT)
+            if trustworthy_evidence:
+                rows = _merge_fragmented_rows(rows, expected_height)
+            result.append(((x1, x2), rows))
     return result
 
 
