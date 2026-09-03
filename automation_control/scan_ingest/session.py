@@ -487,7 +487,10 @@ def process_sheet(
 
         identified_card = db.get(CatalogCard, identification.card_id) if identification.card_id else None
         if identified_card is not None:
-            prompter.notify(f"  Card {index}: {assess_foil(crop_path, identified_card).log_summary()}")
+            summary = assess_foil(crop_path, identified_card).log_summary()
+            if identification.foil_observation:
+                summary += f" | vision saw: {identification.foil_observation}"
+            prompter.notify(f"  Card {index}: {summary}")
         if unattended and identification.needs_confirmation:
             saved_to = _set_aside_for_review(crop_path, Path(settings.scan_media_dir), sheet_path.name, index, identification)
             label = f"#{identification.number} {identification.name}" if identification.card_id else "(unidentified)"

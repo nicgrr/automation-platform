@@ -38,10 +38,40 @@ def test_extract_card_details_sends_two_images_and_prompt(tmp_path):
         assert [block["type"] for block in content] == ["image", "image", "text"]
 
 
+def test_extraction_prompts_ask_for_a_foil_observation(tmp_path):
+    """Asked once, from the photo's own glare/reflections -- never inferred
+    from the card's name or rarity, since that would make foil_observation
+    just restate what identification already knows rather than add a new
+    signal."""
+    front = tmp_path / "front.jpg"
+    front.write_bytes(b"front-bytes")
+    fake_response = MagicMock(parsed_output=ExtractedCards(cards=[]))
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value.messages.parse.return_value = fake_response
+        for back in (None, tmp_path / "back.jpg"):
+            if back:
+                back.write_bytes(b"back-bytes")
+            extract_card_details(front, back, api_key="fake-key")
+            content = MockAnthropic.return_value.messages.parse.call_args.kwargs["messages"][0]["content"]
+            text_block = next(b for b in content if b["type"] == "text")
+            assert "foil_observation" in text_block["text"]
+            assert "name or rarity" in text_block["text"]
+
+
 def test_extracted_card_defaults_bounding_box_to_none_and_rotation_to_zero():
     card = ExtractedCard(character="Pikachu", set_name="Base Set", card_number="58/102", rarity="Common", language="English", graded="Raw", unreadable_fields=[])
     assert card.bounding_box is None
     assert card.rotation_degrees == 0
+    assert card.foil_observation == ""
+
+
+def test_extracted_card_accepts_a_foil_observation():
+    card = ExtractedCard(
+        character="Pikachu", set_name="Base Set", card_number="58/102", rarity="Common",
+        language="English", graded="Raw", unreadable_fields=[], foil_observation="over the character artwork only",
+    )
+    assert card.foil_observation == "over the character artwork only"
 
 
 def test_extracted_card_accepts_bounding_box_and_rotation():

@@ -532,6 +532,28 @@ def test_unattended_uses_vision_as_a_second_opinion_when_phash_fails(db, setting
     assert db.scalars(select(InventoryItem)).one().card_id == "xy11-1"
 
 
+def test_unattended_logs_visions_own_foil_observation_alongside_the_regional_assessment(db, settings, monkeypatch):
+    """A vision-resolved card carries Claude's own literal foil/holo
+    observation (see card_recognition._FOIL_INSTRUCTIONS) -- a second,
+    independent data point alongside foil.assess_foil's regional
+    measurements, logged for calibration rather than acted on.
+    """
+    _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1], rows=1, cols=1)
+    settings.anthropic_api_key = "fake-key"
+    _patch_identify(monkeypatch, [Identification(None, None, None, Source.NONE, 0.0)])
+    monkeypatch.setattr(
+        session_mod, "identify_card_via_vision",
+        lambda crop, refs, api_key: Identification(
+            "xy11-1", "1", "Card 1", Source.VISION, 0.90, foil_observation="over the character artwork only",
+        ),
+    )
+
+    prompter = ScriptedPrompter()
+    run_session(db, "xy11", settings, prompter, max_sheets=1, max_wait=0.5, poll_interval=0.01, unattended=True)
+
+    assert "vision saw: over the character artwork only" in prompter.text
+
+
 def test_unattended_a_weak_vision_guess_does_not_override_a_usable_phash_label(db, settings, monkeypatch):
     """Vision only takes over when it does *better* than the original guess
     -- a weak vision guess must not clobber a phash guess that's already

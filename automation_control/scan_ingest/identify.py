@@ -131,6 +131,11 @@ class Identification:
     phash_margin: int | None = None
     ocr_text: str | None = None
     note: str | None = None
+    # Only set for a Source.VISION result -- Claude's own literal description
+    # of where it sees foil/holo texture in the photo (see
+    # card_recognition._FOIL_INSTRUCTIONS). A calibration signal alongside
+    # foil.assess_foil's regional measurements, not a replacement for it.
+    foil_observation: str | None = None
 
     @property
     def needs_confirmation(self) -> bool:
@@ -466,6 +471,8 @@ def resolve_vision_extraction(extracted: ExtractedCard, references: list[Referen
     it ambiguous, and an ambiguous name is worth exactly as much as no name
     at all.
     """
+    foil_observation = extracted.foil_observation or None
+
     number = _normalize_vision_number(extracted.card_number)
     if number:
         match = next((r for r in references if r.number == number), None)
@@ -473,7 +480,7 @@ def resolve_vision_extraction(extracted: ExtractedCard, references: list[Referen
             return Identification(
                 card_id=match.card_id, number=match.number, name=match.name,
                 source=Source.VISION, confidence=VISION_NUMBER_MATCH_CONFIDENCE,
-                note=f"Claude read #{number} ({extracted.character})",
+                note=f"Claude read #{number} ({extracted.character})", foil_observation=foil_observation,
             )
 
     name = (extracted.character or "").strip().lower()
@@ -485,6 +492,7 @@ def resolve_vision_extraction(extracted: ExtractedCard, references: list[Referen
                 card_id=match.card_id, number=match.number, name=match.name,
                 source=Source.VISION, confidence=VISION_NAME_MATCH_CONFIDENCE,
                 note=f"Claude read the name ({extracted.character}) but not a usable number",
+                foil_observation=foil_observation,
             )
 
     note = (
@@ -493,7 +501,7 @@ def resolve_vision_extraction(extracted: ExtractedCard, references: list[Referen
     )
     return Identification(
         card_id=None, number=None, name=extracted.character or None,
-        source=Source.VISION, confidence=0.0, note=note,
+        source=Source.VISION, confidence=0.0, note=note, foil_observation=foil_observation,
     )
 
 

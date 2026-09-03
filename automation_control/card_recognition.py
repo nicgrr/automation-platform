@@ -19,6 +19,16 @@ _BBOX_INSTRUCTIONS = (
     "(0, 90, 180, or 270 -- 0 if it's already upright)."
 )
 
+_FOIL_INSTRUCTIONS = (
+    "Also return foil_observation: a short, literal description of where you "
+    "can see holographic or foil texture on the card IN THIS PHOTO -- for "
+    "example 'over the character artwork only', 'over the body/border but "
+    "not the artwork', 'the entire card', or 'no foil visible'. Base this "
+    "purely on what the glare and reflections in the photo actually show, "
+    "never on the card's name or rarity -- leave it an empty string if the "
+    "photo's lighting doesn't make it possible to tell."
+)
+
 
 class RecognitionError(Exception):
     """The model's response didn't match the expected schema -- e.g. the
@@ -37,7 +47,7 @@ def _extraction_prompt_front_and_back(game: str) -> str:
         "if slabbed). If a field for a given card is not clearly legible, list "
         "its name in that card's unreadable_fields rather than guessing a value "
         "for it. If no card is clearly identifiable in the photo, return an "
-        "empty list. " + _BBOX_INSTRUCTIONS
+        "empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS
     )
 
 
@@ -54,7 +64,7 @@ def _extraction_prompt_front_only(game: str) -> str:
         "number isn't visible from the front alone. If a field for a given card "
         "is not clearly legible, list its name in that card's unreadable_fields "
         "rather than guessing a value for it. If no card is clearly identifiable "
-        "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS
+        "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS
     )
 
 
@@ -68,6 +78,7 @@ class ExtractedCard(BaseModel):
     unreadable_fields: list[str]
     bounding_box: list[float] | None = None
     rotation_degrees: int = 0
+    foil_observation: str = ""
 
 
 class ExtractedCards(BaseModel):

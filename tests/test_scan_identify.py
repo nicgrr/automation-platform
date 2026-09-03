@@ -356,10 +356,11 @@ class _FakeHash:
 
 # --- vision fallback ---
 
-def _extracted(character="Card 1", card_number="1/198", unreadable_fields=None):
+def _extracted(character="Card 1", card_number="1/198", unreadable_fields=None, foil_observation=""):
     return ExtractedCard(
         character=character, set_name="", card_number=card_number, rarity="",
         language="English", graded="Raw", unreadable_fields=unreadable_fields or [],
+        foil_observation=foil_observation,
     )
 
 
@@ -395,6 +396,26 @@ def test_resolve_vision_extraction_handles_nothing_legible():
     assert result.card_id is None
     assert result.source is Source.VISION
     assert result.confidence == 0.0
+
+
+@pytest.mark.parametrize(
+    "character, card_number",
+    [
+        ("Card 1", "1/198"),  # number-match branch
+        ("Card 2", ""),        # name-match branch
+        ("Mystery", ""),       # nothing-legible branch
+    ],
+)
+def test_resolve_vision_extraction_carries_the_foil_observation_through_every_branch(character, card_number):
+    refs = [ReferenceCard("set-1", "1", "Card 1", "0" * 16), ReferenceCard("set-2", "2", "Card 2", "f" * 16)]
+    extracted = _extracted(character=character, card_number=card_number, foil_observation="over the character artwork only")
+    result = resolve_vision_extraction(extracted, refs)
+    assert result.foil_observation == "over the character artwork only"
+
+
+def test_resolve_vision_extraction_leaves_foil_observation_unset_when_claude_saw_nothing():
+    result = resolve_vision_extraction(_extracted(character="Card 1", card_number="1/198", foil_observation=""), [])
+    assert result.foil_observation is None
 
 
 def test_identify_card_via_vision_matches_the_first_extracted_card(tmp_path, monkeypatch):
