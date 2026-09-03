@@ -119,15 +119,24 @@ def wait_for_sheet(watch_dir: Path, seen: set[Path], prompter: Prompter, poll_in
         waited += poll_interval
 
 
-def _set_aside_for_review(crop_path: Path, media_dir: Path, sheet_name: str, index: int, identification: Identification) -> Path:
+def _set_aside_for_review(
+    crop_path: Path, media_dir: Path, sheet_name: str, index: int,
+    identification: Identification | None = None, label: str | None = None,
+) -> Path:
     """Where an ambiguous card goes in unattended mode instead of blocking
     on a prompt nobody's there to answer. Named after the sheet/position it
     came from so a later manual pass can trace it back to the physical
     card without needing this run's log open at the same time.
+
+    `label` overrides the identification-derived name for a card that was
+    never run through identification at all -- e.g. one set aside purely for
+    failing the geometry check (see `detect.DetectionResult.misshapen`).
     """
     review_dir = media_dir / "needs_review"
     review_dir.mkdir(parents=True, exist_ok=True)
-    label = f"{identification.number}-{identification.name}" if identification.card_id else "unidentified"
+    if label is None:
+        assert identification is not None
+        label = f"{identification.number}-{identification.name}" if identification.card_id else "unidentified"
     destination = review_dir / f"{Path(sheet_name).stem}-card{index}-{label}.jpg"
     # copyfile, not copy/copy2: those also set mode and timestamps on the
     # destination, which requires owning it. The service, a manual reprocess
@@ -396,10 +405,13 @@ def process_sheet(
     """Detect, identify, confirm, and commit every card on one sheet.
 
     In `unattended` mode nothing ever blocks waiting for a terminal that
-    isn't there: a sheet whose detection looks questionable is skipped
-    (left in the watch folder) rather than asking whether to proceed, and a
-    card needing confirmation is set aside (see `_set_aside_for_review`)
-    rather than prompted for -- confident cards still commit exactly as in
+    isn't there: a sheet whose *grid* looks questionable (see
+    `detect.DetectionResult.structural_issue`) is skipped (left in the watch
+    folder) rather than asking whether to proceed; a card needing
+    identification confirmation, or one that fails the geometry check on its
+    own without the grid being in doubt, is set aside individually (see
+    `_set_aside_for_review`) rather than prompted for or taking its whole
+    sheet down with it -- confident cards still commit exactly as in
     interactive use, since that path never asks either.
     """
     work_dir = Path(settings.scan_media_dir) / "work" / scan_session.id / sheet_path.stem
@@ -416,7 +428,15 @@ def process_sheet(
     if detection.overlay_path:
         prompter.notify(f"  Overlay saved: {detection.overlay_path}")
 
-    if detection.needs_review:
+    # `structural_issue` means the grid itself looks wrong -- no single card
+    # position to isolate, so the whole sheet needs a human look (or a
+    # rescan) before anything on it is trusted. When `needs_review` is set
+    # for some *other* reason, it can only be `misshapen`: specific card
+    # positions the count itself doesn't call into question. In unattended
+    # mode those get set aside individually below instead of blocking the
+    # sheet's other, good cards; in interactive mode the operator still gets
+    # a heads-up before committing to any of these crops.
+    if detection.structural_issue or (not unattended and detection.needs_review):
         proceed = False if unattended else prompter.confirm("  Detection looks off. Continue with these crops?", default=False)
         if not proceed:
             prompter.notify("  Sheet skipped -- left in the watch folder for a rescan.")
@@ -431,7 +451,15 @@ def process_sheet(
         card = db.get(CatalogCard, card_id)
         return price_source.get_price(card, variant) if card else None
 
+    misshapen = set(detection.misshapen)
     for index, crop_path in enumerate(detection.crop_paths, start=1):
+        if unattended and index in misshapen:
+            saved_to = _set_aside_for_review(
+                crop_path, Path(settings.scan_media_dir), sheet_path.name, index, label="not-card-shaped",
+            )
+            prompter.notify(f"  Card {index}: not card-shaped -- set aside for review: {saved_to}")
+            outcome.set_aside += 1
+            continue
         identification = identify_card(
             crop_path, references, set_total=set_total,
             max_phash_distance=settings.scan_phash_max_distance,

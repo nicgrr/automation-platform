@@ -446,6 +446,39 @@ def test_unattended_still_commits_confident_cards_normally(db, settings, monkeyp
     assert db.scalars(select(InventoryItem)).one().card_id == "xy11-1"
 
 
+def test_unattended_sets_aside_a_misshapen_card_without_skipping_its_sheet(db, settings, monkeypatch):
+    """The real failure this guards against: one card genuinely cut off at
+    the sheet's edge used to take the *whole* sheet down for a rescan, even
+    though the other card on it was perfectly fine. `structural_issue` is
+    False here -- the grid found exactly the two cards it should have, only
+    one of them fails the shape check -- so that one card is set aside
+    (without ever being run through identification, unlike the confidence
+    case above) and the other still commits normally.
+    """
+    sheet_path = _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1, 2], rows=2, cols=1)
+    detection = detect_cards(sheet_path, Path(settings.scan_media_dir) / "work" / "probe")
+    assert detection.count == 2  # sanity: both cards genuinely detected
+    detection.misshapen = [2]
+    detection.structural_issue = False
+    detection.needs_review = True
+    detection.warnings = ["card(s) [2] are not card-shaped -- possibly two cards touching, or a mis-split"]
+    monkeypatch.setattr(session_mod, "detect_cards", lambda *a, **k: detection)
+    _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])
+
+    prompter = ScriptedPrompter()
+    scan_session = run_session(db, "xy11", settings, prompter, max_sheets=1, max_wait=0.5, poll_interval=0.01, unattended=True)
+
+    assert prompter.questions == []
+    assert scan_session.cards_committed == 1
+    items = db.scalars(select(InventoryItem)).all()
+    assert len(items) == 1 and items[0].card_id == "xy11-1"
+
+    set_aside_dir = Path(settings.scan_media_dir) / "needs_review"
+    saved = list(set_aside_dir.glob("*.jpg"))
+    assert len(saved) == 1
+    assert "not-card-shaped" in saved[0].name
+
+
 def test_unattended_skips_a_bad_detection_without_asking(db, settings, monkeypatch):
     _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1, 2], rows=2, cols=1)
     _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])

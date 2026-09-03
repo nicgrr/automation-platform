@@ -167,6 +167,21 @@ class DetectionResult:
     needs_review: bool = False
     warnings: list[str] = field(default_factory=list)
     overlay_path: Path | None = None
+    # 1-indexed positions (matching crop_paths order) that failed the
+    # aspect-ratio check -- e.g. a card genuinely cut off at the sheet's
+    # edge, or two cards merged into one band. Exposed separately from
+    # `warnings` so a caller can set aside just these specific crops for
+    # review instead of the whole sheet, the same way an identification
+    # failure already does per-card -- see `structural_issue` for when that
+    # isn't safe.
+    misshapen: list[int] = field(default_factory=list)
+    # True when the grid itself looks wrong -- no cards found, the count
+    # doesn't match what was expected or physically fits, or cards had to be
+    # split out of an oversized band -- as opposed to `misshapen`, where the
+    # count is trustworthy and only specific cards are flagged. There's no
+    # single physical card position to isolate here, so the whole sheet needs
+    # a human look (or a rescan) rather than a per-card set-aside.
+    structural_issue: bool = False
 
     @property
     def ok(self) -> bool:
@@ -650,7 +665,10 @@ def detect_cards(
     `needs_review` is set (and an annotated overlay saved) when the count
     doesn't match `expected_count`, exceeds `max_count`, when nothing was
     detected, or when any detected cell isn't card-shaped -- the last of
-    which catches two cards touching and being read as one band.
+    which catches two cards touching and being read as one band. The first
+    three make the whole grid untrustworthy (`structural_issue`); the last
+    can be isolated to specific card positions (`misshapen`), so a caller
+    can set aside just those crops instead of the whole sheet.
 
     `post_rotation_degrees` corrects for every card on the sheet being
     placed the same non-upright way (e.g. sideways to fit more per sheet).
@@ -670,17 +688,22 @@ def detect_cards(
         card.quad = _find_card_quad(sheet, card)
 
     warnings: list[str] = []
+    structural_issue = False
     if not cards:
         warnings.append("no cards detected -- is the sheet blank, or the scan very low contrast?")
+        structural_issue = True
     if len(cards) != len(raw_cards):
         warnings.append(f"{len(cards) - len(raw_cards)} card(s) were split out of an oversized band -- verify the split landed cleanly")
+        structural_issue = True
     misshapen = [index + 1 for index, card in enumerate(cards) if not (MIN_ASPECT_RATIO <= card.aspect_ratio <= MAX_ASPECT_RATIO)]
     if misshapen:
         warnings.append(f"card(s) {misshapen} are not card-shaped -- possibly two cards touching, or a mis-split")
     if expected_count is not None and len(cards) != expected_count:
         warnings.append(f"expected {expected_count} cards, found {len(cards)}")
+        structural_issue = True
     if max_count is not None and len(cards) > max_count:
         warnings.append(f"found {len(cards)} cards, more than the {max_count} the bed can physically hold -- this is fragmentation, not extra cards")
+        structural_issue = True
 
     output_dir.mkdir(parents=True, exist_ok=True)
     crop_paths = []
@@ -700,4 +723,5 @@ def detect_cards(
         crop_paths=crop_paths, cards=cards, rows=max_rows, cols=len(columns),
         count=len(cards), expected_count=expected_count, needs_review=needs_review,
         warnings=warnings, overlay_path=overlay_path,
+        misshapen=misshapen, structural_issue=structural_issue,
     )
