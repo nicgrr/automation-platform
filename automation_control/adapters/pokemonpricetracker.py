@@ -50,9 +50,21 @@ def _get(path: str, params: dict, api_key: str, client: httpx.Client) -> dict:
     raise PokemonPriceTrackerLookupError(f"pokemonpricetracker.com unavailable after {MAX_ATTEMPTS} attempts: {last_error}")
 
 
+# Confirmed against a real call: billing is per card *requested* (the
+# `limit` value itself), not per card actually returned -- a bare, unlimited
+# search defaults server-side to requesting 50 and is billed for all 50
+# regardless of how many results come back. `limit` is therefore mandatory
+# here, not an optional tuning knob: forgetting it turns one lookup into up
+# to 50x its real cost. Small enough to leave room to disambiguate against
+# CatalogCard's own number/rarity without burning through the free tier's
+# 100 credits/day on a single search.
+DEFAULT_LIMIT = 5
+
+
 def search_cards(
     api_key: str, *, search: str | None = None, set_name: str | None = None,
-    tcgplayer_id: str | None = None, include_history: bool = False, client: httpx.Client | None = None,
+    tcgplayer_id: str | None = None, limit: int = DEFAULT_LIMIT, include_history: bool = False,
+    client: httpx.Client | None = None,
 ) -> list[dict]:
     """Cards matching any combination of a free-text name search, a set
     name, or an exact tcgplayer_id. Returns an empty list for "nothing
@@ -61,6 +73,7 @@ def search_cards(
     for a plain current-price lookup.
     """
     params = {k: v for k, v in {"search": search, "set": set_name, "tcgPlayerId": tcgplayer_id}.items() if v}
+    params["limit"] = limit
     if include_history:
         params["includeHistory"] = "true"
     owns_client = client is None
@@ -70,4 +83,4 @@ def search_cards(
     finally:
         if owns_client:
             client.close()
-    return payload.get("data", payload.get("cards", []))
+    return payload.get("data", [])

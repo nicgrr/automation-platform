@@ -26,7 +26,10 @@ from . import catalog
 from .commit import CommitRefused, commit_card, inventory_totals
 from .detect import detect_cards
 from .foil import assess_foil
-from .pricing import PokemonTcgPriceSource, PriceSource, price_and_record
+from .pricing import (
+    POKEMONPRICETRACKER_SOURCE_NAME, CachedPriceSource, PokemonPriceTrackerSource, PokemonTcgPriceSource,
+    PriceSource, price_and_record,
+)
 from .identify import Identification, ReferenceCard, Source, best_set_by_art, detect_sheet_set_and_rotation, identify_card, identify_card_via_vision, read_set_totals
 
 POLL_INTERVAL_SECONDS = 2.0
@@ -443,7 +446,19 @@ def process_sheet(
             outcome.skipped = detection.count
             return outcome
 
-    price_source = price_source or PokemonTcgPriceSource()
+    if price_source is None:
+        # Real market/eBay-sold pricing when a key is configured -- see
+        # pricing.py's module docstring for why the zero-cost pokemontcg.io
+        # snapshot below is a fallback, not the preferred source. Wrapped in
+        # CachedPriceSource since PokemonPriceTrackerSource bills per call;
+        # without it, scanning several copies of the same common would
+        # re-bill the same price on every commit.
+        if settings.pokemonpricetracker_api_key:
+            price_source = CachedPriceSource(
+                PokemonPriceTrackerSource(settings.pokemonpricetracker_api_key), db, POKEMONPRICETRACKER_SOURCE_NAME,
+            )
+        else:
+            price_source = PokemonTcgPriceSource()
 
     def _quote_for(card_id: str | None):
         if card_id is None:

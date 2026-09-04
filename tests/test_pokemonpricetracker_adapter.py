@@ -22,6 +22,26 @@ def test_search_cards_sends_bearer_token_and_search_param():
     assert result == [{"name": "Charizard"}]
 
 
+def test_search_cards_always_sends_a_limit():
+    """Confirmed against a real call: billing is per card *requested*
+    (the limit itself), not per card returned -- an unlimited search bills
+    for a server-side default of 50 regardless of match count. Forgetting
+    this turns one lookup into up to 50x its real cost."""
+    def handler(request: httpx.Request):
+        assert httpx.QueryParams(request.url.query).get("limit") == "5"
+        return httpx.Response(200, json={"data": []})
+
+    search_cards("fake-key", search="q", client=_client(handler))
+
+
+def test_search_cards_accepts_a_smaller_explicit_limit():
+    def handler(request: httpx.Request):
+        assert httpx.QueryParams(request.url.query).get("limit") == "1"
+        return httpx.Response(200, json={"data": []})
+
+    search_cards("fake-key", search="q", limit=1, client=_client(handler))
+
+
 def test_search_cards_combines_search_and_set_params():
     def handler(request: httpx.Request):
         params = httpx.QueryParams(request.url.query)

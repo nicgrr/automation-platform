@@ -1,6 +1,7 @@
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,7 +14,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
-from automation_control.models import CardSet, CardVariant, CatalogCard, InventoryItem, ScanSession, ScanSessionStatus
+from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem, ScanSession, ScanSessionStatus
+from automation_control.scan_ingest import pricing as pricing_mod
 from automation_control.scan_ingest import session as session_mod
 from automation_control.scan_ingest.detect import DetectionResult, detect_cards
 from automation_control.scan_ingest.identify import Identification, ReferenceCard, Source
@@ -64,6 +66,7 @@ class FakeSettings:
     scan_phash_max_distance: int = 12
     scan_max_cards_per_sheet: int = 9
     anthropic_api_key: str | None = None
+    pokemonpricetracker_api_key: str | None = None
 
 
 @pytest.fixture
@@ -321,6 +324,36 @@ def test_run_session_commits_confident_cards_and_archives_the_sheet(db, settings
     # original moved out of the watch folder so it isn't reprocessed
     assert not (Path(settings.scan_watch_dir) / "sheet1.png").exists()
     assert list((Path(settings.scan_archive_dir) / scan_session.id).glob("sheet1.png"))
+
+
+def test_run_session_uses_pokemonpricetracker_when_a_key_is_configured(db, settings, monkeypatch):
+    """The real-pricing source is preferred over the free zero-cost
+    pokemontcg.io snapshot whenever a key is available -- see pricing.py's
+    module docstring for why."""
+    _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1], rows=1, cols=1)
+    settings.pokemonpricetracker_api_key = "fake-key"
+    _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])
+    monkeypatch.setattr(
+        pricing_mod, "search_cards",
+        lambda *a, **k: [{"cardNumber": "1/198", "variants": {"Normal": {"marketPrice": 4.56}}}],
+    )
+
+    run_session(db, "xy11", settings, ScriptedPrompter(confirms=[False]), variant=CardVariant.NORMAL, max_sheets=1, max_wait=0.5, poll_interval=0.01)
+
+    price = db.scalars(select(CardPrice)).one()
+    assert price.source == "pokemonpricetracker_market"
+    assert price.price == Decimal("4.56")
+
+
+def test_run_session_falls_back_to_pokemontcg_without_a_pokemonpricetracker_key(db, settings, monkeypatch):
+    _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1], rows=1, cols=1)
+    _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])
+
+    run_session(db, "xy11", settings, ScriptedPrompter(confirms=[False]), variant=CardVariant.NORMAL, max_sheets=1, max_wait=0.5, poll_interval=0.01)
+
+    # no catalogue raw_prices seeded for this card -> no quote at all, but
+    # crucially the run must not have tried to reach pokemonpricetracker.com
+    assert db.scalars(select(CardPrice)).all() == []
 
 
 def test_run_session_leaves_session_resumable_by_default(db, settings, monkeypatch):

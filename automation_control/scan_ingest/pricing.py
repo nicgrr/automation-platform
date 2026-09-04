@@ -16,12 +16,16 @@ to identify.py, commit.py, or session.py.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import httpx
+
 from ..models import CardPrice, CardVariant, CatalogCard
+from ..adapters.pokemonpricetracker import PokemonPriceTrackerLookupError, search_cards
 
 # TCGPlayer's own variant keys, keyed by our CardVariant -- these are the
 # printings TCGPlayer actually distinguishes; a set without a holo print of
@@ -99,14 +103,123 @@ class PokemonTcgPriceSource(PriceSource):
         return None
 
 
+# pokemonpricetracker.com's printing names, keyed by our CardVariant --
+# confirmed against real API responses (see the class docstring below),
+# unlike TCGPlayer's variant keys above which came from the same cached
+# catalogue response Stage 2 already fetches.
+_POKEMONPRICETRACKER_PRINTING_BY_VARIANT: dict[CardVariant, str] = {
+    CardVariant.NORMAL: "Normal",
+    CardVariant.REVERSE_HOLO: "Reverse Holofoil",
+    CardVariant.HOLO: "Holofoil",
+}
+
+# Shared with CachedPriceSource so the two never drift apart -- the cache
+# has to match on the exact same string PriceQuote.source carries.
+POKEMONPRICETRACKER_SOURCE_NAME = "pokemonpricetracker_market"
+
+
+class PokemonPriceTrackerSource(PriceSource):
+    """Real TCGPlayer market pricing (and, on a paid plan, eBay sold comps)
+    per specific printing, from pokemonpricetracker.com -- the source the
+    user asked for once one existed (see the module docstring above).
+
+    Unlike `PokemonTcgPriceSource`, this makes a live, *billed* network
+    call per lookup: the free tier is 100 credits/day, and a search is
+    billed for its `limit` regardless of how many results actually come
+    back (confirmed against a real call -- an unlimited search defaults to
+    limit=50 server-side and bills for all 50). Always wrap this in
+    `CachedPriceSource` before using it anywhere a card might be priced
+    more than once (e.g. scanning multiple copies of the same common)
+    -- unwrapped, a popular card scanned repeatedly in one session would
+    burn through the daily quota on repeat lookups of the same price.
+    """
+
+    def __init__(self, api_key: str, client: httpx.Client | None = None):
+        self._api_key = api_key
+        self._client = client
+
+    def get_price(self, card: CatalogCard, variant: CardVariant) -> PriceQuote | None:
+        printing = _POKEMONPRICETRACKER_PRINTING_BY_VARIANT.get(variant)
+        if printing is None:
+            return None
+
+        # A name alone is nowhere near enough to narrow this: confirmed
+        # against a real search for a Scarlet & Violet base-set common
+        # ("Wattrel") that the same Pokemon has been reprinted often enough
+        # that three *other* sets' printings outranked ours within the top
+        # 3 results, so our card never appeared at all. The set name (via
+        # the card_set relationship, not the internal set_id slug) narrows
+        # the search itself rather than trying to out-guess its ranking.
+        set_name = card.card_set.name if card.card_set else None
+        try:
+            # limit=3: enough slack to find the right printing among a few
+            # same-named reprints within that one set without paying for
+            # results we'll discard -- billed per card requested, not per
+            # card returned.
+            results = search_cards(self._api_key, search=card.name, set_name=set_name, limit=3, client=self._client)
+        except PokemonPriceTrackerLookupError:
+            return None
+
+        # Numbers are authoritative the same way they are everywhere else
+        # in this codebase (OCR, the vision fallback): two cards in the
+        # same set never share one, where a name search can return several
+        # printings of cards that merely share a name.
+        our_number = (card.number or "").split("/")[0].lstrip("0") or "0"
+        match = next(
+            (r for r in results if str(r.get("cardNumber", "")).split("/")[0].lstrip("0") == our_number),
+            None,
+        )
+        if match is None:
+            return None
+
+        variant_data = (match.get("variants") or {}).get(printing)
+        price = variant_data.get("marketPrice") if variant_data else None
+        if not price:
+            return None
+        return PriceQuote(price=Decimal(str(price)), currency="USD", source=POKEMONPRICETRACKER_SOURCE_NAME)
+
+
+class CachedPriceSource(PriceSource):
+    """Wraps another `PriceSource`, skipping its lookup when a recent-enough
+    observation from that same source already sits in `card_prices` --
+    required for any *billed* source (see `PokemonPriceTrackerSource`), and
+    harmless overhead for a free one. `max_age` defaults to the free tier's
+    own daily reset cadence, so a card priced today is not re-billed for
+    again until tomorrow's quota exists to spend on it.
+    """
+
+    def __init__(self, wrapped: PriceSource, session: Session, source_name: str, max_age: timedelta = timedelta(hours=24)):
+        self._wrapped = wrapped
+        self._session = session
+        self._source_name = source_name
+        self._max_age = max_age
+
+    def get_price(self, card: CatalogCard, variant: CardVariant) -> PriceQuote | None:
+        cutoff = datetime.now(UTC) - self._max_age
+        recent = self._session.scalars(
+            select(CardPrice)
+            .where(
+                CardPrice.card_id == card.id, CardPrice.variant == variant,
+                CardPrice.source == self._source_name, CardPrice.fetched_at >= cutoff,
+            )
+            .order_by(CardPrice.fetched_at.desc())
+            .limit(1)
+        ).first()
+        if recent is not None:
+            return PriceQuote(price=recent.price, currency=recent.currency, source=recent.source)
+        return self._wrapped.get_price(card, variant)
+
+
 def price_and_record(session: Session, source: PriceSource, card: CatalogCard, variant: CardVariant) -> CardPrice | None:
     """Get a quote and persist it to the append-only `card_prices` table.
 
     Always inserts a fresh observation rather than upserting -- price
     history is the point of a separate table (per the schema's own
-    docstring), and observations are cheap since this source makes no
-    network call. A caller that only wants a same-session quote without
-    growing the table can call `source.get_price` directly instead.
+    docstring). `PokemonTcgPriceSource` makes no network call, so a fresh
+    row per commit costs nothing; a billed source should be wrapped in
+    `CachedPriceSource` first (see its own docstring) rather than relied on
+    to skip calls itself. A caller that only wants a same-session quote
+    without growing the table can call `source.get_price` directly instead.
     """
     quote = source.get_price(card, variant)
     if quote is None:

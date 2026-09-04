@@ -1,12 +1,18 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerLookupError
 from automation_control.database import Base
 from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard
-from automation_control.scan_ingest.pricing import PokemonTcgPriceSource, PriceQuote, PriceSource, price_and_record
+from automation_control.scan_ingest import pricing as pricing_mod
+from automation_control.scan_ingest.pricing import (
+    POKEMONPRICETRACKER_SOURCE_NAME, CachedPriceSource, PokemonPriceTrackerSource, PokemonTcgPriceSource,
+    PriceQuote, PriceSource, price_and_record,
+)
 
 
 @pytest.fixture
@@ -140,6 +146,182 @@ def test_price_and_record_appends_rather_than_upserts(session):
     price_and_record(session, PokemonTcgPriceSource(), card, CardVariant.NORMAL)
 
     assert len(session.scalars(select(CardPrice)).all()) == 2
+
+
+# --- PokemonPriceTrackerSource ---
+
+WATTREL_RESULTS = [
+    {
+        "cardNumber": "077/198", "name": "Wattrel",
+        "variants": {"Normal": {"marketPrice": 0.14}, "Reverse Holofoil": {"marketPrice": 0.21}},
+    },
+    {
+        "cardNumber": "078/198", "name": "Wattrel",
+        "variants": {"Normal": {"marketPrice": 0.09}, "Reverse Holofoil": {"marketPrice": 0.18}},
+    },
+]
+
+
+def _card_with_number(session, number: str, id_: str) -> CatalogCard:
+    card = CatalogCard(id=id_, set_id="xy11", number=number, name="Wattrel")
+    session.add(card)
+    session.commit()
+    return card
+
+
+def test_pokemonpricetracker_matches_the_right_printing_by_number(session, monkeypatch):
+    """Two same-named reprints in the search results -- the wrong one would
+    misprice by nearly double here (0.09 vs 0.14)."""
+    monkeypatch.setattr(pricing_mod, "search_cards", lambda *a, **k: WATTREL_RESULTS)
+    card = _card_with_number(session, "078", "xy11-w78")
+
+    quote = PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL)
+    assert quote.price == Decimal("0.09")
+    assert quote.currency == "USD"
+    assert quote.source == POKEMONPRICETRACKER_SOURCE_NAME
+
+
+def test_pokemonpricetracker_reads_the_matching_variant_not_just_the_first(session, monkeypatch):
+    monkeypatch.setattr(pricing_mod, "search_cards", lambda *a, **k: WATTREL_RESULTS)
+    card = _card_with_number(session, "078", "xy11-w78")
+
+    normal = PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL)
+    reverse = PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.REVERSE_HOLO)
+    assert normal.price == Decimal("0.09")
+    assert reverse.price == Decimal("0.18")
+
+
+def test_pokemonpricetracker_returns_none_when_no_result_matches_the_number(session, monkeypatch):
+    monkeypatch.setattr(pricing_mod, "search_cards", lambda *a, **k: WATTREL_RESULTS)
+    card = _card_with_number(session, "999", "xy11-w999")
+    assert PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL) is None
+
+
+def test_pokemonpricetracker_returns_none_for_a_printing_the_card_never_had(session, monkeypatch):
+    only_normal = [{"cardNumber": "078/198", "name": "Wattrel", "variants": {"Normal": {"marketPrice": 0.09}}}]
+    monkeypatch.setattr(pricing_mod, "search_cards", lambda *a, **k: only_normal)
+    card = _card_with_number(session, "078", "xy11-w78")
+    assert PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.HOLO) is None
+
+
+def test_pokemonpricetracker_returns_none_on_lookup_failure_rather_than_raising(session, monkeypatch):
+    def boom(*args, **kwargs):
+        raise PokemonPriceTrackerLookupError("out of credits")
+    monkeypatch.setattr(pricing_mod, "search_cards", boom)
+    card = _card_with_number(session, "078", "xy11-w78")
+    assert PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL) is None
+
+
+def test_pokemonpricetracker_always_passes_a_small_limit(session, monkeypatch):
+    """Billed per card requested, not per card returned (confirmed against
+    a real call) -- must never fall back to an unbounded/default-size
+    search."""
+    seen = {}
+
+    def fake_search_cards(api_key, *, search=None, set_name=None, tcgplayer_id=None, limit=None, include_history=False, client=None):
+        seen["limit"] = limit
+        return []
+
+    monkeypatch.setattr(pricing_mod, "search_cards", fake_search_cards)
+    card = _card_with_number(session, "078", "xy11-w78")
+    PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL)
+    assert seen["limit"] is not None and seen["limit"] <= 5
+
+
+def test_pokemonpricetracker_narrows_the_search_by_set_name(session, monkeypatch):
+    """A name alone is nowhere near enough: confirmed against a real search
+    for a Scarlet & Violet base-set common ("Wattrel") where three *other*
+    sets' printings outranked ours within the top 3 results, so ours never
+    appeared at all until the set name was added to the query."""
+    seen = {}
+
+    def fake_search_cards(api_key, *, search=None, set_name=None, tcgplayer_id=None, limit=None, include_history=False, client=None):
+        seen["set_name"] = set_name
+        return []
+
+    monkeypatch.setattr(pricing_mod, "search_cards", fake_search_cards)
+    card = _card_with_number(session, "078", "xy11-w78")
+    PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL)
+    assert seen["set_name"] == "Steam Siege"  # the session fixture's CardSet name
+
+
+# --- CachedPriceSource ---
+
+class _CountingSource(PriceSource):
+    def __init__(self, quote: PriceQuote):
+        self.calls = 0
+        self._quote = quote
+
+    def get_price(self, card, variant):
+        self.calls += 1
+        return self._quote
+
+
+def test_cached_price_source_skips_the_wrapped_call_when_a_recent_row_exists(session):
+    card = _card(session, raw_prices=None)
+    session.add(CardPrice(
+        card_id=card.id, variant=CardVariant.NORMAL, source=POKEMONPRICETRACKER_SOURCE_NAME,
+        price=Decimal("1.23"), currency="USD", fetched_at=datetime.now(UTC) - timedelta(hours=1),
+    ))
+    session.commit()
+
+    wrapped = _CountingSource(PriceQuote(Decimal("9.99"), "USD", POKEMONPRICETRACKER_SOURCE_NAME))
+    cached = CachedPriceSource(wrapped, session, POKEMONPRICETRACKER_SOURCE_NAME)
+    quote = cached.get_price(card, CardVariant.NORMAL)
+
+    assert quote.price == Decimal("1.23")  # the cached row, not a fresh 9.99
+    assert wrapped.calls == 0
+
+
+def test_cached_price_source_calls_through_when_the_cached_row_is_stale(session):
+    card = _card(session, raw_prices=None)
+    session.add(CardPrice(
+        card_id=card.id, variant=CardVariant.NORMAL, source=POKEMONPRICETRACKER_SOURCE_NAME,
+        price=Decimal("1.23"), currency="USD", fetched_at=datetime.now(UTC) - timedelta(hours=48),
+    ))
+    session.commit()
+
+    wrapped = _CountingSource(PriceQuote(Decimal("9.99"), "USD", POKEMONPRICETRACKER_SOURCE_NAME))
+    cached = CachedPriceSource(wrapped, session, POKEMONPRICETRACKER_SOURCE_NAME, max_age=timedelta(hours=24))
+    quote = cached.get_price(card, CardVariant.NORMAL)
+
+    assert quote.price == Decimal("9.99")
+    assert wrapped.calls == 1
+
+
+def test_cached_price_source_ignores_rows_from_a_different_source(session):
+    """A recent PokemonTcgPriceSource row must not suppress a fresh
+    PokemonPriceTracker lookup -- they're different sources with different
+    reliability, tracked separately on purpose."""
+    card = _card(session, raw_prices=None)
+    session.add(CardPrice(
+        card_id=card.id, variant=CardVariant.NORMAL, source="pokemontcg_tcgplayer_market",
+        price=Decimal("1.23"), currency="USD", fetched_at=datetime.now(UTC),
+    ))
+    session.commit()
+
+    wrapped = _CountingSource(PriceQuote(Decimal("9.99"), "USD", POKEMONPRICETRACKER_SOURCE_NAME))
+    cached = CachedPriceSource(wrapped, session, POKEMONPRICETRACKER_SOURCE_NAME)
+    quote = cached.get_price(card, CardVariant.NORMAL)
+
+    assert quote.price == Decimal("9.99")
+    assert wrapped.calls == 1
+
+
+def test_cached_price_source_ignores_rows_for_a_different_variant(session):
+    card = _card(session, raw_prices=None)
+    session.add(CardPrice(
+        card_id=card.id, variant=CardVariant.REVERSE_HOLO, source=POKEMONPRICETRACKER_SOURCE_NAME,
+        price=Decimal("1.23"), currency="USD", fetched_at=datetime.now(UTC),
+    ))
+    session.commit()
+
+    wrapped = _CountingSource(PriceQuote(Decimal("9.99"), "USD", POKEMONPRICETRACKER_SOURCE_NAME))
+    cached = CachedPriceSource(wrapped, session, POKEMONPRICETRACKER_SOURCE_NAME)
+    quote = cached.get_price(card, CardVariant.NORMAL)
+
+    assert quote.price == Decimal("9.99")
+    assert wrapped.calls == 1
 
 
 # --- the interface itself ---
