@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     captured_cards_dir: str = "captured_cards"
     pokemontcg_api_key: str | None = None
+    # pricecharting.com -- real sold/market pricing per specific printing,
+    # not pokemontcg.io's TCGPlayer/Cardmarket snapshot (see
+    # scan_ingest/pricing.py's docstring: flagged unreliable, twice).
+    pricecharting_api_key: str | None = None
     # Bulk scan ingest (automation_control/scan_ingest/). watch_dir is the
     # folder scanned sheets land in -- shared to the scanning PC over Samba
     # -- and the rest are local working directories the CLI manages itself.
