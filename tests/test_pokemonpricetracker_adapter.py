@@ -3,7 +3,9 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerLookupError, search_cards
+from automation_control.adapters.pokemonpricetracker import (
+    PokemonPriceTrackerLookupError, PokemonPriceTrackerRateLimited, search_cards,
+)
 
 
 def _client(handler):
@@ -92,6 +94,40 @@ def test_search_cards_retries_on_429_then_succeeds():
         attempts.append(1)
         if len(attempts) < 2:
             return httpx.Response(429)
+        return httpx.Response(200, json={"data": [{"name": "Pikachu"}]})
+
+    with patch("automation_control.adapters.pokemonpricetracker.time.sleep"):
+        result = search_cards("fake-key", search="Pikachu", client=_client(handler))
+    assert result == [{"name": "Pikachu"}]
+    assert len(attempts) == 2
+
+
+def test_search_cards_stops_immediately_on_a_long_retry_after():
+    """The real failure this guards against: a daily-credit-exhaustion 429
+    carries a ~23-hour retry-after. Retrying it (or, worse, a caller loop
+    treating it as "skip this one, try the next") cannot possibly succeed
+    and is exactly what got a real API key temporarily blocked for
+    hammering it with 50+ guaranteed-to-fail requests in under 5 minutes.
+    """
+    attempts = []
+
+    def handler(request: httpx.Request):
+        attempts.append(1)
+        return httpx.Response(429, headers={"retry-after": "82757"})
+
+    with pytest.raises(PokemonPriceTrackerRateLimited) as exc_info:
+        search_cards("fake-key", search="q", client=_client(handler))
+    assert exc_info.value.retry_after_seconds == 82757
+    assert len(attempts) == 1  # no retry -- retrying this cannot succeed
+
+
+def test_search_cards_still_retries_a_429_with_a_short_retry_after():
+    attempts = []
+
+    def handler(request: httpx.Request):
+        attempts.append(1)
+        if len(attempts) < 2:
+            return httpx.Response(429, headers={"retry-after": "2"})
         return httpx.Response(200, json={"data": [{"name": "Pikachu"}]})
 
     with patch("automation_control.adapters.pokemonpricetracker.time.sleep"):

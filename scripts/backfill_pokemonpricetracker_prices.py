@@ -23,6 +23,7 @@ from collections import defaultdict
 import httpx
 from sqlalchemy import select
 
+from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerRateLimited
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.models import CardPrice, CatalogCard, InventoryItem
@@ -84,7 +85,16 @@ def main(argv: list[str] | None = None) -> int:
                     searched += 1
                     continue
 
-                quotes = fetch_all_pokemonpricetracker_variants(settings.pokemonpricetracker_api_key, card, client=client)
+                # A hard rate-limit/credit-exhaustion here means every
+                # remaining card would fail the exact same way -- stop the
+                # whole run immediately rather than let the loop plough
+                # through the rest, which is what actually got a real API
+                # key temporarily blocked (see PokemonPriceTrackerRateLimited).
+                try:
+                    quotes = fetch_all_pokemonpricetracker_variants(settings.pokemonpricetracker_api_key, card, client=client)
+                except PokemonPriceTrackerRateLimited as exc:
+                    print(f"Stopping early -- pokemonpricetracker.com asked to wait {exc.retry_after_seconds}s (today's credits are likely exhausted).")
+                    break
                 searched += 1
                 for variant in needed:
                     quote = quotes.get(variant)

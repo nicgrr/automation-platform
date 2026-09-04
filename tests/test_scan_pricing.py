@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerLookupError
+from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerLookupError, PokemonPriceTrackerRateLimited
 from automation_control.database import Base
 from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard
 from automation_control.scan_ingest import pricing as pricing_mod
@@ -274,10 +274,34 @@ def test_fetch_all_variants_returns_empty_dict_when_nothing_matches(session, mon
 
 def test_fetch_all_variants_returns_empty_dict_on_lookup_failure(session, monkeypatch):
     def boom(*args, **kwargs):
-        raise PokemonPriceTrackerLookupError("out of credits")
+        raise PokemonPriceTrackerLookupError("network error")
     monkeypatch.setattr(pricing_mod, "search_cards", boom)
     card = _card_with_number(session, "078", "xy11-w78")
     assert fetch_all_pokemonpricetracker_variants("fake-key", card) == {}
+
+
+def test_fetch_all_variants_propagates_a_hard_rate_limit_rather_than_swallowing_it(session, monkeypatch):
+    """The real failure this guards against: a caller looping over many
+    cards (the only realistic caller of this function) must find out it's
+    rate-limited and stop, not be told "no data for this one" and move on
+    to hit the exact same wall on every remaining card -- which is what
+    actually got a real API key temporarily blocked."""
+    def boom(*args, **kwargs):
+        raise PokemonPriceTrackerRateLimited(82757)
+    monkeypatch.setattr(pricing_mod, "search_cards", boom)
+    card = _card_with_number(session, "078", "xy11-w78")
+    with pytest.raises(PokemonPriceTrackerRateLimited):
+        fetch_all_pokemonpricetracker_variants("fake-key", card)
+
+
+def test_pokemonpricetracker_source_still_swallows_a_hard_rate_limit(session, monkeypatch):
+    """Unlike the batch path above, a single live-scan lookup keeps the
+    PriceSource contract: never raise for "no data", just return None."""
+    def boom(*args, **kwargs):
+        raise PokemonPriceTrackerRateLimited(82757)
+    monkeypatch.setattr(pricing_mod, "search_cards", boom)
+    card = _card_with_number(session, "078", "xy11-w78")
+    assert PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL) is None
 
 
 # --- CachedPriceSource ---

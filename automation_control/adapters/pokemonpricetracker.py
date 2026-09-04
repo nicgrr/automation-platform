@@ -17,9 +17,35 @@ RETRY_DELAY_SECONDS = 1.5
 
 
 class PokemonPriceTrackerLookupError(Exception):
-    """The lookup itself failed (network error, non-2xx after retries, out
-    of daily credits, or a response that didn't parse as JSON). Distinct
-    from a clean empty result, which just means nothing matched."""
+    """The lookup itself failed (network error, non-2xx after retries, or a
+    response that didn't parse as JSON). Distinct from a clean empty
+    result, which just means nothing matched."""
+
+
+class PokemonPriceTrackerRateLimited(PokemonPriceTrackerLookupError):
+    """A 429 that isn't a brief per-minute limit -- confirmed against a
+    real response: exhausting the daily credit quota returns 429 with
+    `retry-after` set to the seconds until tomorrow's reset (~23 hours),
+    not a short retryable window. Retrying that within this call cannot
+    possibly succeed, and a caller loop that treats it as "no match, try
+    the next one" will hit the exact same 429 on every remaining item --
+    confirmed the hard way: a backfill run that kept doing that fired 50+
+    429s in under 5 minutes and got the API key itself temporarily blocked
+    for it. A caller iterating multiple lookups (see
+    scripts/backfill_pokemonpricetracker_prices.py) must catch this
+    specifically and stop entirely, not just skip the one item.
+    """
+
+    def __init__(self, retry_after_seconds: int):
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"pokemonpricetracker.com credits exhausted -- retry after {retry_after_seconds}s")
+
+
+# A 429 asking to wait longer than this is treated as "not a brief rate
+# limit" (see PokemonPriceTrackerRateLimited) rather than retried -- picked
+# well above any plausible per-minute-window wait, comfortably below the
+# ~23-hour wait a real daily-exhaustion response carries.
+HARD_LIMIT_RETRY_AFTER_THRESHOLD_SECONDS = 300
 
 
 def _get(path: str, params: dict, api_key: str, client: httpx.Client) -> dict:
@@ -36,13 +62,19 @@ def _get(path: str, params: dict, api_key: str, client: httpx.Client) -> dict:
                     return response.json()
                 except ValueError as exc:
                     raise PokemonPriceTrackerLookupError(f"pokemonpricetracker.com returned unparseable JSON: {exc}") from exc
-            # 429 covers both plain rate-limiting and a daily credit
-            # exhaustion (same status either way) -- retryable like a 5xx;
-            # any other 4xx means the request itself is bad (e.g. an
-            # invalid key) and retrying won't help.
-            if response.status_code != 429 and response.status_code < 500:
+            if response.status_code == 429:
+                retry_after = response.headers.get("retry-after", "")
+                if retry_after.isdigit() and int(retry_after) > HARD_LIMIT_RETRY_AFTER_THRESHOLD_SECONDS:
+                    # Not retryable within this call or any nearby one --
+                    # raise immediately, no sleep, no further attempts.
+                    raise PokemonPriceTrackerRateLimited(int(retry_after))
+                last_error = PokemonPriceTrackerLookupError("pokemonpricetracker.com returned 429")
+            elif response.status_code < 500:
+                # Any other 4xx means the request itself is bad (e.g. an
+                # invalid key) and retrying won't help.
                 raise PokemonPriceTrackerLookupError(f"pokemonpricetracker.com returned {response.status_code}: {response.text[:200]}")
-            last_error = PokemonPriceTrackerLookupError(f"pokemonpricetracker.com returned {response.status_code}")
+            else:
+                last_error = PokemonPriceTrackerLookupError(f"pokemonpricetracker.com returned {response.status_code}")
 
         if attempt < MAX_ATTEMPTS - 1:
             time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))

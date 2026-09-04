@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 import httpx
 
 from ..models import CardPrice, CardVariant, CatalogCard
-from ..adapters.pokemonpricetracker import PokemonPriceTrackerLookupError, search_cards
+from ..adapters.pokemonpricetracker import PokemonPriceTrackerLookupError, PokemonPriceTrackerRateLimited, search_cards
 
 # TCGPlayer's own variant keys, keyed by our CardVariant -- these are the
 # printings TCGPlayer actually distinguishes; a set without a holo print of
@@ -118,15 +118,17 @@ _POKEMONPRICETRACKER_PRINTING_BY_VARIANT: dict[CardVariant, str] = {
 POKEMONPRICETRACKER_SOURCE_NAME = "pokemonpricetracker_market"
 
 
-def _find_pokemonpricetracker_product(
-    api_key: str, card: CatalogCard, client: httpx.Client | None = None,
-) -> dict | None:
+def _find_pokemonpricetracker_product(api_key: str, card: CatalogCard, client: httpx.Client | None = None) -> dict | None:
     """The one search result matching this card's specific printing, or
-    None if lookup failed or nothing matched. Shared by
-    `PokemonPriceTrackerSource` (one variant at a time) and
-    `fetch_all_pokemonpricetracker_variants` (every variant a card has, in
-    the one search this already paid for) so neither has to re-search for
-    data the other already fetched.
+    None if nothing matched. Raises `PokemonPriceTrackerLookupError` (or
+    its `PokemonPriceTrackerRateLimited` subclass) straight through on a
+    genuine lookup failure -- callers decide for themselves whether that
+    means "skip this one card" or "stop the whole run" (see
+    `PokemonPriceTrackerRateLimited`'s own docstring for why those are not
+    the same thing). Shared by `PokemonPriceTrackerSource` (one variant at
+    a time) and `fetch_all_pokemonpricetracker_variants` (every variant a
+    card has, in the one search this already paid for) so neither has to
+    re-search for data the other already fetched.
     """
     # A name alone is nowhere near enough to narrow this: confirmed against
     # a real search for a Scarlet & Violet base-set common ("Wattrel") that
@@ -136,14 +138,10 @@ def _find_pokemonpricetracker_product(
     # not the internal set_id slug) narrows the search itself rather than
     # trying to out-guess its ranking.
     set_name = card.card_set.name if card.card_set else None
-    try:
-        # limit=3: enough slack to find the right printing among a few
-        # same-named reprints within that one set without paying for
-        # results we'll discard -- billed per card requested, not per card
-        # returned.
-        results = search_cards(api_key, search=card.name, set_name=set_name, limit=3, client=client)
-    except PokemonPriceTrackerLookupError:
-        return None
+    # limit=3: enough slack to find the right printing among a few
+    # same-named reprints within that one set without paying for results
+    # we'll discard -- billed per card requested, not per card returned.
+    results = search_cards(api_key, search=card.name, set_name=set_name, limit=3, client=client)
 
     # Numbers are authoritative the same way they are everywhere else in
     # this codebase (OCR, the vision fallback): two cards in the same set
@@ -164,9 +162,22 @@ def fetch_all_pokemonpricetracker_variants(
     variants (e.g. both Normal and Reverse Holofoil copies in inventory)
     would otherwise cost one search each through `PokemonPriceTrackerSource`
     (see scripts/backfill_pokemonpricetracker_prices.py). Returns an empty
-    dict rather than raising on any failure.
+    dict for an ordinary lookup failure or no match.
+
+    Deliberately does NOT catch `PokemonPriceTrackerRateLimited` -- a
+    caller processing many cards in a loop (the only realistic caller of
+    this function) must stop entirely on that, not treat it as "no data for
+    this one" and move on to the next. See that exception's own docstring:
+    doing the latter is exactly what got a real API key temporarily blocked
+    for hammering it with 50+ guaranteed-to-fail requests in under 5
+    minutes.
     """
-    match = _find_pokemonpricetracker_product(api_key, card, client)
+    try:
+        match = _find_pokemonpricetracker_product(api_key, card, client)
+    except PokemonPriceTrackerRateLimited:
+        raise
+    except PokemonPriceTrackerLookupError:
+        return {}
     if match is None:
         return {}
 
@@ -210,7 +221,14 @@ class PokemonPriceTrackerSource(PriceSource):
         if printing is None:
             return None
 
-        match = _find_pokemonpricetracker_product(self._api_key, card, self._client)
+        # Per the PriceSource contract, never raise for "no data" -- a
+        # single live-scan lookup swallows even a hard rate-limit/credit
+        # exhaustion (PokemonPriceTrackerRateLimited is a subclass of this)
+        # as "no price this time" rather than taking the commit down.
+        try:
+            match = _find_pokemonpricetracker_product(self._api_key, card, self._client)
+        except PokemonPriceTrackerLookupError:
+            return None
         if match is None:
             return None
 
