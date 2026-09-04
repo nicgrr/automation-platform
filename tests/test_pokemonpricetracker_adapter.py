@@ -1,0 +1,100 @@
+from unittest.mock import patch
+
+import httpx
+import pytest
+
+from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerLookupError, search_cards
+
+
+def _client(handler):
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_search_cards_sends_bearer_token_and_search_param():
+    def handler(request: httpx.Request):
+        assert request.headers.get("authorization") == "Bearer fake-key"
+        params = httpx.QueryParams(request.url.query)
+        assert params.get("search") == "Charizard"
+        assert request.url.path == "/api/v2/cards"
+        return httpx.Response(200, json={"data": [{"name": "Charizard"}]})
+
+    result = search_cards("fake-key", search="Charizard", client=_client(handler))
+    assert result == [{"name": "Charizard"}]
+
+
+def test_search_cards_combines_search_and_set_params():
+    def handler(request: httpx.Request):
+        params = httpx.QueryParams(request.url.query)
+        assert params.get("search") == "Charizard"
+        assert params.get("set") == "celebrations"
+        return httpx.Response(200, json={"data": []})
+
+    search_cards("fake-key", search="Charizard", set_name="celebrations", client=_client(handler))
+
+
+def test_search_cards_by_tcgplayer_id_only():
+    def handler(request: httpx.Request):
+        params = httpx.QueryParams(request.url.query)
+        assert params.get("tcgPlayerId") == "490294"
+        assert "search" not in params
+        return httpx.Response(200, json={"data": [{"name": "Charizard"}]})
+
+    search_cards("fake-key", tcgplayer_id="490294", client=_client(handler))
+
+
+def test_search_cards_omits_include_history_by_default():
+    def handler(request: httpx.Request):
+        assert "includeHistory" not in httpx.QueryParams(request.url.query)
+        return httpx.Response(200, json={"data": []})
+
+    search_cards("fake-key", search="q", client=_client(handler))
+
+
+def test_search_cards_sets_include_history_when_requested():
+    def handler(request: httpx.Request):
+        assert httpx.QueryParams(request.url.query).get("includeHistory") == "true"
+        return httpx.Response(200, json={"data": []})
+
+    search_cards("fake-key", search="q", include_history=True, client=_client(handler))
+
+
+def test_search_cards_returns_empty_list_for_no_matches():
+    def handler(request: httpx.Request):
+        return httpx.Response(200, json={"data": []})
+
+    assert search_cards("fake-key", search="nonexistent card xyz", client=_client(handler)) == []
+
+
+def test_search_cards_retries_on_429_then_succeeds():
+    attempts = []
+
+    def handler(request: httpx.Request):
+        attempts.append(1)
+        if len(attempts) < 2:
+            return httpx.Response(429)
+        return httpx.Response(200, json={"data": [{"name": "Pikachu"}]})
+
+    with patch("automation_control.adapters.pokemonpricetracker.time.sleep"):
+        result = search_cards("fake-key", search="Pikachu", client=_client(handler))
+    assert result == [{"name": "Pikachu"}]
+    assert len(attempts) == 2
+
+
+def test_search_cards_raises_immediately_on_4xx():
+    attempts = []
+
+    def handler(request: httpx.Request):
+        attempts.append(1)
+        return httpx.Response(401, text="invalid token")
+
+    with pytest.raises(PokemonPriceTrackerLookupError):
+        search_cards("bad-key", search="q", client=_client(handler))
+    assert len(attempts) == 1
+
+
+def test_search_cards_raises_after_exhausting_retries():
+    def handler(request: httpx.Request):
+        return httpx.Response(503)
+
+    with patch("automation_control.adapters.pokemonpricetracker.time.sleep"), pytest.raises(PokemonPriceTrackerLookupError):
+        search_cards("fake-key", search="q", client=_client(handler))
