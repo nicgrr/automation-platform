@@ -11,7 +11,7 @@ from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCa
 from automation_control.scan_ingest import pricing as pricing_mod
 from automation_control.scan_ingest.pricing import (
     POKEMONPRICETRACKER_SOURCE_NAME, CachedPriceSource, PokemonPriceTrackerSource, PokemonTcgPriceSource,
-    PriceQuote, PriceSource, price_and_record,
+    PriceQuote, PriceSource, fetch_all_pokemonpricetracker_variants, price_and_record,
 )
 
 
@@ -243,6 +243,41 @@ def test_pokemonpricetracker_narrows_the_search_by_set_name(session, monkeypatch
     card = _card_with_number(session, "078", "xy11-w78")
     PokemonPriceTrackerSource("fake-key").get_price(card, CardVariant.NORMAL)
     assert seen["set_name"] == "Steam Siege"  # the session fixture's CardSet name
+
+
+# --- fetch_all_pokemonpricetracker_variants ---
+
+def test_fetch_all_variants_returns_every_priced_printing_from_one_search(session, monkeypatch):
+    """The whole point: a card held in both Normal and Reverse Holofoil
+    costs one search here, not two through PokemonPriceTrackerSource."""
+    calls = []
+
+    def fake_search_cards(api_key, *, search=None, set_name=None, tcgplayer_id=None, limit=None, include_history=False, client=None):
+        calls.append(1)
+        return WATTREL_RESULTS
+
+    monkeypatch.setattr(pricing_mod, "search_cards", fake_search_cards)
+    card = _card_with_number(session, "078", "xy11-w78")
+
+    quotes = fetch_all_pokemonpricetracker_variants("fake-key", card)
+    assert quotes[CardVariant.NORMAL].price == Decimal("0.09")
+    assert quotes[CardVariant.REVERSE_HOLO].price == Decimal("0.18")
+    assert CardVariant.HOLO not in quotes  # this card never had a holo printing
+    assert len(calls) == 1
+
+
+def test_fetch_all_variants_returns_empty_dict_when_nothing_matches(session, monkeypatch):
+    monkeypatch.setattr(pricing_mod, "search_cards", lambda *a, **k: WATTREL_RESULTS)
+    card = _card_with_number(session, "999", "xy11-w999")
+    assert fetch_all_pokemonpricetracker_variants("fake-key", card) == {}
+
+
+def test_fetch_all_variants_returns_empty_dict_on_lookup_failure(session, monkeypatch):
+    def boom(*args, **kwargs):
+        raise PokemonPriceTrackerLookupError("out of credits")
+    monkeypatch.setattr(pricing_mod, "search_cards", boom)
+    card = _card_with_number(session, "078", "xy11-w78")
+    assert fetch_all_pokemonpricetracker_variants("fake-key", card) == {}
 
 
 # --- CachedPriceSource ---

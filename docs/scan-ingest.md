@@ -4,9 +4,13 @@ Digitises physical Pokémon cards into the `InventoryItem` table by scanning
 9-up sheets on the flatbed, splitting them into per-card crops, identifying
 each card against a cached set catalogue, and committing the confident ones.
 
-Code lives in `automation_control/scan_ingest/`. Nothing here talks to eBay
-or to any AI model — identification is OCR + perceptual hashing against
-locally cached reference art.
+Code lives in `automation_control/scan_ingest/`. Identification is OCR +
+perceptual hashing against locally cached reference art first; a crop
+neither can place falls back to Claude reading it directly
+(`identify.identify_card_via_vision`, gated on `ANTHROPIC_API_KEY`).
+Pricing prefers real market/eBay-sold data from pokemonpricetracker.com when
+`POKEMONPRICETRACKER_API_KEY` is configured, falling back to pokemontcg.io's
+snapshot otherwise — see `scan_ingest/pricing.py`'s module docstring.
 
 ## Everyday use
 
@@ -58,6 +62,26 @@ per sheet. Set it only to pin the service to one fixed set, then
 
 Paths and the pHash distance threshold live in `automation_control/config.py`
 (`scan_*` settings).
+
+## Pricing backfill
+
+`pokemonpricetracker-backfill.timer` runs
+`scripts/backfill_pokemonpricetracker_prices.py` once daily (`12:00`
+Sydney time — after the API's UTC-midnight credit reset) to price
+already-scanned inventory that predates the `POKEMONPRICETRACKER_API_KEY`
+switch, or that a run cut short earlier. The free tier is 100 credits/day
+and a search costs a fixed 3 regardless of how many of a card's variants
+come back priced, so `--max-cards` (default 25) keeps one run comfortably
+inside budget; it works through the backlog a bit at a time and settles
+into a fast no-op once everything held has a price. Safe to re-run anytime
+— it only searches card+variant pairs that don't already have a
+`pokemonpricetracker_market` price.
+
+```bash
+sudo systemctl status pokemonpricetracker-backfill.timer
+sudo journalctl -u pokemonpricetracker-backfill -f
+.venv/bin/python -m scripts.backfill_pokemonpricetracker_prices --dry-run  # preview without spending credits
+```
 
 ## Useful commands
 

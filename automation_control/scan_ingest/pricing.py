@@ -118,6 +118,67 @@ _POKEMONPRICETRACKER_PRINTING_BY_VARIANT: dict[CardVariant, str] = {
 POKEMONPRICETRACKER_SOURCE_NAME = "pokemonpricetracker_market"
 
 
+def _find_pokemonpricetracker_product(
+    api_key: str, card: CatalogCard, client: httpx.Client | None = None,
+) -> dict | None:
+    """The one search result matching this card's specific printing, or
+    None if lookup failed or nothing matched. Shared by
+    `PokemonPriceTrackerSource` (one variant at a time) and
+    `fetch_all_pokemonpricetracker_variants` (every variant a card has, in
+    the one search this already paid for) so neither has to re-search for
+    data the other already fetched.
+    """
+    # A name alone is nowhere near enough to narrow this: confirmed against
+    # a real search for a Scarlet & Violet base-set common ("Wattrel") that
+    # the same Pokemon has been reprinted often enough that three *other*
+    # sets' printings outranked ours within the top 3 results, so our card
+    # never appeared at all. The set name (via the card_set relationship,
+    # not the internal set_id slug) narrows the search itself rather than
+    # trying to out-guess its ranking.
+    set_name = card.card_set.name if card.card_set else None
+    try:
+        # limit=3: enough slack to find the right printing among a few
+        # same-named reprints within that one set without paying for
+        # results we'll discard -- billed per card requested, not per card
+        # returned.
+        results = search_cards(api_key, search=card.name, set_name=set_name, limit=3, client=client)
+    except PokemonPriceTrackerLookupError:
+        return None
+
+    # Numbers are authoritative the same way they are everywhere else in
+    # this codebase (OCR, the vision fallback): two cards in the same set
+    # never share one, where a name search can return several printings of
+    # cards that merely share a name.
+    our_number = (card.number or "").split("/")[0].lstrip("0") or "0"
+    return next(
+        (r for r in results if str(r.get("cardNumber", "")).split("/")[0].lstrip("0") == our_number),
+        None,
+    )
+
+
+def fetch_all_pokemonpricetracker_variants(
+    api_key: str, card: CatalogCard, client: httpx.Client | None = None,
+) -> dict[CardVariant, PriceQuote]:
+    """Every printing pokemonpricetracker.com has data for on this card, in
+    one search -- for batch/backfill use, where a card with several held
+    variants (e.g. both Normal and Reverse Holofoil copies in inventory)
+    would otherwise cost one search each through `PokemonPriceTrackerSource`
+    (see scripts/backfill_pokemonpricetracker_prices.py). Returns an empty
+    dict rather than raising on any failure.
+    """
+    match = _find_pokemonpricetracker_product(api_key, card, client)
+    if match is None:
+        return {}
+
+    quotes: dict[CardVariant, PriceQuote] = {}
+    for variant, printing in _POKEMONPRICETRACKER_PRINTING_BY_VARIANT.items():
+        variant_data = (match.get("variants") or {}).get(printing)
+        price = variant_data.get("marketPrice") if variant_data else None
+        if price:
+            quotes[variant] = PriceQuote(price=Decimal(str(price)), currency="USD", source=POKEMONPRICETRACKER_SOURCE_NAME)
+    return quotes
+
+
 class PokemonPriceTrackerSource(PriceSource):
     """Real TCGPlayer market pricing (and, on a paid plan, eBay sold comps)
     per specific printing, from pokemonpricetracker.com -- the source the
@@ -132,6 +193,12 @@ class PokemonPriceTrackerSource(PriceSource):
     more than once (e.g. scanning multiple copies of the same common)
     -- unwrapped, a popular card scanned repeatedly in one session would
     burn through the daily quota on repeat lookups of the same price.
+
+    Looking up more than one variant of the *same* card through this class
+    re-searches once per variant -- fine for live scanning, where usually
+    only one variant is being committed at a time, but wasteful for a
+    batch job pricing many held variants at once; see
+    `fetch_all_pokemonpricetracker_variants` for that case instead.
     """
 
     def __init__(self, api_key: str, client: httpx.Client | None = None):
@@ -143,32 +210,7 @@ class PokemonPriceTrackerSource(PriceSource):
         if printing is None:
             return None
 
-        # A name alone is nowhere near enough to narrow this: confirmed
-        # against a real search for a Scarlet & Violet base-set common
-        # ("Wattrel") that the same Pokemon has been reprinted often enough
-        # that three *other* sets' printings outranked ours within the top
-        # 3 results, so our card never appeared at all. The set name (via
-        # the card_set relationship, not the internal set_id slug) narrows
-        # the search itself rather than trying to out-guess its ranking.
-        set_name = card.card_set.name if card.card_set else None
-        try:
-            # limit=3: enough slack to find the right printing among a few
-            # same-named reprints within that one set without paying for
-            # results we'll discard -- billed per card requested, not per
-            # card returned.
-            results = search_cards(self._api_key, search=card.name, set_name=set_name, limit=3, client=self._client)
-        except PokemonPriceTrackerLookupError:
-            return None
-
-        # Numbers are authoritative the same way they are everywhere else
-        # in this codebase (OCR, the vision fallback): two cards in the
-        # same set never share one, where a name search can return several
-        # printings of cards that merely share a name.
-        our_number = (card.number or "").split("/")[0].lstrip("0") or "0"
-        match = next(
-            (r for r in results if str(r.get("cardNumber", "")).split("/")[0].lstrip("0") == our_number),
-            None,
-        )
+        match = _find_pokemonpricetracker_product(self._api_key, card, self._client)
         if match is None:
             return None
 
