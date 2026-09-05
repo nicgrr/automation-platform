@@ -29,6 +29,19 @@ MIN_BAND_FRACTION = 0.05
 # absolute so it survives different scanners, bed colors, and exposures.
 CONTENT_STD_RATIO = 0.25
 
+# How many rows/columns _content_bands averages over before thresholding --
+# see the smoothing comment inside it. Deliberately tiny: a real sheet with
+# cards sitting slightly rotated (see the FALLBACK_CONTENT_STD_RATIO
+# comment above) can have a genuine inter-column gap as narrow as ~6px at
+# full scan resolution, and confirmed against that real sheet that a
+# window of 7 already bridges it away entirely, silently halving the
+# detected column count. 3 is small enough to leave that gap intact while
+# still bridging the 1-2px dips between text-line glyphs that fragmented a
+# real Metapod's attack-text section into pieces too short to count as
+# their own band -- the two failures this constant balances came from two
+# different real sheets, not from reasoning about either alone.
+SMOOTHING_WINDOW = 3
+
 # See the retry inside _content_bands: a single detected band covering at
 # least this fraction of the profile is treated as "the default threshold
 # found no gaps," not "there's genuinely one giant card."
@@ -203,8 +216,28 @@ def _content_bands(
     """
     if std_profile.size == 0:
         return []
-    threshold = std_profile.max() * ratio
-    is_content = std_profile > threshold
+
+    # A card's own attack-text section is mostly blank background around
+    # sparse glyphs, so its instantaneous per-row/column variance dips
+    # between text lines -- confirmed against a real Metapod whose attack
+    # text created dozens of individual 1-2px dips below threshold, each
+    # separating a content run shorter than MIN_BAND_FRACTION, so the
+    # *whole* text section (both the runs and the dips) was read as one
+    # long gap. A genuine gap sits far below any of these dips even on
+    # average (measured: ~2-3 mean std over 100+px, against ~14-25 for the
+    # text section's dips) -- smoothing over a short window before
+    # thresholding lets a brief dip get outvoted by its high-variance
+    # neighbours without meaningfully raising a sustained low region, since
+    # the window is far shorter than any real inter-card gap seen on a real
+    # scan (the shortest documented is 40px; this is half that).
+    smoothing_window = min(SMOOTHING_WINDOW, std_profile.size)
+    smoothed = (
+        np.convolve(std_profile, np.ones(smoothing_window) / smoothing_window, mode="same")
+        if smoothing_window > 1 else std_profile
+    )
+
+    threshold = smoothed.max() * ratio
+    is_content = smoothed > threshold
 
     bands: list[tuple[int, int]] = []
     start: int | None = None

@@ -483,7 +483,61 @@ def test_content_bands_retries_a_weak_gap_that_never_clears_the_default_threshol
     threshold = profile.max() * CONTENT_STD_RATIO
     assert weak_gap > threshold
 
-    assert _content_bands(profile, min_length=50) == [(0, 300), (340, 640)]
+    # Exact boundaries aren't asserted here: _content_bands smooths the
+    # profile before thresholding (see SMOOTHING_WINDOW), which blurs band
+    # edges by a few pixels either way as an expected side effect -- what
+    # matters is that the weak gap still reads as two separate bands, not
+    # its precise pixel position.
+    bands = _content_bands(profile, min_length=50)
+    assert len(bands) == 2
+    (start1, end1), (start2, end2) = bands
+    assert abs(start1 - 0) <= 10 and abs(end1 - 300) <= 10
+    assert abs(start2 - 340) <= 10 and abs(end2 - 640) <= 10
+
+
+def test_content_bands_bridges_text_line_spacing_inside_one_card(tmp_path):
+    """The real failure this guards against: a real Metapod's attack-text
+    section is mostly blank background around sparse glyphs, so its
+    instantaneous per-row variance dips below threshold between every text
+    line. Confirmed against that real card: dozens of individual 1-2px
+    dips, each separating a content run shorter than MIN_BAND_FRACTION, so
+    the *entire* text section (each short run and every dip) was read as
+    one long gap -- silently truncating the card's crop by more than half.
+
+    Mirrors that shape directly: a long content run riddled with 1px dips,
+    none of which are genuinely a gap between two cards.
+    """
+    from automation_control.scan_ingest.detect import _content_bands
+
+    peak = 80.0
+    profile = np.array([peak] * 1000, dtype=float)
+    # a dip on every 8th row, matching the real card's dense text-line
+    # spacing pattern -- none of the runs between them (7px each) would
+    # individually pass any realistic min_length on their own.
+    profile[::8] = 10.0
+
+    bands = _content_bands(profile, min_length=350)
+    assert bands == [(0, 1000)]  # reads as one continuous card, not zero
+
+
+def test_content_bands_still_separates_a_genuinely_narrow_real_gap(tmp_path):
+    """The flip side, and a real regression this guards against: fixing the
+    case above by smoothing too aggressively silently merged two real
+    columns on a different sheet, one where every card sat slightly
+    rotated (see FALLBACK_CONTENT_STD_RATIO) and the genuine gap between
+    them was only ~6px wide at full scan resolution -- confirmed live, a
+    smoothing window of 7 already erased that gap entirely, halving the
+    detected column count with no warning. SMOOTHING_WINDOW must stay
+    small enough that a short but genuine gap between two separate cards
+    still reads as two bands, not one.
+    """
+    from automation_control.scan_ingest.detect import _content_bands
+
+    peak = 80.0
+    profile = np.array([peak] * 300 + [2.0] * 6 + [peak] * 300)
+
+    bands = _content_bands(profile, min_length=50)
+    assert len(bands) == 2
 
 
 def test_predict_card_width_refuses_to_guess_without_support(tmp_path):
