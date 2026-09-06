@@ -30,6 +30,11 @@ body {
   min-height: 100vh;
 }
 main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+.back-link {
+  display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 13px;
+  text-decoration: none; margin-bottom: 14px;
+}
+.back-link:hover { color: var(--accent); }
 .brand { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
 .brand h1 {
   font-size: 30px; margin: 0; letter-spacing: 0.01em; font-weight: 700;
@@ -101,5 +106,6 @@ def pill(text: str, kind: str = "neutral") -> str:
     return f"<span class='pill {kind}'>{text}</span>"
 
 
-def brand_header(tagline: str) -> str:
-    return f"<div class='brand'><h1>EzBay</h1><span class='tag'>{tagline}</span></div>"
+def brand_header(tagline: str, show_back: bool = True) -> str:
+    back = "<a class='back-link' href='/dashboard'>&larr; Dashboard</a>" if show_back else ""
+    return f"{back}<div class='brand'><h1>EzBay</h1><span class='tag'>{tagline}</span></div>"

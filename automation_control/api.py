@@ -74,7 +74,7 @@ def health() -> HealthResponse:
 @app.get("/login", response_class=HTMLResponse)
 def login_page() -> str:
     body = (
-        brand_header("Private Control Plane")
+        brand_header("Private Control Plane", show_back=False)
         + "<p class='subtitle'>Sign in to continue.</p>"
         + "<div class='panel'><form method=post>"
         + "<label>Username <input name=username autocomplete=username required></label>"
@@ -136,7 +136,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     )
 
     body = (
-        f"<div class='brand-row'>{brand_header('Private Control Plane')}{pill('Platform OK', 'ok')}</div>"
+        f"<div class='brand-row'>{brand_header('Private Control Plane', show_back=False)}{pill('Platform OK', 'ok')}</div>"
         + "<p class='subtitle'>Trading card listing operations.</p>"
         + stat_grid
         + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
