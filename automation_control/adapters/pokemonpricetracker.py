@@ -7,6 +7,7 @@ TCGPlayer/Cardmarket snapshot has been flagged unreliable for actual
 listing decisions. Free tier: 100 credits/day, ~1 credit per card looked up.
 """
 
+import threading
 import time
 
 import httpx
@@ -14,6 +15,34 @@ import httpx
 BASE_URL = "https://www.pokemonpricetracker.com/api/v2"
 MAX_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 1.5
+
+# The free/Pro tier caps at 60 requests/minute; live scanning has no notion
+# of that; it fires one lookup per newly-seen card as sheets come in, with
+# nothing to stop several arriving within the same second on a fast batch.
+# Confirmed the hard way (2026-09-07): that alone -- not the backfill job,
+# which already stops outright on a real block -- fired 50+ 429s in under
+# 5 minutes across a night of scanning and got the API key blocked three
+# times. This paces every call through this module, live scan or backfill
+# alike, comfortably under the cap rather than trusting callers to.
+MIN_SECONDS_BETWEEN_REQUESTS = 1.5
+
+_pacing_lock = threading.Lock()
+_last_request_at = 0.0
+# Set the moment a real block is seen; every call anywhere in the process
+# fails fast against this until it passes, instead of the live-scan path
+# silently swallowing the 429 and re-triggering the same block on the very
+# next card -- the actual mechanism behind three separate blocks in one
+# night.
+_blocked_until = 0.0
+
+
+def _wait_for_pacing_slot() -> None:
+    global _last_request_at
+    with _pacing_lock:
+        wait = _last_request_at + MIN_SECONDS_BETWEEN_REQUESTS - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_at = time.monotonic()
 
 
 class PokemonPriceTrackerLookupError(Exception):
@@ -49,9 +78,21 @@ HARD_LIMIT_RETRY_AFTER_THRESHOLD_SECONDS = 300
 
 
 def _get(path: str, params: dict, api_key: str, client: httpx.Client) -> dict:
+    global _blocked_until
+    remaining = _blocked_until - time.monotonic()
+    if remaining > 0:
+        # Already blocked from an earlier call in this process -- fail fast
+        # without touching the network. This is what actually stops a busy
+        # scanning session from re-triggering the same block on every next
+        # card: without it, each new card's lookup would independently hit
+        # the same 429 and get silently swallowed by `get_price`, which
+        # counts against the block exactly like a fresh offense would.
+        raise PokemonPriceTrackerRateLimited(int(remaining))
+
     headers = {"Authorization": f"Bearer {api_key}"}
     last_error: Exception | None = None
     for attempt in range(MAX_ATTEMPTS):
+        _wait_for_pacing_slot()
         try:
             response = client.get(f"{BASE_URL}/{path}", params=params, headers=headers, timeout=15.0)
         except httpx.HTTPError as exc:
@@ -67,6 +108,7 @@ def _get(path: str, params: dict, api_key: str, client: httpx.Client) -> dict:
                 if retry_after.isdigit() and int(retry_after) > HARD_LIMIT_RETRY_AFTER_THRESHOLD_SECONDS:
                     # Not retryable within this call or any nearby one --
                     # raise immediately, no sleep, no further attempts.
+                    _blocked_until = time.monotonic() + int(retry_after)
                     raise PokemonPriceTrackerRateLimited(int(retry_after))
                 last_error = PokemonPriceTrackerLookupError("pokemonpricetracker.com returned 429")
             elif response.status_code < 500:

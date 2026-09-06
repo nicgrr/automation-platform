@@ -3,9 +3,24 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from automation_control.adapters import pokemonpricetracker
 from automation_control.adapters.pokemonpricetracker import (
     PokemonPriceTrackerLookupError, PokemonPriceTrackerRateLimited, search_cards,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_pacing_state():
+    """The pacing/block state in this module is deliberately process-global
+    (see its own comment: every caller, live scan or backfill, must share
+    one view of "are we currently blocked") -- which means it persists
+    across tests unless reset, letting one test's simulated block leak into
+    the next one's assertions."""
+    pokemonpricetracker._last_request_at = 0.0
+    pokemonpricetracker._blocked_until = 0.0
+    yield
+    pokemonpricetracker._last_request_at = 0.0
+    pokemonpricetracker._blocked_until = 0.0
 
 
 def _client(handler):
@@ -154,3 +169,40 @@ def test_search_cards_raises_after_exhausting_retries():
 
     with patch("automation_control.adapters.pokemonpricetracker.time.sleep"), pytest.raises(PokemonPriceTrackerLookupError):
         search_cards("fake-key", search="q", client=_client(handler))
+
+
+def test_a_hard_rate_limit_blocks_every_later_call_without_touching_the_network():
+    """The actual mechanism behind three real API-key blocks in one night:
+    each new card scanned fires its own lookup, and without this, a 429
+    here would just get swallowed by the caller (get_price) and retried on
+    the very next card -- re-triggering the same block every time instead
+    of backing off. One hard 429 must poison every subsequent call
+    process-wide until its retry-after passes."""
+    attempts = []
+
+    def handler(request: httpx.Request):
+        attempts.append(1)
+        return httpx.Response(429, headers={"retry-after": "9999"})
+
+    with patch("automation_control.adapters.pokemonpricetracker.time.sleep"):
+        with pytest.raises(PokemonPriceTrackerRateLimited):
+            search_cards("fake-key", search="q", client=_client(handler))
+        assert len(attempts) == 1
+
+        # A second, unrelated lookup right after -- as the next card in a
+        # scanning session would trigger -- must fail fast against the
+        # remembered block rather than making another request.
+        with pytest.raises(PokemonPriceTrackerRateLimited):
+            search_cards("fake-key", search="different card", client=_client(handler))
+    assert len(attempts) == 1
+
+
+def test_requests_are_paced_at_least_the_minimum_interval_apart():
+    def handler(request: httpx.Request):
+        return httpx.Response(200, json={"data": []})
+
+    sleeps = []
+    with patch("automation_control.adapters.pokemonpricetracker.time.sleep", side_effect=sleeps.append):
+        search_cards("fake-key", search="a", client=_client(handler))
+        search_cards("fake-key", search="b", client=_client(handler))
+    assert any(s > 0 for s in sleeps)
