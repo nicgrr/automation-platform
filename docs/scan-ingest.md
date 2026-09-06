@@ -83,6 +83,33 @@ sudo journalctl -u pokemonpricetracker-backfill -f
 .venv/bin/python -m scripts.backfill_pokemonpricetracker_prices --dry-run  # preview without spending credits
 ```
 
+## Inventory quality audit
+
+`inventory-audit.timer` runs `scripts/audit_inventory_photos.py` once daily
+at midnight (read-only — it only reports, never edits inventory) and
+appends its findings to `scan_ingest_data/logs/inventory-audit.log`. It
+flags any item whose stored photo hashes further from the card it's filed
+under than from some other cached card -- the real failure this catches is
+two different sets sharing a card number (confirmed live: a "151" Slowpoke
+and Scyther were both filed under Expedition Base Set, which happens to
+have a #79 and #123 of its own).
+
+Treat its output as triage, not a verdict — see the script's own docstring
+for known false positives (a foil or an off-centre crop can hash badly
+against its own correct reference without being the wrong card). Once a
+flagged item is confirmed wrong by eye, `scripts/correct_inventory_item.py`
+re-files it, merging into an existing holding if one exists rather than
+creating a duplicate:
+
+```bash
+sudo systemctl status inventory-audit.timer
+sudo journalctl -u inventory-audit -f
+.venv/bin/python -m scripts.audit_inventory_photos              # run on demand
+.venv/bin/python -m scripts.correct_inventory_item \
+    --item-id <id> --correct-set-id sv3pt5 --correct-number 79 \
+    --reason "photo shows Slowpoke, not Graveler" --dry-run     # preview, then drop --dry-run
+```
+
 ## Useful commands
 
 ```bash
