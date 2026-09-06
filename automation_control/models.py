@@ -84,6 +84,33 @@ class CardVariant(str, enum.Enum):
     HOLO = "holo"
 
 
+class CatalogItemType(str, enum.Enum):
+    """What kind of thing a CatalogItem is -- decides which detail table
+    (TcgCard / SealedProduct / CollectibleProduct) has its other row."""
+
+    TCG_CARD = "tcg_card"
+    SEALED_PRODUCT = "sealed_product"
+    COLLECTIBLE = "collectible"
+    GRADED_CARD = "graded_card"
+    ACCESSORY = "accessory"
+    OTHER = "other"
+
+
+class InventoryStatus(str, enum.Enum):
+    """Where one owned item sits in the sell pipeline. Distinct from
+    CardVariant (which printing) and from having a quantity at all --
+    an item can be AVAILABLE with quantity 3."""
+
+    PERSONAL_COLLECTION = "personal_collection"
+    AVAILABLE = "available"
+    LISTED = "listed"
+    RESERVED = "reserved"
+    SOLD = "sold"
+    TRADE = "trade"
+    GIVEAWAY = "giveaway"
+    DAMAGED = "damaged"
+
+
 class ScanSessionStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
@@ -408,6 +435,105 @@ class CatalogCard(Base):
     card_set: Mapped[CardSet] = relationship()
 
 
+class CatalogItem(Base):
+    """The generic "what is it" record -- Module 1 of the collectibles
+    platform (see ARCHITECTURE.md). Every inventory item, purchase-lot
+    line, and potential purchase eventually points at one of these,
+    regardless of whether it's a TCG card, a sealed booster box, or a
+    Sonny Angel. Detail lives in exactly one matching type-specific table
+    (TcgCard / SealedProduct / CollectibleProduct), keyed by this row's id.
+
+    A CatalogCard row is migrated into this as item_type=TCG_CARD reusing
+    the *same* id -- so inventory_items.card_id, foil_labels.card_id, and
+    everything else already pointing at a CatalogCard.id keeps resolving
+    without being rewritten. See scripts/migrate_add_catalog_items.py.
+    """
+
+    __tablename__ = "catalog_items"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_type: Mapped[CatalogItemType] = mapped_column(Enum(CatalogItemType), index=True)
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    image_url: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TcgCard(Base):
+    """TCG-card-specific detail for a CatalogItem with item_type=TCG_CARD.
+    `game` is what makes this generic across Pokémon/One Piece/future TCGs
+    rather than Pokémon-specific like CatalogCard is."""
+
+    __tablename__ = "tcg_cards"
+
+    catalog_item_id: Mapped[str] = mapped_column(ForeignKey("catalog_items.id"), primary_key=True)
+    game: Mapped[str] = mapped_column(String(32), index=True)
+    set_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    set_code: Mapped[str | None] = mapped_column(String(32))
+    number: Mapped[str | None] = mapped_column(String(32))
+    character: Mapped[str | None] = mapped_column(String(256))
+    rarity: Mapped[str | None] = mapped_column(String(128))
+    variant: Mapped[str | None] = mapped_column(String(64))
+    parallel: Mapped[str | None] = mapped_column(String(64))
+    language: Mapped[str] = mapped_column(String(32), default="English")
+    release_date: Mapped[str | None] = mapped_column(String(32))
+    artist: Mapped[str | None] = mapped_column(String(256))
+
+    catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class SealedProduct(Base):
+    """Sealed-product detail for a CatalogItem -- booster packs/boxes,
+    displays, cases, ETBs. See Module 11 (sealed case economics) for why
+    units_per_display/displays_per_case matter: they're what a case-vs-box
+    breakeven calculation is built from."""
+
+    __tablename__ = "sealed_products"
+
+    catalog_item_id: Mapped[str] = mapped_column(ForeignKey("catalog_items.id"), primary_key=True)
+    brand: Mapped[str | None] = mapped_column(String(128))
+    game: Mapped[str | None] = mapped_column(String(32))
+    set_id: Mapped[str | None] = mapped_column(String(32))
+    product_type: Mapped[str | None] = mapped_column(String(64))
+    units_per_display: Mapped[int | None] = mapped_column(Integer)
+    displays_per_case: Mapped[int | None] = mapped_column(Integer)
+    release_date: Mapped[str | None] = mapped_column(String(32))
+    rrp: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+
+    catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class CollectibleProduct(Base):
+    """Non-TCG collectible detail for a CatalogItem -- Sonny Angel, Smiski,
+    blind boxes, figures. `is_secret` is its own column rather than folded
+    into `variant` because "is this the chase figure" is a distinct
+    question from "which colourway" and drives its own pricing."""
+
+    __tablename__ = "collectible_products"
+
+    catalog_item_id: Mapped[str] = mapped_column(ForeignKey("catalog_items.id"), primary_key=True)
+    brand: Mapped[str | None] = mapped_column(String(128))
+    series: Mapped[str | None] = mapped_column(String(128))
+    character: Mapped[str | None] = mapped_column(String(128))
+    variant: Mapped[str | None] = mapped_column(String(128))
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    blind_box_series: Mapped[str | None] = mapped_column(String(128))
+    retail_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+
+    catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class StorageLocation(Base):
+    """Where a physical item actually sits -- Binder A, Bulk Box 1, Display
+    Cabinet. Its own table rather than a free-text column so it can be
+    renamed in one place and eventually carry a QR/barcode label."""
+
+    __tablename__ = "storage_locations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    kind: Mapped[str | None] = mapped_column(String(64))
+
+
 class ScanSession(Base):
     """One sitting of scanning a single set. Survives being interrupted:
     a session left RUNNING is offered for resume next time that set is
@@ -440,6 +566,14 @@ class InventoryItem(Base):
     That makes (card_id, variant, condition) the natural identity, enforced
     by a unique constraint so a concurrent double-commit can't split one
     holding across two rows.
+
+    `catalog_item_id` / `storage_location_id` / `status` / `allocated_cost_basis`
+    / `grading_company` / `certification_number` were added by
+    scripts/migrate_add_catalog_items.py, backfilled from the existing
+    `card_id` -- nullable and additive, so nothing reading only the
+    original columns breaks. `card_id` stays the source of truth for the
+    live scan-ingest pipeline until every reader is moved over to
+    `catalog_item_id` in a later, separate change.
     """
 
     __tablename__ = "inventory_items"
@@ -456,7 +590,16 @@ class InventoryItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    storage_location_id: Mapped[str | None] = mapped_column(ForeignKey("storage_locations.id"), index=True)
+    status: Mapped[InventoryStatus] = mapped_column(Enum(InventoryStatus), default=InventoryStatus.AVAILABLE, index=True)
+    allocated_cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    grading_company: Mapped[str | None] = mapped_column(String(64))
+    certification_number: Mapped[str | None] = mapped_column(String(64))
+
     card: Mapped[CatalogCard] = relationship()
+    catalog_item: Mapped[CatalogItem | None] = relationship()
+    storage_location: Mapped[StorageLocation | None] = relationship()
 
 
 class FoilLabel(Base):

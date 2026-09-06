@@ -47,39 +47,33 @@ exist. Left in place as history.
 card" independently and don't reference each other. This is the main seam Phase 1
 needs to close.
 
-## Proposed additions (Phase 1+, not yet created)
+## Modules 1–2 — Generic catalogue + inventory extension (done, 2026-09-07)
 
-Additive only — no existing table is dropped or renamed. New tables first; columns
-added to existing tables are nullable/backfilled so nothing currently running
-breaks mid-migration.
+Implemented by `scripts/migrate_add_catalog_items.py`, run against production data:
 
-### Module 1 — Generic catalogue
 ```
-catalog_items            id, item_type (tcg_card | sealed_product | collectible |
-                          graded_card | accessory | other), name, image_url,
-                          created_at
-tcg_cards                catalog_item_id FK, game (pokemon | one_piece | ...),
-                          set_id, set_code, number, character, rarity, variant,
-                          parallel, language, release_date, artist
-                          -- catalog_cards becomes a `game='pokemon'` row here;
-                          -- existing catalog_cards.id is reused as the FK target
-                          -- during migration, not regenerated
-sealed_products           catalog_item_id FK, brand, game, set_id, product_type,
-                          units_per_display, displays_per_case, release_date, rrp
-collectible_products      catalog_item_id FK, brand, series, character, variant,
-                          is_secret, blind_box_series, retail_price
+catalog_items      20,479 rows -- one per existing catalog_cards row, item_type=TCG_CARD,
+                   id reused verbatim from catalog_cards.id (so every existing FK into
+                   catalog_cards.id keeps resolving unchanged)
+tcg_cards          20,479 rows -- game='pokemon' detail for each catalog_items row
+sealed_products    0 rows -- table exists, ready for Module 11 / One Piece sealed product work
+collectible_products 0 rows -- table exists, ready for Sonny Angel/Smiski (Phase 6)
+storage_locations  0 rows -- table exists, ready for Binder A / Bulk Box 1 / etc.
 ```
 
-### Module 2 — Inventory (extends, doesn't replace)
-```
-ALTER inventory_items ADD catalog_item_id (nullable FK, backfilled from card_id)
-ALTER inventory_items ADD storage_location_id, status, purchase_lot_item_id,
-                          allocated_cost_basis, grading_company, certification_number
-storage_locations         id, name, kind
-```
-`card_id` stays for backward compatibility until every reader (dashboard pages,
-scan_ingest commit path) is switched to `catalog_item_id`; then it's dropped in a
-later, separate migration once nothing references it.
+`inventory_items` gained six nullable columns (`catalog_item_id` — backfilled for
+all 995 rows from the existing `card_id`; `storage_location_id`; `status`,
+defaulted to `AVAILABLE` for all existing rows; `allocated_cost_basis`;
+`grading_company`; `certification_number`). `card_id` and `catalog_cards` are
+untouched and remain what `scan_ingest` reads/writes — `catalog_item_id` is
+additive and not yet read by anything, so this migration changed no
+currently-running behavior. Verified: `catalog_cards` and `inventory_items` row
+counts identical before and after; full test suite green; both live services
+restarted cleanly on the updated models.
+
+Not yet done: nothing reads `catalog_item_id` yet (dashboard pages, scan_ingest's
+commit path, `/inventory` still work entirely off `card_id`). That's the next
+piece of Phase 1 — wiring the generic catalogue into the UI — not a schema change.
 
 ### Modules 3–4 — Purchasing
 ```

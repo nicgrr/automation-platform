@@ -3,6 +3,23 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Phase 1 (started): generic catalogue schema
+
+- Added `CatalogItem`, `TcgCard`, `SealedProduct`, `CollectibleProduct`,
+  `StorageLocation` models and an `InventoryStatus` enum.
+- Extended `InventoryItem` with `catalog_item_id`, `storage_location_id`,
+  `status`, `allocated_cost_basis`, `grading_company`, `certification_number` —
+  all nullable/defaulted, all backfilled.
+- Ran `scripts/migrate_add_catalog_items.py` against production data: backfilled
+  20,479 `catalog_items`/`tcg_cards` rows from `catalog_cards`, linked all 995
+  `inventory_items` rows to their `catalog_item_id`. Fixed a bug caught during
+  the first run (the script never imported `automation_control.models`, so
+  `Base.metadata.create_all` silently created nothing) before it touched
+  anything the second time. Verified row counts unchanged, full test suite green,
+  both live services restart clean. See `DATABASE.md` for the detail.
+- Manual backup taken immediately before the migration:
+  `~/backups/automation-pre-catalog-items-migration-20260907-085156.db`.
+
 ## 2026-09-07 — Phase 0: collectibles platform audit
 
 - Audited the host: confirmed this repo (not a separate app) is "the existing
