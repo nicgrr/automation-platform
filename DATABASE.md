@@ -128,8 +128,28 @@ release_calendar               id, catalog_item_id FK, product_name, release_dat
 ```
 UI: `/marketplaces`, `/sales`, `/customers`, `/suppliers`, `/goals` (visual
 progress bars), `/release-calendar`. `supplier_products` and `whatnot_*`
-(Module 11's sealed-case economics and Module 7's actual Whatnot show
-tracking) are not yet built -- next up.
+(Module 7's actual Whatnot show tracking, distinct from its fee rules which
+are done) are not yet built -- next up.
+
+### Module 11 — sealed case economics (done, 2026-09-07)
+Uses the existing `sealed_products` table (added in the Module 1 migration,
+previously empty). `/sealed-products` lists/creates them; `/sealed-products/
+{id}/economics` computes all four scenarios from the spec side by side (sell
+whole case, sell as boxes, sell as packs, open and sell singles) from
+`units_per_display`/`displays_per_case` -- verified against a hand-calculated
+example (12 boxes × 24 packs/box = 288 packs/case).
+
+### Modules 13, 16 — analytics & the business dashboard (done, 2026-09-07)
+No new tables -- `/analytics` computes everything from what already exists:
+inventory market value (reuses `inventory_review`'s latest-price/AUD-conversion
+logic), cost basis (honestly labelled partial -- `allocated_cost_basis` has no
+historical backfill), cash tied up, today's/monthly sales and profit,
+realized profit, potential stock value (open pipeline statuses only),
+open offers, inventory ageing buckets with dead-stock flagging (90+ days,
+still `AVAILABLE`), best sales channel, open goals. Verified against real
+production data before deploy; 7 tests cover the ageing/dead-stock/
+best-channel/open-pipeline-filter logic specifically since those are
+the parts most likely to silently miscount.
 
 ## Migration strategy
 

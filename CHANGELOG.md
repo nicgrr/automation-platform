@@ -3,6 +3,33 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 11 (sealed case economics) + Modules 13/16 (analytics)
+
+- `/sealed-products`: list/create sealed products (booster boxes, cases,
+  displays), using the `sealed_products` table added in the Module 1
+  migration (previously empty). `/sealed-products/{id}/economics` compares
+  all four spec scenarios (whole case / boxes / packs / open-and-sell-singles)
+  side by side -- verified against a hand-calculated example.
+- `/analytics`: the actual business command centre (Modules 13 & 16). No new
+  tables -- computes inventory market value, cost basis (honestly flagged
+  partial), cash tied up, today's/monthly sales & profit, realized profit,
+  potential stock value, open offers, inventory ageing with dead-stock
+  flagging, best sales channel, and open goals, all from data that already
+  exists. 7 tests specifically target the ageing/dead-stock/best-channel/
+  pipeline-filter logic.
+- **Caught and fixed a real incident during this work**: manual smoke-testing
+  via `TestClient` without overriding `get_session` wrote test data (two fake
+  purchase lots, a fake potential purchase, a fake sealed product) directly
+  into the *production* database, discovered when `/analytics` showed a
+  $450 "potential stock value" that shouldn't have existed. Cleaned up
+  immediately (verified via direct row counts before and after); all
+  committed test suites already used an isolated `tmp_path` SQLite fixture
+  correctly -- only the ad-hoc manual verification scripts were at fault.
+  Lesson: every manual TestClient check from here on overrides `get_session`
+  with an isolated database, no exceptions.
+- Full suite (545) green; live service restarted; production DB confirmed
+  clean of test artifacts after the fix.
+
 ## 2026-09-07 — Phase 2: purchasing, sales, CRM, suppliers, goals, calendar
 
 - Added 13 new tables (all additive, no backfill needed -- brand new concepts):
