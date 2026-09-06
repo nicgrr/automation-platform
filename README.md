@@ -1,11 +1,22 @@
 # Personal Automation Platform
 
-Phase 1A foundation plus the credential-ready Phase 1B private dashboard and
-read-only eBay Sandbox OAuth integration.
+Started as a Phase 1A control-plane foundation plus a Phase 1B private dashboard
+and read-only eBay Sandbox OAuth integration. Has since grown into the operational
+system for a real Pokémon TCG bulk-scan-to-inventory business (see `/scan-ingest`,
+`/feed`, `/review`, `/foil-review`, `/inventory`) and a separate single-card
+capture-to-listing pipeline (`/cards/*`).
+
+**This is now also the foundation for a broader collectibles business platform**
+(Pokémon, One Piece, Sonny Angel, Smiski, sealed product, Whatnot, CRM — see
+`ARCHITECTURE.md` and `DATABASE.md` for the current audit and the proposed schema).
+Evolving in place rather than as a separate app — `ARCHITECTURE.md` documents why.
 
 This repository is intentionally separate from the existing grocery application. It
 does not publish ports, connect production eBay credentials, or grant an AI process
 access to Docker, the host shell, or secret files.
+
+See `ARCHITECTURE.md`, `DATABASE.md`, `OPERATIONS.md`, and `CHANGELOG.md` for
+current state; `docs/scan-ingest.md` for the day-to-day scanning workflow.
 
 ## Components
 
