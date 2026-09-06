@@ -68,7 +68,43 @@ def test_parse_sheets_derives_a_human_timestamp_from_the_filename():
 def test_parse_sheets_handles_empty_log():
     preamble, sheets = _parse_sheets("")
     assert preamble == []
-    assert sheets == []
+
+
+def test_sheet_cards_extracts_committed_and_reviewed_entries():
+    _, sheets = _parse_sheets(LOG_SAMPLE)
+    committed_sheet = next(s for s in sheets if s.name == "sheet-20260830-085647-569289.png")
+
+    assert [(c.index, c.label, c.kind) for c in committed_sheet.cards] == [
+        (1, "Vaporeon (normal)", "ok"),
+        (5, "(unidentified)", "warn"),
+    ]
+
+
+def test_sheet_cards_ignores_the_foil_shadow_line_for_the_same_card():
+    """A committed card logs two lines under the same "Card N:" prefix --
+    a foil-shadow assessment first, then the identification. Only the
+    second should produce a card entry."""
+    log = """Sheet sheet-x.png: 1 card(s) detected (1x1)
+  Card 1: foil shadow: possible=normal/reverse_holo, suggestion=normal, confidence=0.50
+  Card 1: Wugtrio [normal] added -- est. 0.14 USD (pokemontcg_tcgplayer_market)
+
+  Sheet done: 1 committed, 0 skipped, 0 set aside for review.
+"""
+    _, sheets = _parse_sheets(log)
+    cards = sheets[0].cards
+    assert len(cards) == 1
+    assert cards[0].label == "Wugtrio (normal)"
+    assert cards[0].kind == "ok"
+
+
+def test_sheet_cards_flags_a_geometry_mismatch():
+    log = """Sheet sheet-x.png: 1 card(s) detected (1x1)
+  Card 1: not card-shaped -- set aside for review: needs_review/card1.jpg
+
+  Sheet done: 0 committed, 0 skipped, 1 set aside for review.
+"""
+    _, sheets = _parse_sheets(log)
+    assert [(c.index, c.label, c.kind) for c in sheets[0].cards] == [(1, "not card-shaped", "bad")]
 
 
 @pytest.fixture

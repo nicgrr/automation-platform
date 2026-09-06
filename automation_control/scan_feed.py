@@ -145,6 +145,11 @@ def scan_feed(
             f"<img class='crop' src='/feed/crop/{escape(stem)}/{index}' alt='' loading='lazy' decoding='async'>"
             for index in range(1, len(crops) + 1)
         )
+        card_kind_class = {"ok": "", "warn": "card-warn", "bad": "card-bad"}
+        card_list = "".join(
+            f"<li class='{card_kind_class[c.kind]}'>{escape(str(c.index))}. {escape(c.label)}</li>"
+            for c in sheet.cards
+        )
         cards.append(
             "<div class='sheet'>"
             + (f"<a class='sheet-img' href='/feed/sheet/{escape(stem)}' target='_blank' rel='noopener'>"
@@ -154,6 +159,7 @@ def scan_feed(
             + f"<div class='sheet-when'>{escape(sheet.when or stem)}</div>"
             + f"<div class='sheet-status'>{pill(escape(sheet.status), status_kind)}</div>"
             + f"<div class='sheet-detail'>{sheet.detected} card(s) detected ({escape(sheet.grid)})</div>"
+            + (f"<ul class='card-list'>{card_list}</ul>" if card_list else "")
             + (f"<div class='crops'>{strip}</div>" if strip else "")
             + "</div></div>"
         )
@@ -220,6 +226,11 @@ _STYLE = """<style>
 .sheet-when{font-size:14px;font-weight:600}
 .sheet-status{margin:6px 0}
 .sheet-detail{font-size:12.5px;color:var(--text-dim)}
+.card-list{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+  gap:2px 12px;font-size:12.5px;color:var(--text)}
+.card-list li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-list li.card-warn{color:var(--accent)}
+.card-list li.card-bad{color:var(--danger)}
 .crops{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .crops .crop{width:52px;border-radius:5px;display:block;background:#0a0f1c}
 

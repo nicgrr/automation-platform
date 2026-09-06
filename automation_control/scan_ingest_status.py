@@ -58,6 +58,22 @@ SHEET_HEADER_RE = re.compile(r"^Sheet (\S+): (\d+) card\(s\) detected \((\d+)x(\
 SHEET_DONE_RE = re.compile(r"^Sheet done: (\d+) committed, (\d+) skipped, (\d+) set aside for review\.$")
 SHEET_TIMESTAMP_RE = re.compile(r"(\d{8})-(\d{6})")
 
+# Each committed/reviewed card logs two lines under the same "Card N:"
+# prefix -- a foil-shadow assessment, then the actual identification --
+# distinguished only by what follows the prefix, so the committed pattern
+# excludes both that and the geometry-flagged variant, which shares the
+# prefix but never carries a bracketed variant.
+CARD_COMMITTED_RE = re.compile(r"^Card (\d+): (?!foil shadow:)(.+?) \[(\w+)\] (added|incremented to x\d+)")
+CARD_REVIEW_RE = re.compile(r"^Card (\d+): (.+?) needs confirmation")
+CARD_NOT_SHAPED_RE = re.compile(r"^Card (\d+): not card-shaped")
+
+
+@dataclass
+class CardLogEntry:
+    index: int
+    label: str
+    kind: str  # "ok" | "warn" | "bad"
+
 
 @dataclass
 class SheetLogEntry:
@@ -86,6 +102,28 @@ class SheetLogEntry:
             return datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
             return ""
+
+    @property
+    def cards(self) -> list[CardLogEntry]:
+        """One entry per card actually named in the log for this sheet, in
+        reading order -- what the feed shows instead of just a bare count."""
+        entries: dict[int, CardLogEntry] = {}
+        for line in self.lines:
+            committed = CARD_COMMITTED_RE.match(line)
+            if committed:
+                index = int(committed.group(1))
+                entries[index] = CardLogEntry(index, f"{committed.group(2)} ({committed.group(3)})", "ok")
+                continue
+            not_shaped = CARD_NOT_SHAPED_RE.match(line)
+            if not_shaped:
+                index = int(not_shaped.group(1))
+                entries.setdefault(index, CardLogEntry(index, "not card-shaped", "bad"))
+                continue
+            review = CARD_REVIEW_RE.match(line)
+            if review:
+                index = int(review.group(1))
+                entries[index] = CardLogEntry(index, review.group(2), "warn")
+        return [entries[i] for i in sorted(entries)]
 
 
 def _parse_sheets(log_text: str) -> tuple[list[str], list[SheetLogEntry]]:
