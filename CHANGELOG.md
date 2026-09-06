@@ -3,6 +3,23 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Phase 1 (continued): global search, One Piece via CSV import
+
+- Added `scripts/import_tcg_catalog_csv.py` -- a generic, game-agnostic CSV
+  importer for `catalog_items`/`tcg_cards`, since there's no verified API for
+  One Piece the way pokemontcg.io serves Pokémon (same "manual import until a
+  real API exists" philosophy the pricing engine already uses). Deterministic
+  ids from (game, set, number) mean re-importing a corrected CSV updates
+  existing rows instead of duplicating. Seeded 2 real One Piece cards (OP17
+  Kaido, Monkey D. Luffy) as a working example.
+- Added `/search` (Module 17): searches `catalog_items` across every game in
+  one place and cross-references ownership via `inventory_items.
+  catalog_item_id` -- the first real feature built on the new generic
+  catalogue rather than the Pokémon-specific tables. Verified against live
+  data (searching "Ethan" correctly shows "own 3" for Ethan's Pichu, matching
+  tonight's earlier commit). Added a Catalogue panel + search link to the
+  dashboard. 6 new tests; full suite (520) green; live service restarted clean.
+
 ## 2026-09-07 — Phase 1 (started): generic catalogue schema
 
 - Added `CatalogItem`, `TcgCard`, `SealedProduct`, `CollectibleProduct`,

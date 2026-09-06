@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from .adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_inventory, normalize_market
@@ -20,10 +20,11 @@ from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_
 from .foil_review import router as foil_review_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
-from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, InventoryItem, JobRun, ListingBuildStatus, PendingListing, PricingStatus
+from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, InventoryItem, JobRun, ListingBuildStatus, PendingListing, PricingStatus, TcgCard
 from .price_review import router as pricing_router
 from .review_queue import router as review_router
 from .scan_feed import router as scan_feed_router
+from .search import router as search_router
 from .scan_ingest_status import router as scan_ingest_status_router
 from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, JobRead
 from .ui import brand_header, page, pill
@@ -44,6 +45,7 @@ app.include_router(scan_ingest_status_router)
 app.include_router(review_router)
 app.include_router(scan_feed_router)
 app.include_router(foil_review_router)
+app.include_router(search_router)
 
 
 def correlation_id() -> str:
@@ -116,6 +118,10 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     scanned_holdings = len(scanned_items)
     scanned_copies = sum(i.quantity for i in scanned_items)
     review_count = _review_queue_size(request.app.state.settings)
+    catalog_by_game = session.execute(
+        select(TcgCard.game, func.count()).group_by(TcgCard.game)
+    ).all()
+    catalog_summary = ", ".join(f"{count:,} {game}" for game, count in catalog_by_game) or "none yet"
 
     # Grouped by which pipeline the number belongs to -- "pending review"
     # (single capture) and "awaiting review" (bulk scan) sat side by side as
@@ -143,6 +149,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         + stat_grid
         + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
         + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/feed'>Scan feed</a> &nbsp; <a href='/scan-ingest'>Status &amp; logs</a> &nbsp; <a href='/review'>Review queue ({review_count})</a> &nbsp; <a href='/foil-review'>Foil review</a></p></div>"
+        + f"<div class='panel'><h2>Catalogue</h2><p><a class='btn' href='/search'>Search catalogue</a> &nbsp; <span class='subtitle' style='margin:0'>{escape(catalog_summary)}</span></p></div>"
         + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
     )
     return page("EzBay Dashboard", body)
