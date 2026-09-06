@@ -459,6 +459,37 @@ class InventoryItem(Base):
     card: Mapped[CatalogCard] = relationship()
 
 
+class FoilLabel(Base):
+    """A human's yes/no verdict on one `assess_foil` suggestion.
+
+    `assess_foil` runs in shadow mode -- it logs a guess but never picks the
+    committed variant, because there's no confirmed sample to say its ±4
+    body-bias threshold means anything (see that module's docstring). This
+    is where confirmed samples come from: every verdict recorded at
+    /foil-review is a labelled (metrics, was it actually foil) pair, so the
+    threshold can eventually be set from real data instead of a guess,
+    across every set rather than the handful checked by hand so far.
+    """
+
+    __tablename__ = "foil_labels"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    inventory_item_id: Mapped[str] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    card_id: Mapped[str] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
+    filed_variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant))
+    suggested_variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant))
+    # What it actually is, per the human -- not always `suggested_variant`:
+    # a card can genuinely be foil while the weak signal guessed the wrong
+    # *kind* of foil (confirmed live: an Articuno the signal called
+    # reverse_holo that was actually a plain holo). `confirmed` alone can't
+    # represent that third case.
+    actual_variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant))
+    confirmed: Mapped[bool] = mapped_column(Boolean)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    labeled_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class CardPrice(Base):
     """A price observation for a catalog card, kept append-only and
     source-tagged rather than as a single mutable column on InventoryItem.

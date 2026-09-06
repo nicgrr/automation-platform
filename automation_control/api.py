@@ -17,6 +17,7 @@ from .capture import router as cards_router
 from .config import Settings, get_settings
 from .database import Base, engine, get_session
 from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_sandbox_client_id, valid_sandbox_runame, valid_user_access_token
+from .foil_review import router as foil_review_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
 from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, InventoryItem, JobRun, ListingBuildStatus, PendingListing, PricingStatus
@@ -42,6 +43,7 @@ app.include_router(inventory_router)
 app.include_router(scan_ingest_status_router)
 app.include_router(review_router)
 app.include_router(scan_feed_router)
+app.include_router(foil_review_router)
 
 
 def correlation_id() -> str:
@@ -140,7 +142,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         + "<p class='subtitle'>Trading card listing operations.</p>"
         + stat_grid
         + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
-        + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/feed'>Scan feed</a> &nbsp; <a href='/scan-ingest'>Status &amp; logs</a> &nbsp; <a href='/review'>Review queue ({review_count})</a></p></div>"
+        + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/feed'>Scan feed</a> &nbsp; <a href='/scan-ingest'>Status &amp; logs</a> &nbsp; <a href='/review'>Review queue ({review_count})</a> &nbsp; <a href='/foil-review'>Foil review</a></p></div>"
         + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
     )
     return page("EzBay Dashboard", body)

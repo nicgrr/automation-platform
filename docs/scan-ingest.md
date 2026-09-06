@@ -85,9 +85,12 @@ sudo journalctl -u pokemonpricetracker-backfill -f
 
 ## Inventory quality audit
 
-`inventory-audit.timer` runs `scripts/audit_inventory_photos.py` once daily
-at midnight (read-only — it only reports, never edits inventory) and
-appends its findings to `scan_ingest_data/logs/inventory-audit.log`. It
+`inventory-audit.timer` runs `scripts/audit_inventory_photos.py` hourly
+from 22:00 through 14:00 the next day (read-only — it only reports, never
+edits inventory), and appends its findings to
+`scan_ingest_data/logs/inventory-audit.log`. Timed to run overnight and
+through the working day rather than just at midnight, so a bad scan
+surfaces well before the cards get put away. It
 flags any item whose stored photo hashes further from the card it's filed
 under than from some other cached card -- the real failure this catches is
 two different sets sharing a card number (confirmed live: a "151" Slowpoke
