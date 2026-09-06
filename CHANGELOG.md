@@ -3,6 +3,34 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Phase 2: purchasing, sales, CRM, suppliers, goals, calendar
+
+- Added 13 new tables (all additive, no backfill needed -- brand new concepts):
+  `buy_threshold_configs`, `purchase_lots`, `purchase_lot_items`,
+  `potential_purchases`, `marketplaces`, `marketplace_fee_rules`, `customers`,
+  `sales`, `sale_items`, `suppliers`, `supplier_products`, `goals`,
+  `release_calendar`. Seeded a default 55%/70% buy-threshold config and 9
+  standard marketplaces.
+- Built and deployed real pages for every one of them: `/buying-calculator`
+  (Module 6 -- verified against the spec's own worked example: market $100,
+  seller $60, expected sale $90 → 60% buy, $30 gross profit), `/purchase-lots`
+  (Module 3, with the green/yellow/red verdict), `/potential-stock` (Module 4,
+  Kanban board), `/marketplaces` (Module 7, time-boxed fee rules),
+  `/sales` (Module 8), `/customers` (Module 9, auto-created from sales),
+  `/suppliers` (Module 10), `/goals` (Module 14, visual progress),
+  `/release-calendar` (Module 15).
+- Caught and fixed a real bug via the test suite: comparing a
+  `DateTime(timezone=True)` column read back from SQLite (naive) against an
+  aware `datetime.now(UTC)` in Python raised `TypeError`. Fixed by pushing the
+  comparison into the SQL `WHERE` clause instead, matching how the rest of the
+  codebase already avoids this.
+- 20 new tests across 3 new test files; full suite (534) green; live service
+  restarted and every new route smoke-tested (401s, correctly auth-gated, no
+  crashes).
+- Not yet built: Module 11 (sealed case economics), Module 7's actual Whatnot
+  show tracking (fee rules exist; show-specific inventory does not yet),
+  `supplier_products` has no UI yet.
+
 ## 2026-09-07 — Phase 1 (continued): global search, One Piece via CSV import
 
 - Added `scripts/import_tcg_catalog_csv.py` -- a generic, game-agnostic CSV

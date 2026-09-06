@@ -11,6 +11,9 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from .adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_inventory, normalize_market
+from .business_records import router as business_records_router
+from .buying import router as buying_router
+from .commerce import router as commerce_router
 from .audit import record_event
 from .auth import create_session, require_dashboard_user, verify_password
 from .capture import router as cards_router
@@ -46,6 +49,9 @@ app.include_router(review_router)
 app.include_router(scan_feed_router)
 app.include_router(foil_review_router)
 app.include_router(search_router)
+app.include_router(buying_router)
+app.include_router(commerce_router)
+app.include_router(business_records_router)
 
 
 def correlation_id() -> str:
@@ -150,6 +156,17 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
         + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/feed'>Scan feed</a> &nbsp; <a href='/scan-ingest'>Status &amp; logs</a> &nbsp; <a href='/review'>Review queue ({review_count})</a> &nbsp; <a href='/foil-review'>Foil review</a></p></div>"
         + f"<div class='panel'><h2>Catalogue</h2><p><a class='btn' href='/search'>Search catalogue</a> &nbsp; <span class='subtitle' style='margin:0'>{escape(catalog_summary)}</span></p></div>"
+        + "<div class='panel'><h2>Business</h2><p>"
+          "<a class='btn' href='/buying-calculator'>Buying calculator</a> &nbsp; "
+          "<a href='/purchase-lots'>Purchase lots</a> &nbsp; "
+          "<a href='/potential-stock'>Potential stock</a> &nbsp; "
+          "<a href='/sales'>Sales</a> &nbsp; "
+          "<a href='/customers'>Customers</a> &nbsp; "
+          "<a href='/suppliers'>Suppliers</a> &nbsp; "
+          "<a href='/marketplaces'>Marketplaces</a> &nbsp; "
+          "<a href='/goals'>Goals</a> &nbsp; "
+          "<a href='/release-calendar'>Release calendar</a>"
+          "</p></div>"
         + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
     )
     return page("EzBay Dashboard", body)

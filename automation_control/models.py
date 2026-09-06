@@ -111,6 +111,45 @@ class InventoryStatus(str, enum.Enum):
     DAMAGED = "damaged"
 
 
+class PurchaseLotStatus(str, enum.Enum):
+    EVALUATING = "evaluating"
+    OFFER_SENT = "offer_sent"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    PURCHASED = "purchased"
+
+
+class PotentialPurchaseStatus(str, enum.Enum):
+    WATCHING = "watching"
+    CONTACT_SELLER = "contact_seller"
+    OFFER_SENT = "offer_sent"
+    COUNTER_OFFER = "counter_offer"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    PURCHASED = "purchased"
+    EXPIRED = "expired"
+    SKIPPED = "skipped"
+
+
+class SupplierStatus(str, enum.Enum):
+    RESEARCHING = "researching"
+    APPLY = "apply"
+    APPLICATION_SENT = "application_sent"
+    APPROVED = "approved"
+    DECLINED = "declined"
+    ACTIVE = "active"
+    PAUSED = "paused"
+
+
+class GoalKind(str, enum.Enum):
+    """MILESTONE: hit target_value once (e.g. "first $1,000 month").
+    CUMULATIVE: current_value keeps accruing toward target_value (e.g.
+    "100 Whatnot followers")."""
+
+    MILESTONE = "milestone"
+    CUMULATIVE = "cumulative"
+
+
 class ScanSessionStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
@@ -532,6 +571,226 @@ class StorageLocation(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(128), unique=True)
     kind: Mapped[str | None] = mapped_column(String(64))
+
+
+class BuyThresholdConfig(Base):
+    """Configurable green/yellow/red acquisition-percentage bands (Module 3)
+    -- deliberately a labelled row, not a single hardcoded triple, since
+    different categories reasonably want different bands (bulk commons vs.
+    graded singles). `is_default` marks which one the buying calculator and
+    purchase-lot pages fall back to when nothing more specific is picked.
+    """
+
+    __tablename__ = "buy_threshold_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    label: Mapped[str] = mapped_column(String(128))
+    green_max_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    yellow_max_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PurchaseLot(Base):
+    """One negotiation/purchase of a group of items from one seller (Module
+    3) -- "Facebook Marketplace Collection, seller asking $1,000". Lines
+    live in PurchaseLotItem; this row holds the deal-level numbers."""
+
+    __tablename__ = "purchase_lots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source: Mapped[str] = mapped_column(String(256))
+    seller: Mapped[str | None] = mapped_column(String(256))
+    asking_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    target_buy_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("55"))
+    offered_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    status: Mapped[PurchaseLotStatus] = mapped_column(Enum(PurchaseLotStatus), default=PurchaseLotStatus.EVALUATING, index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PurchaseLotItem(Base):
+    """One line within a PurchaseLot. `market_value` is a snapshot at
+    evaluation time, kept even if the live market price moves later --
+    "what we thought it was worth when we made the offer" is the number
+    the offer decision was actually based on."""
+
+    __tablename__ = "purchase_lot_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    purchase_lot_id: Mapped[str] = mapped_column(ForeignKey("purchase_lots.id"), index=True)
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    description: Mapped[str] = mapped_column(String(256))
+    market_value: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+
+    purchase_lot: Mapped[PurchaseLot] = relationship()
+
+
+class PotentialPurchase(Base):
+    """An item or lot being evaluated but not yet owned (Module 4) -- the
+    buy watchlist/pipeline. Distinct from PurchaseLot: this is
+    pre-negotiation ("watching", "contacted"); a PurchaseLot is one already
+    being formally offered on. Tracked loosely via `purchase_lot_id` rather
+    than a hard state-machine transition once an offer actually goes out.
+    """
+
+    __tablename__ = "potential_purchases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    description: Mapped[str] = mapped_column(String(256))
+    seller: Mapped[str | None] = mapped_column(String(256))
+    source: Mapped[str | None] = mapped_column(String(128))
+    url: Mapped[str | None] = mapped_column(String(512))
+    asking_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    market_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    target_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    max_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    confidence: Mapped[str | None] = mapped_column(String(16))
+    status: Mapped[PotentialPurchaseStatus] = mapped_column(Enum(PotentialPurchaseStatus), default=PotentialPurchaseStatus.WATCHING, index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    purchase_lot_id: Mapped[str | None] = mapped_column(ForeignKey("purchase_lots.id"))
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Marketplace(Base):
+    __tablename__ = "marketplaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+
+
+class MarketplaceFeeRule(Base):
+    """A time-boxed fee rule, not a single mutable number -- marketplace fee
+    structures change, and a "0% commission weekend" promotion is a new row
+    with its own effective dates, not a code change. The rule in effect for
+    a sale is whichever row's [effective_from, effective_to) window
+    contains the sale date; `category=None` applies to every category.
+    """
+
+    __tablename__ = "marketplace_fee_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    marketplace_id: Mapped[str] = mapped_column(ForeignKey("marketplaces.id"), index=True)
+    category: Mapped[str | None] = mapped_column(String(64))
+    commission_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
+    processing_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
+    fixed_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    gst_treatment: Mapped[str | None] = mapped_column(String(32))
+    promotion_label: Mapped[str | None] = mapped_column(String(128))
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    marketplace: Mapped[Marketplace] = relationship()
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    display_name: Mapped[str] = mapped_column(String(256))
+    platform_handles: Mapped[dict] = mapped_column(JSON, default=dict)
+    segment: Mapped[str | None] = mapped_column(String(64))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Sale(Base):
+    """One sale event/order, possibly bundling several SaleItems. Fee and
+    shipping numbers are captured here at sale time even though
+    MarketplaceFeeRule could reconstruct them, because a rule can be
+    superseded later and the sale record should keep saying what was
+    actually true when the sale happened."""
+
+    __tablename__ = "sales"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    marketplace_id: Mapped[str | None] = mapped_column(ForeignKey("marketplaces.id"), index=True)
+    customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    sold_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    gross_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    fees_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    shipping_revenue: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    shipping_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    packaging_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    marketplace: Mapped[Marketplace | None] = relationship()
+    customer: Mapped[Customer | None] = relationship()
+
+
+class SaleItem(Base):
+    __tablename__ = "sale_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    sale_id: Mapped[str] = mapped_column(ForeignKey("sales.id"), index=True)
+    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    description: Mapped[str] = mapped_column(String(256))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+
+    sale: Mapped[Sale] = relationship()
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(256))
+    contact: Mapped[str | None] = mapped_column(String(256))
+    website: Mapped[str | None] = mapped_column(String(512))
+    account_status: Mapped[SupplierStatus] = mapped_column(Enum(SupplierStatus), default=SupplierStatus.RESEARCHING, index=True)
+    categories: Mapped[str | None] = mapped_column(String(256))
+    minimum_order: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    wholesale_discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SupplierProduct(Base):
+    __tablename__ = "supplier_products"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    supplier_id: Mapped[str] = mapped_column(ForeignKey("suppliers.id"), index=True)
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    description: Mapped[str] = mapped_column(String(256))
+    cost: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    min_order_qty: Mapped[int | None] = mapped_column(Integer)
+
+    supplier: Mapped[Supplier] = relationship()
+
+
+class Goal(Base):
+    __tablename__ = "goals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    label: Mapped[str] = mapped_column(String(256))
+    kind: Mapped[GoalKind] = mapped_column(Enum(GoalKind), default=GoalKind.MILESTONE)
+    target_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("1"))
+    current_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    achieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReleaseCalendarEntry(Base):
+    __tablename__ = "release_calendar"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    product_name: Mapped[str] = mapped_column(String(256))
+    announcement_date: Mapped[str | None] = mapped_column(String(32))
+    preorder_date: Mapped[str | None] = mapped_column(String(32))
+    supplier_deadline: Mapped[str | None] = mapped_column(String(32))
+    release_date: Mapped[str | None] = mapped_column(String(32), index=True)
+    ordered_quantity: Mapped[int | None] = mapped_column(Integer)
+    wholesale_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    retail_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    notes: Mapped[str | None] = mapped_column(Text)
 
 
 class ScanSession(Base):

@@ -75,18 +75,23 @@ Not yet done: nothing reads `catalog_item_id` yet (dashboard pages, scan_ingest'
 commit path, `/inventory` still work entirely off `card_id`). That's the next
 piece of Phase 1 — wiring the generic catalogue into the UI — not a schema change.
 
-### Modules 3–4 — Purchasing
+### Modules 3, 4, 6 — Purchasing, buying calculator (done, 2026-09-07)
 ```
-purchase_lots              id, source, seller, asking_price, target_buy_pct,
-                            offered_price, status, purchased_at, notes
-purchase_lot_items         purchase_lot_id FK, catalog_item_id FK, market_value_snapshot,
-                            allocated_cost
-potential_purchases        id, description, seller, source, url, asking_price,
-                            market_value, target_price, max_price, status,
-                            confidence, discovered_at, notes
-buy_threshold_config        id, label, green_max_pct, yellow_max_pct
-                            -- configurable, not hardcoded, per the explicit ask
+buy_threshold_configs      id, label, green_max_pct, yellow_max_pct, is_default
+                            -- seeded: "Default" 55%/70%, is_default=true
+purchase_lots               id, source, seller, asking_price, target_buy_pct,
+                            offered_price, purchase_price, status, notes
+purchase_lot_items          purchase_lot_id FK, catalog_item_id FK, description,
+                            market_value, quantity
+potential_purchases         id, description, seller, source, url, asking_price,
+                            market_value, target_price, max_price, confidence,
+                            status, purchase_lot_id FK, notes
 ```
+UI: `/buying-calculator` (stateless, computes buy %, break-even, ROI, margin,
+green/yellow/red verdict), `/purchase-lots` (list + detail + line items),
+`/potential-stock` (Kanban board by status). All three share
+`buying.traffic_light()`, driven by `BuyThresholdConfig` rather than a
+hardcoded triple.
 
 ### Module 5 — Pricing (consolidation, not new)
 Extend `card_prices` into a game-agnostic `price_history` (rename via migration:
@@ -94,37 +99,37 @@ create new table, copy rows, drop old once `scan_ingest.pricing` is repointed) w
 an explicit `currency` + `converted_aud` pair. Retire `market_observations` /
 `price_recommendations`.
 
-### Modules 6–9 — Sales, channels, CRM
+### Modules 7–10, 14–15 — Sales, channels, CRM, suppliers, goals, calendar (done, 2026-09-07)
 ```
-marketplaces                id, name (whatnot | ebay | website | facebook | ...)
-marketplace_fee_rules       marketplace_id FK, commission_pct, processing_pct,
-                            fixed_fee, gst_treatment, category, effective_from,
-                            effective_to, promotion_label
-                            -- time-boxed rows, not a single mutable fee number,
-                            -- so a "0% commission weekend" is a row, not a
-                            -- deploy
-customers                   id, display_name, platform_handles (JSON), segment,
-                            notes
+marketplaces                 id, name -- seeded: Whatnot, eBay, Website, Facebook,
+                             Instagram, Direct, Trade Show, In Person, Other
+marketplace_fee_rules        marketplace_id FK, category, commission_pct,
+                             processing_pct, fixed_fee, gst_treatment,
+                             promotion_label, effective_from, effective_to
+                             -- time-boxed rows, not a mutable fee number, so a
+                             -- "0% commission weekend" is a row, not a deploy.
+                             -- category-specific rule always beats a
+                             -- category=None catch-all (commerce.active_fee_rule)
+customers                    id, display_name, platform_handles (JSON), segment,
+                             notes -- also created automatically from /sales
 sales                        id, marketplace_id FK, customer_id FK, sold_at,
-                            gross_amount, fees_amount, shipping_revenue,
-                            shipping_cost, packaging_cost, tax_amount
-sale_items                   sale_id FK, inventory_item_id FK, quantity,
-                            unit_price, cost_basis
-```
-
-### Modules 7, 10–15 — Whatnot, suppliers, goals, calendar
-```
-whatnot_shows                id, title, show_date, viewer_count, follower_count
-whatnot_show_items            whatnot_show_id FK, inventory_item_id FK,
-                             starting_price, final_price, outcome (sold | unsold |
-                             giveaway)
+                             gross_amount, fees_amount, shipping_revenue,
+                             shipping_cost, packaging_cost, tax_amount
+sale_items                    sale_id FK, inventory_item_id FK, quantity,
+                             unit_price, cost_basis
 suppliers                     id, name, contact, website, account_status,
                              wholesale_discount_pct, notes
 supplier_products             supplier_id FK, catalog_item_id FK, cost, min_order
-goals                          id, label, target_value, current_value, kind
-release_calendar               id, catalog_item_id FK, announcement_date,
-                             preorder_date, supplier_deadline, release_date
+goals                          id, label, kind (milestone | cumulative),
+                             target_value, current_value, achieved_at
+release_calendar               id, catalog_item_id FK, product_name, release_date,
+                             supplier_deadline, wholesale_price, retail_price,
+                             ordered_quantity
 ```
+UI: `/marketplaces`, `/sales`, `/customers`, `/suppliers`, `/goals` (visual
+progress bars), `/release-calendar`. `supplier_products` and `whatnot_*`
+(Module 11's sealed-case economics and Module 7's actual Whatnot show
+tracking) are not yet built -- next up.
 
 ## Migration strategy
 
