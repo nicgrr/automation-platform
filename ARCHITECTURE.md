@@ -116,6 +116,19 @@ queries against a much larger dataset start showing up as real latency.
   — it's untracked, per `.gitignore`).
 - eBay integration exists but is sandbox-only and OAuth-token-encrypted at rest
   (`EBAY_TOKEN_ENCRYPTION_KEY`) — no production eBay credential is wired in yet.
+  Update (2026-09-07): `ebay_env` now accepts `"production"` at the config
+  layer (production OAuth URLs, matching credential validators, adapter
+  `base_url`) so the code path exists, but three separate things all still
+  have to happen deliberately before a production listing is possible: (1)
+  `scripts/start-control-plane.sh` still hard-refuses to start the service
+  unless `EBAY_ENV=sandbox` exactly — this was deliberately left in place,
+  not loosened; (2) `EbaySandboxReadAdapter` is read-only in both
+  environments, no mutation methods exist; (3)
+  `listing_pipeline/publish.py` (the only place that would ever write a
+  real listing) remains an intentional, unimplemented, unwired placeholder
+  with its own documented requirement (an approved `Approval` record before
+  any write). Built on explicit instruction to add the plumbing without
+  turning any of this on — see `CHANGELOG.md`.
 - The existing `docs/security-model.md` principles (deny tools by default, sandbox
   eBay, human approval before irreversible writes, redact credential-shaped audit
   fields) still hold and should keep holding as this grows.

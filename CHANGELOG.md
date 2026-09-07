@@ -3,6 +3,44 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — eBay production-mode plumbing (deliberately not enabled)
+
+Asked to build a "real eBay listing flow." Investigation found the existing
+code has three independent, deliberate guardrails against ever doing that
+today: `config.py` type-locked `ebay_env` to `Literal["sandbox"]`,
+`ebay_oauth.py` actively rejects any credential that looks like a real
+production client ID/RuName, and `scripts/start-control-plane.sh` refuses
+to even start the service unless `EBAY_ENV=sandbox` exactly.
+`listing_pipeline/publish.py` -- the only place that would ever write a
+real listing -- is an intentional, unimplemented placeholder. Flagged this
+to the user rather than building around it; agreed scope: add the
+production-mode *plumbing* only, leave every guardrail in place, no live
+listing capability today.
+
+- `ebay_env` now accepts `"production"` (still defaults to `"sandbox"`).
+- `ebay_oauth.py`: added `AUTH_URL_PRODUCTION`/`TOKEN_URL_PRODUCTION` and
+  `valid_production_client_id`/`valid_production_runame` (the mirror image
+  of the sandbox validators -- reject a *sandbox*-looking credential instead
+  of a production one). `authorization_url()`, `EbayOAuthClient`, and
+  `store_user_tokens()` all take an `environment` parameter now (default
+  `"sandbox"`, so every existing call site keeps working unchanged).
+- `adapters/ebay.py`: `EbaySandboxReadAdapter` takes an `environment`
+  keyword arg selecting `api.ebay.com` vs `api.sandbox.ebay.com` -- still
+  read-only in both, no mutation methods added.
+- `api.py`: `configured()`/`ebay_services()` and all four `/api/ebay/*`
+  routes now pick validators/endpoints/response labels off
+  `settings.ebay_env` instead of hardcoding "sandbox".
+- **Deliberately untouched**: `start-control-plane.sh`'s
+  `EBAY_ENV must be sandbox` check, `EbaySandboxReadAdapter`'s read-only
+  contract, and `listing_pipeline/publish.py`'s unimplemented status. Going
+  live still needs all three crossed on purpose, plus real production
+  credentials from the eBay developer portal that only the user can supply.
+- 10 new tests (production URL selection, cross-environment credential
+  rejection in both directions, `configured()` behavior per environment);
+  full suite (628) green; `ezbay.service` restarted -- still starts in
+  sandbox mode exactly as before, confirmed via the startup script's own
+  guard still being in the code path.
+
 ## 2026-09-07 — Module 20: generic import/export
 
 - `/export`: CSV downloads for inventory, sales, sale line items, customers,

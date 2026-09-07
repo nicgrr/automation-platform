@@ -17,7 +17,12 @@ class Settings(BaseSettings):
     dashboard_password_hash: str | None = None
     session_signing_key: str | None = None
     ebay_token_encryption_key: str | None = None
-    ebay_env: Literal["sandbox"] = "sandbox"
+    # "production" unlocks the api.ebay.com / auth.ebay.com endpoints and the
+    # matching credential validators in ebay_oauth.py -- it does NOT unlock
+    # any write capability (listing_pipeline/publish.py is still a documented
+    # placeholder, unimplemented and unwired). Defaults to sandbox; this app
+    # never assumes production on your behalf.
+    ebay_env: Literal["sandbox", "production"] = "sandbox"
     ebay_client_id: str | None = None
     ebay_client_secret: str | None = None
     ebay_runame: str | None = None

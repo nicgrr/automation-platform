@@ -22,7 +22,7 @@ from .config import Settings, get_settings
 from .dashboard import router as dashboard_router
 from .data_export import router as data_export_router
 from .database import Base, engine, get_session
-from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_sandbox_client_id, valid_sandbox_runame, valid_user_access_token
+from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_client_id, valid_sandbox_runame, valid_user_access_token
 from .foil_review import router as foil_review_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
@@ -76,9 +76,11 @@ def correlation_id() -> str:
 
 
 def configured(settings: Settings) -> bool:
+    validate_client_id = valid_production_client_id if settings.ebay_env == "production" else valid_sandbox_client_id
+    validate_runame = valid_production_runame if settings.ebay_env == "production" else valid_sandbox_runame
     return bool(
-        valid_sandbox_client_id(settings.ebay_client_id)
-        and valid_sandbox_runame(settings.ebay_runame)
+        validate_client_id(settings.ebay_client_id)
+        and validate_runame(settings.ebay_runame)
         and settings.ebay_client_secret
         and not settings.ebay_client_secret.startswith("REPLACE_WITH_")
         and settings.ebay_token_encryption_key
@@ -89,8 +91,8 @@ def configured(settings: Settings) -> bool:
 
 def ebay_services(settings: Settings):
     if not configured(settings):
-        raise HTTPException(status_code=503, detail="eBay Sandbox OAuth is not configured")
-    return TokenCipher(settings.ebay_token_encryption_key), EbayOAuthClient(settings.ebay_client_id, settings.ebay_client_secret)
+        raise HTTPException(status_code=503, detail=f"eBay {settings.ebay_env.title()} OAuth is not configured")
+    return TokenCipher(settings.ebay_token_encryption_key), EbayOAuthClient(settings.ebay_client_id, settings.ebay_client_secret, environment=settings.ebay_env)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -129,37 +131,37 @@ def login(request: Request, username: str = Form(), password: str = Form(), sess
 def ebay_start(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     settings = request.app.state.settings
     if not configured(settings):
-        raise HTTPException(status_code=503, detail="eBay Sandbox OAuth is not configured")
+        raise HTTPException(status_code=503, detail=f"eBay {settings.ebay_env.title()} OAuth is not configured")
     state_value = new_oauth_state(session)
-    record_event(session, actor_type="user", actor_id=user, action="ebay.oauth.start", resource_type="ebay_connection", resource_id="sandbox", outcome="success", correlation_id=correlation_id(), details={})
+    record_event(session, actor_type="user", actor_id=user, action="ebay.oauth.start", resource_type="ebay_connection", resource_id=settings.ebay_env, outcome="success", correlation_id=correlation_id(), details={})
     try:
-        target = authorization_url(settings.ebay_client_id, settings.ebay_runame, state_value)
+        target = authorization_url(settings.ebay_client_id, settings.ebay_runame, state_value, environment=settings.ebay_env)
     except OAuthError:
-        raise HTTPException(status_code=503, detail="eBay Sandbox OAuth configuration is invalid")
+        raise HTTPException(status_code=503, detail=f"eBay {settings.ebay_env.title()} OAuth configuration is invalid")
     return RedirectResponse(target, status_code=302)
 
 
 @app.get("/auth/ebay/callback")
 async def ebay_callback(request: Request, state: str | None = None, code: str | None = None, error: str | None = None, session: Session = Depends(get_session)):
-    if error or not code or not consume_oauth_state(session, state):
-        record_event(session, actor_type="external", actor_id="ebay", action="ebay.oauth.callback", resource_type="ebay_connection", resource_id="sandbox", outcome="denied", correlation_id=correlation_id(), details={"error": "provider_error" if error else "invalid_callback"})
-        raise HTTPException(status_code=400, detail="invalid or expired OAuth callback")
     settings = request.app.state.settings
+    if error or not code or not consume_oauth_state(session, state):
+        record_event(session, actor_type="external", actor_id="ebay", action="ebay.oauth.callback", resource_type="ebay_connection", resource_id=settings.ebay_env, outcome="denied", correlation_id=correlation_id(), details={"error": "provider_error" if error else "invalid_callback"})
+        raise HTTPException(status_code=400, detail="invalid or expired OAuth callback")
     cipher, oauth = ebay_services(settings)
     try:
         payload = await oauth.exchange_code(code, settings.ebay_runame)
-        store_user_tokens(session, cipher, payload)
+        store_user_tokens(session, cipher, payload, environment=settings.ebay_env)
     except OAuthError:
-        record_event(session, actor_type="external", actor_id="ebay", action="ebay.oauth.callback", resource_type="ebay_connection", resource_id="sandbox", outcome="failed", correlation_id=correlation_id(), details={"error": "token_exchange_failed"})
-        raise HTTPException(status_code=502, detail="eBay Sandbox authorization failed")
-    record_event(session, actor_type="external", actor_id="ebay", action="ebay.oauth.callback", resource_type="ebay_connection", resource_id="sandbox", outcome="success", correlation_id=correlation_id(), details={})
+        record_event(session, actor_type="external", actor_id="ebay", action="ebay.oauth.callback", resource_type="ebay_connection", resource_id=settings.ebay_env, outcome="failed", correlation_id=correlation_id(), details={"error": "token_exchange_failed"})
+        raise HTTPException(status_code=502, detail=f"eBay {settings.ebay_env.title()} authorization failed")
+    record_event(session, actor_type="external", actor_id="ebay", action="ebay.oauth.callback", resource_type="ebay_connection", resource_id=settings.ebay_env, outcome="success", correlation_id=correlation_id(), details={})
     return RedirectResponse("/dashboard", status_code=303)
 
 
 @app.get("/api/ebay/status")
 def ebay_status(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     record = session.get(EbayCredential, 1)
-    return {"environment": "SANDBOX", "configured": configured(app.state.settings), "connected": bool(record), "access_token_expires_at": record.access_token_expires_at if record else None, "last_successful_sync": record.last_successful_sync_at if record else None}
+    return {"environment": app.state.settings.ebay_env.upper(), "configured": configured(app.state.settings), "connected": bool(record), "access_token_expires_at": record.access_token_expires_at if record else None, "last_successful_sync": record.last_successful_sync_at if record else None}
 
 
 @app.get("/api/ebay/listings")
@@ -168,7 +170,7 @@ async def ebay_listings(request: Request, user: str = Depends(require_dashboard_
     cipher, oauth = ebay_services(settings)
     try:
         token = await valid_user_access_token(session, cipher, oauth)
-        payload = await EbaySandboxReadAdapter(token).get_listings()
+        payload = await EbaySandboxReadAdapter(token, environment=settings.ebay_env).get_listings()
         items = normalize_inventory(payload)
         for item in items:
             price = item["price"]
@@ -183,10 +185,10 @@ async def ebay_listings(request: Request, user: str = Depends(require_dashboard_
         credential.last_successful_sync_at = datetime.now(UTC)
         session.commit()
         record_event(session, actor_type="user", actor_id=user, action="ebay.listings.read", resource_type="ebay_listing", resource_id=None, outcome="success", correlation_id=correlation_id(), details={"count": len(items)})
-        return {"environment": "SANDBOX", "count": len(items), "items": [{k: v for k, v in item.items() if k != "raw"} for item in items]}
+        return {"environment": settings.ebay_env.upper(), "count": len(items), "items": [{k: v for k, v in item.items() if k != "raw"} for item in items]}
     except (OAuthError, EbayApiError, InvalidOperation):
         record_event(session, actor_type="user", actor_id=user, action="ebay.listings.read", resource_type="ebay_listing", resource_id=None, outcome="failed", correlation_id=correlation_id(), details={"error": "ebay_api_failure"})
-        raise HTTPException(status_code=502, detail="eBay Sandbox listing retrieval failed")
+        raise HTTPException(status_code=502, detail=f"eBay {settings.ebay_env.title()} listing retrieval failed")
 
 
 @app.get("/api/ebay/seller")
@@ -195,12 +197,12 @@ async def ebay_seller(request: Request, user: str = Depends(require_dashboard_us
     cipher, oauth = ebay_services(settings)
     try:
         token = await valid_user_access_token(session, cipher, oauth)
-        seller = await EbaySandboxReadAdapter(token).get_seller()
+        seller = await EbaySandboxReadAdapter(token, environment=settings.ebay_env).get_seller()
         record_event(session, actor_type="user", actor_id=user, action="ebay.seller.read", resource_type="ebay_seller", resource_id=None, outcome="success", correlation_id=correlation_id(), details={})
-        return {"environment": "SANDBOX", "seller": seller}
+        return {"environment": settings.ebay_env.upper(), "seller": seller}
     except (OAuthError, EbayApiError):
         record_event(session, actor_type="user", actor_id=user, action="ebay.seller.read", resource_type="ebay_seller", resource_id=None, outcome="failed", correlation_id=correlation_id(), details={"error": "ebay_api_failure"})
-        raise HTTPException(status_code=502, detail="eBay Sandbox seller retrieval failed")
+        raise HTTPException(status_code=502, detail=f"eBay {settings.ebay_env.title()} seller retrieval failed")
 
 
 @app.get("/api/ebay/market-search")
@@ -209,13 +211,13 @@ async def ebay_market_search(request: Request, q: str = Query(min_length=1, max_
     _, oauth = ebay_services(settings)
     try:
         token_payload = await oauth.application_token()
-        payload = await EbaySandboxReadAdapter(token_payload["access_token"]).search_market(q)
+        payload = await EbaySandboxReadAdapter(token_payload["access_token"], environment=settings.ebay_env).search_market(q)
         items = normalize_market(payload)
         record_event(session, actor_type="user", actor_id=user, action="ebay.market_search.read", resource_type="market_observation", resource_id=None, outcome="success", correlation_id=correlation_id(), details={"query": q, "count": len(items)})
-        return {"environment": "SANDBOX", "count": len(items), "items": items}
+        return {"environment": settings.ebay_env.upper(), "count": len(items), "items": items}
     except (OAuthError, EbayApiError, KeyError):
         record_event(session, actor_type="user", actor_id=user, action="ebay.market_search.read", resource_type="market_observation", resource_id=None, outcome="failed", correlation_id=correlation_id(), details={"error": "ebay_api_failure"})
-        raise HTTPException(status_code=502, detail="eBay Sandbox market search failed")
+        raise HTTPException(status_code=502, detail=f"eBay {settings.ebay_env.title()} market search failed")
 
 
 @app.post("/approvals", response_model=ApprovalRead, status_code=status.HTTP_201_CREATED)

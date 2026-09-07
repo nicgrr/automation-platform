@@ -13,12 +13,19 @@ class EbayApiError(Exception):
 
 
 class EbaySandboxReadAdapter:
-    """Read-only eBay Sandbox client. No mutation methods exist."""
+    """Read-only eBay client. No mutation methods exist -- this class cannot
+    create, edit, or publish a listing regardless of which environment it
+    points at. Named for its original sandbox-only scope; kept read-only
+    intentionally as production support was added, since the actual write
+    path (listing_pipeline/publish.py) is a separate, still-unimplemented
+    piece with its own required Approval gate."""
 
     base_url = "https://api.sandbox.ebay.com"
+    _BASE_URLS = {"sandbox": "https://api.sandbox.ebay.com", "production": "https://api.ebay.com"}
 
-    def __init__(self, access_token: str | None = None, client: httpx.AsyncClient | None = None):
+    def __init__(self, access_token: str | None = None, client: httpx.AsyncClient | None = None, *, environment: str = "sandbox"):
         self._access_token = access_token
+        self.base_url = self._BASE_URLS[environment]
         self.client = client or httpx.AsyncClient(timeout=15.0)
 
     def _headers(self) -> dict[str, str]:
