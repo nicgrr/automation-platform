@@ -185,6 +185,33 @@ production data before deploy; 7 tests cover the ageing/dead-stock/
 best-channel/open-pipeline-filter logic specifically since those are
 the parts most likely to silently miscount.
 
+### Module 19 — AI photo recognition for collectibles (done, 2026-09-07)
+Implemented by `scripts/migrate_add_collectibles_capture.py`, run against
+production data (0 rows, brand new table -- no backfill needed):
+```
+captured_collectibles   id, image_path, brand, series, character, variant,
+                        is_secret, blind_box_series, ai_raw_response (JSON),
+                        status (PENDING_REVIEW|REVIEWED|REJECTED, reused from
+                        the existing CardCaptureStatus enum), captured_at,
+                        reviewed_at, catalog_item_id FK (nullable)
+```
+Mirrors `capture.py`'s existing Pokémon-card pipeline exactly: `POST
+/collectibles/capture` saves the photo, calls `extract_collectible_details`
+(Claude vision, same `messages.parse`/Pydantic-`output_format` pattern as
+`extract_card_details`), and creates one `PENDING_REVIEW` row per figure
+detected -- or one blank row with the AI error/note recorded if extraction
+fails or finds nothing, so a photo is never silently dropped. Nothing writes
+to `catalog_items`/`collectible_products` until a human confirms it on
+`GET/POST /collectibles/review/{id}`; rejecting just marks the row
+`REJECTED` and creates nothing. 13 new tests (`tests/test_collectibles_capture.py`),
+all mocking `automation_control.collectibles.extract_collectible_details` --
+no real Anthropic API calls in the test suite. Full suite (593) green; manual
+backup taken before migration
+(`~/backups/automation-pre-collectibles-capture-20260907-115925.db`); live
+service restarted and every new route smoke-tested (401, correctly
+auth-gated); production DB confirmed still at 0 rows in the new table after
+deploy (no test data leaked in this time).
+
 ## Migration strategy
 
 1. **Never `DROP` or `RENAME` an existing table or column in the same change that

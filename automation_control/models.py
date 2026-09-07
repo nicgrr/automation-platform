@@ -568,6 +568,32 @@ class CollectibleProduct(Base):
     catalog_item: Mapped[CatalogItem] = relationship()
 
 
+class CapturedCollectible(Base):
+    """A photo-captured collectible (Sonny Angel/Smiski/blind box) awaiting
+    human confirmation before it becomes a real CatalogItem +
+    CollectibleProduct -- Module 19. Mirrors CapturedCard's PENDING_REVIEW
+    pattern exactly: AI extraction (collectible_recognition.py) never
+    writes to the catalogue directly, only here, and confirming is what
+    actually creates the catalogue rows. Reuses CardCaptureStatus rather
+    than a duplicate enum -- the three states mean the same thing."""
+
+    __tablename__ = "captured_collectibles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    image_path: Mapped[str] = mapped_column(String(512))
+    brand: Mapped[str | None] = mapped_column(String(128))
+    series: Mapped[str | None] = mapped_column(String(128))
+    character: Mapped[str | None] = mapped_column(String(128))
+    variant: Mapped[str | None] = mapped_column(String(128))
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    blind_box_series: Mapped[str | None] = mapped_column(String(128))
+    ai_raw_response: Mapped[dict | None] = mapped_column(JSON)
+    status: Mapped[CardCaptureStatus] = mapped_column(Enum(CardCaptureStatus), default=CardCaptureStatus.PENDING_REVIEW, index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"))
+
+
 class StorageLocation(Base):
     """Where a physical item actually sits -- Binder A, Bulk Box 1, Display
     Cabinet. Its own table rather than a free-text column so it can be

@@ -3,6 +3,33 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 19: AI photo recognition for collectibles
+
+- `POST /collectibles/capture`: photograph a Sonny Angel/Smiski/blind-box
+  figure, get an AI-suggested brand/series/character/variant back via a new
+  `extract_collectible_details()` (Claude vision, mirrors the existing
+  Pokémon-card `extract_card_details()` exactly -- same model, same
+  `messages.parse`/Pydantic-`output_format` pattern). Lands in a new
+  `captured_collectibles` staging table with `status=PENDING_REVIEW`; a
+  failed or empty extraction still creates one blank row (with the error/note
+  recorded) rather than silently dropping the photo, matching the card
+  pipeline's own rule.
+- `GET /collectibles/review` (queue) and `GET/POST /collectibles/review/{id}`
+  (confirm/reject): nothing reaches the catalogue until a human confirms it
+  here -- confirming creates a real `CatalogItem` + `CollectibleProduct`;
+  rejecting just marks the row `REJECTED`. This is the one route in the whole
+  module that writes to the catalogue, and it never runs unattended.
+- Real cost implication, called out before starting per the user's explicit
+  go-ahead: each capture is one Claude Opus vision call, same as the existing
+  card-capture flow.
+- `scripts/migrate_add_collectibles_capture.py` (new table only, no backfill)
+  run against production after a manual backup
+  (`~/backups/automation-pre-collectibles-capture-20260907-115925.db`);
+  verified 0 rows before and after. 13 new tests, all mocking
+  `extract_collectible_details` -- no real API calls in the suite. Full suite
+  (593) green; live service restarted; every new route smoke-tested (401,
+  correctly auth-gated, no crashes); production DB confirmed clean.
+
 ## 2026-09-07 — Module 18: installable to the home screen (PWA basics)
 
 - Generated a brand-matching icon (cyan-to-violet gradient, "Ez" mark,

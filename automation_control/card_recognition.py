@@ -123,6 +123,59 @@ def extract_card_details(front_path: Path, back_path: Path | None, api_key: str,
     return response.parsed_output.cards
 
 
+_COLLECTIBLE_PROMPT = (
+    "Identify every distinct collectible figure visible in this photo -- "
+    "Sonny Angel, Smiski, or similar blind-box vinyl/mini figures. There may "
+    "be just one, or several laid out together. For each, extract: brand "
+    "(e.g. \"Sonny Angel\", \"Smiski\"), series (the theme, e.g. \"Fruits "
+    "Series\"), character (the specific motif, e.g. \"Peach\"), variant "
+    "(colourway or pose if the same character comes in more than one), "
+    "is_secret (true only if this is visibly a rare/chase/secret figure -- "
+    "false by default, never guess true from rarity alone), and "
+    "blind_box_series (the specific numbered box line this came from, if "
+    "identifiable from packaging in the photo). If a field isn't clearly "
+    "identifiable, list its name in that figure's unreadable_fields rather "
+    "than guessing a value for it. If no collectible figure is clearly "
+    "identifiable in the photo, return an empty list."
+)
+
+
+class ExtractedCollectible(BaseModel):
+    brand: str
+    series: str
+    character: str
+    variant: str
+    is_secret: bool
+    blind_box_series: str
+    unreadable_fields: list[str]
+
+
+class ExtractedCollectibles(BaseModel):
+    collectibles: list[ExtractedCollectible]
+
+
+def extract_collectible_details(photo_path: Path, api_key: str) -> list[ExtractedCollectible]:
+    """The Module 19 counterpart to extract_card_details, for non-TCG
+    collectibles (Sonny Angel, Smiski, blind boxes) rather than cards.
+    Same model, same single-image-plus-prompt shape, same contract: never
+    raises for "nothing recognizable in the photo" (an empty list), only
+    for a response that doesn't parse against the expected schema at all.
+    The caller (collectibles.py) is what makes this non-destructive --
+    results land in CapturedCollectible pending human confirmation, never
+    straight into the catalogue.
+    """
+    client = Anthropic(api_key=api_key)
+    response = client.messages.parse(
+        model=MODEL,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": [_image_block(photo_path), {"type": "text", "text": _COLLECTIBLE_PROMPT}]}],
+        output_format=ExtractedCollectibles,
+    )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return a response matching the expected schema for collectibles")
+    return response.parsed_output.collectibles
+
+
 def detect_rotation(image_path: Path, api_key: str) -> int:
     """Ask the AI how many degrees clockwise a single already-saved photo
     needs to be rotated to be upright. Used for retroactively fixing photos
