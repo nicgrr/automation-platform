@@ -3,39 +3,38 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from .adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_inventory, normalize_market
 from .analytics import router as analytics_router
-from .collectibles import router as collectibles_router
-from .business_records import router as business_records_router
-from .buying import router as buying_router
-from .commerce import router as commerce_router
-from .sealed_economics import router as sealed_economics_router
-from .whatnot import router as whatnot_router
 from .audit import record_event
 from .auth import create_session, require_dashboard_user, verify_password
+from .business_records import router as business_records_router
+from .buying import router as buying_router
 from .capture import router as cards_router
+from .collectibles import router as collectibles_router
+from .commerce import router as commerce_router
 from .config import Settings, get_settings
+from .dashboard import router as dashboard_router
 from .database import Base, engine, get_session
 from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_sandbox_client_id, valid_sandbox_runame, valid_user_access_token
 from .foil_review import router as foil_review_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
-from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, InventoryItem, JobRun, ListingBuildStatus, PendingListing, PricingStatus, TcgCard
+from .models import Approval, EbayCredential, EbayListing, JobRun
 from .price_history import router as price_history_router
 from .price_review import router as pricing_router
 from .review_queue import router as review_router
 from .scan_feed import router as scan_feed_router
-from .search import router as search_router
 from .scan_ingest_status import router as scan_ingest_status_router
 from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, JobRead
-from .ui import brand_header, page, pill
+from .sealed_economics import router as sealed_economics_router
+from .search import router as search_router
+from .ui import brand_header, page
+from .whatnot import router as whatnot_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -62,6 +61,7 @@ app.include_router(analytics_router)
 app.include_router(collectibles_router)
 app.include_router(whatnot_router)
 app.include_router(price_history_router)
+app.include_router(dashboard_router)
 
 
 def correlation_id() -> str:
@@ -116,74 +116,6 @@ def login(request: Request, username: str = Form(), password: str = Form(), sess
     return response
 
 
-def _review_queue_size(settings) -> int:
-    """How many crops the scanner set aside. A plain directory count -- the
-    queue is files on disk, not a table."""
-    directory = Path(settings.scan_media_dir) / "needs_review"
-    return len(list(directory.glob("*.jpg"))) if directory.exists() else 0
-
-
-@app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> str:
-    events = session.scalars(select(AuditEvent).order_by(desc(AuditEvent.occurred_at)).limit(10)).all()
-    event_html = "".join(f"<li>{escape(str(e.occurred_at))} — {escape(e.action)} — {escape(e.outcome)}</li>" for e in events) or "<li>No events</li>"
-    pending_review_count = len(session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW)).all())
-    pending_price_count = len(session.scalars(select(CapturedCard).where(CapturedCard.pricing_status == PricingStatus.PENDING_PRICE_REVIEW)).all())
-    pending_listing_count = len(session.scalars(select(PendingListing).where(PendingListing.status == ListingBuildStatus.DRAFT)).all())
-    scanned_items = session.scalars(select(InventoryItem)).all()
-    scanned_holdings = len(scanned_items)
-    scanned_copies = sum(i.quantity for i in scanned_items)
-    review_count = _review_queue_size(request.app.state.settings)
-    catalog_by_game = session.execute(
-        select(TcgCard.game, func.count()).group_by(TcgCard.game)
-    ).all()
-    catalog_summary = ", ".join(f"{count:,} {game}" for game, count in catalog_by_game) or "none yet"
-
-    # Grouped by which pipeline the number belongs to -- "pending review"
-    # (single capture) and "awaiting review" (bulk scan) sat side by side as
-    # one flat, same-looking grid before, which read as one confusing number
-    # split in two rather than two different queues.
-    stat_grid = (
-        "<div class='stat-group'>"
-        "<h3 class='group-label'>Bulk scan pipeline</h3>"
-        "<div class='stat-grid'>"
-        f"<div class='stat-card'><div class='label'>Scanned inventory</div><div class='value'>{scanned_holdings} <span class='value-sub'>({scanned_copies} copies)</span></div></div>"
-        f"<div class='stat-card'><div class='label'>Awaiting review</div><div class='value'>{review_count}</div></div>"
-        "</div></div>"
-        "<div class='stat-group'>"
-        "<h3 class='group-label'>Single capture &amp; listings</h3>"
-        "<div class='stat-grid'>"
-        f"<div class='stat-card'><div class='label'>Pending review</div><div class='value'>{pending_review_count}</div></div>"
-        f"<div class='stat-card'><div class='label'>Pending price approval</div><div class='value'>{pending_price_count}</div></div>"
-        f"<div class='stat-card'><div class='label'>Listings pending review</div><div class='value'>{pending_listing_count}</div></div>"
-        "</div></div>"
-    )
-
-    body = (
-        f"<div class='brand-row'>{brand_header('Private Control Plane', show_back=False)}{pill('Platform OK', 'ok')}</div>"
-        + "<p class='subtitle'>Trading card listing operations.</p>"
-        + stat_grid
-        + f"<div class='panel'><h2>Card capture</h2><p><a class='btn' href='/cards/capture'>Capture new card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a> &nbsp; <a href='/cards/review'>Review queue ({pending_review_count})</a> &nbsp; <a href='/cards/pricing'>Price review ({pending_price_count})</a> &nbsp; <a href='/listings/review'>Listing review ({pending_listing_count})</a></p></div>"
-        + f"<div class='panel'><h2>Bulk scan inventory</h2><p><a class='btn' href='/inventory'>Browse inventory ({scanned_holdings} distinct, {scanned_copies} copies)</a> &nbsp; <a href='/feed'>Scan feed</a> &nbsp; <a href='/scan-ingest'>Status &amp; logs</a> &nbsp; <a href='/review'>Review queue ({review_count})</a> &nbsp; <a href='/foil-review'>Foil review</a></p></div>"
-        + f"<div class='panel'><h2>Catalogue</h2><p><a class='btn' href='/search'>Search catalogue</a> &nbsp; <span class='subtitle' style='margin:0'>{escape(catalog_summary)}</span></p></div>"
-        + "<div class='panel'><h2>Business</h2><p>"
-          "<a class='btn' href='/analytics'>Analytics</a> &nbsp; "
-          "<a href='/buying-calculator'>Buying calculator</a> &nbsp; "
-          "<a href='/purchase-lots'>Purchase lots</a> &nbsp; "
-          "<a href='/potential-stock'>Potential stock</a> &nbsp; "
-          "<a href='/sales'>Sales</a> &nbsp; "
-          "<a href='/customers'>Customers</a> &nbsp; "
-          "<a href='/suppliers'>Suppliers</a> &nbsp; "
-          "<a href='/marketplaces'>Marketplaces</a> &nbsp; "
-          "<a href='/goals'>Goals</a> &nbsp; "
-          "<a href='/release-calendar'>Release calendar</a> &nbsp; "
-          "<a href='/sealed-products'>Sealed products</a> &nbsp; "
-          "<a href='/collectibles'>Collectibles</a> &nbsp; "
-          "<a href='/whatnot'>Whatnot shows</a>"
-          "</p></div>"
-        + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
-    )
-    return page("EzBay Dashboard", body)
 
 
 @app.get("/auth/ebay/start")

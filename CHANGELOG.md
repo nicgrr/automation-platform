@@ -3,6 +3,30 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Dashboard redesign: light theme, real charts
+
+- Rebuilt `/dashboard` from scratch per an explicit visual reference (a
+  Salesforce executive dashboard) after feedback that the plain stat-grid
+  version looked "unorganised and messy": organized widget cards, a top
+  nav with search, and real hand-drawn inline SVG charts (donut, gauge,
+  horizontal bar) instead of plain numbers -- no charting library, matching
+  this project's existing plain-string-HTML convention. New `charts.py`
+  module holds the reusable chart-drawing functions (7 tests).
+- **Deliberately scoped to this one page**: every other page in the app
+  keeps its existing dark "trading desk" theme; only the dashboard's
+  palette changed, by explicit user choice, not a global theme switch.
+  The new `dashboard.py` module has its own self-contained HTML shell
+  rather than reusing `ui.py`'s shared dark `page()`.
+- Preserved every navigation link the old dashboard had (card-capture
+  pipeline, every business module page) in a "quick links" section below
+  the new widget grid, verified by a test that checks all of them render.
+- No schema changes. `_review_queue_size` and the `/dashboard` route moved
+  out of `api.py` into the new `dashboard.py`; several now-unused imports
+  cleaned up from `api.py` in the process.
+- 6 new tests for the dashboard itself; full suite (569) green; live
+  service restarted and both `/dashboard` (401, correctly gated) and
+  `/login` (200) confirmed responding.
+
 ## 2026-09-07 — Module 5: price history page
 
 - `/prices/{catalog_item_id}`: the pricing engine (`card_prices`,
