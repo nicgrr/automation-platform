@@ -4,7 +4,14 @@ from PIL import Image, ImageOps
 
 # Small margin added around an AI-detected bounding box so a slightly tight
 # crop doesn't clip the card's edge.
-CROP_PADDING = 0.02
+# Padding is a FRACTION OF THE BOX, not a fixed slice of the image.
+# As an absolute 0.02 it was tuned for cards, which fill a good part of
+# the frame -- on a card 0.3 wide it adds a sane 13%. On a Sonny Angel
+# 0.054 wide in a shelf photo the same constant adds 74%, which pulled
+# four neighbouring figures into every crop and made them useless for
+# identifying anything.
+CROP_PADDING_FRACTION = 0.08
+CROP_PADDING_MIN = 0.004
 
 
 def auto_orient(path: Path) -> None:
@@ -46,10 +53,12 @@ def crop_card(source_path: Path, dest_path: Path, bounding_box: list[float], rot
     if not (0 <= x_min < x_max <= 1 and 0 <= y_min < y_max <= 1):
         raise ValueError(f"bounding box out of range or inverted: {bounding_box}")
 
-    x_min = max(0.0, x_min - CROP_PADDING)
-    y_min = max(0.0, y_min - CROP_PADDING)
-    x_max = min(1.0, x_max + CROP_PADDING)
-    y_max = min(1.0, y_max + CROP_PADDING)
+    pad_x = max(CROP_PADDING_MIN, (x_max - x_min) * CROP_PADDING_FRACTION)
+    pad_y = max(CROP_PADDING_MIN, (y_max - y_min) * CROP_PADDING_FRACTION)
+    x_min = max(0.0, x_min - pad_x)
+    y_min = max(0.0, y_min - pad_y)
+    x_max = min(1.0, x_max + pad_x)
+    y_max = min(1.0, y_max + pad_y)
 
     with Image.open(source_path) as img:
         width, height = img.size

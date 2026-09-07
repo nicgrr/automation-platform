@@ -42,9 +42,10 @@ def test_crop_card_extracts_bounding_box_region(tmp_path):
 
     assert dest.exists()
     with Image.open(dest) as cropped:
-        # box is [0.1,0.1,0.4,0.9], padded by CROP_PADDING (0.02) on each
-        # side: x in [0.08, 0.42] * 1000 = 340 wide, y in [0.08, 0.92] * 500 = 420 tall
-        assert cropped.size == (340, 420)
+        # box is [0.1,0.1,0.4,0.9]; padding is 8% OF THE BOX per side, so
+        # x grows by 0.3*0.08=0.024 -> [0.076,0.424]*1000 = 348 wide, and
+        # y by 0.8*0.08=0.064 -> [0.036,0.964]*500 = 464 tall
+        assert cropped.size == (348, 464)
 
 
 def test_crop_card_rotates_when_requested(tmp_path):
@@ -55,9 +56,9 @@ def test_crop_card_rotates_when_requested(tmp_path):
     crop_card(source, dest, bounding_box=[0.0, 0.0, 0.2, 0.4], rotation_degrees=90)
 
     with Image.open(dest) as cropped:
-        # unrotated crop (padding clamped at 0 on the low end) is 220x210;
-        # a 90-degree rotation swaps that to 210x220
-        assert cropped.size == (210, 220)
+        # padding clamps at 0 on the low end: x -> [0,0.216]*1000 = 216,
+        # y -> [0,0.432]*500 = 216. Square, so the rotation is a no-op here.
+        assert cropped.size == (216, 216)
 
 
 def test_rotate_in_place_rotates_and_overwrites(tmp_path):
@@ -94,3 +95,25 @@ def test_crop_card_rejects_malformed_bounding_box(tmp_path, bbox):
     with pytest.raises(ValueError):
         crop_card(source, dest, bounding_box=bbox)
     assert not dest.exists()
+
+
+def test_padding_scales_with_the_box_instead_of_the_image(tmp_path):
+    """The bug this guards: an absolute 0.02 padding is a sane 13% on a
+    card that fills a third of the frame, and a 74% blow-out on a Sonny
+    Angel that's 0.054 wide in a shelf photo -- which pulled four
+    neighbouring figures into every crop and made them useless.
+    """
+    source = tmp_path / "shelf.jpg"
+    _make_image(source, size=(2000, 2000))
+
+    small = tmp_path / "small.jpg"
+    crop_card(source, small, bounding_box=[0.400, 0.400, 0.454, 0.488])
+    with Image.open(small) as cropped:
+        # 0.054 wide -> 0.0043 padding each side, so under 20% growth
+        assert cropped.size[0] < 0.054 * 2000 * 1.2
+
+    large = tmp_path / "large.jpg"
+    crop_card(source, large, bounding_box=[0.1, 0.1, 0.4, 0.9])
+    with Image.open(large) as cropped:
+        # a card-sized box still gets a real margin, not a hairline
+        assert cropped.size[0] > 0.3 * 2000 * 1.1

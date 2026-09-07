@@ -668,3 +668,29 @@ def test_a_page_with_nothing_usable_says_so(client, session, monkeypatch):
                        data={"url": "https://example.com/p/1"}, follow_redirects=True)
     # the apostrophe is HTML-escaped in the rendered note, as it should be
     assert "look like a listing" in resp.text
+
+
+# --- series name normalisation ----------------------------------------------
+
+def test_series_names_are_normalised_to_one_form():
+    """Names have to match exactly to group or price together, and the
+    model returns whatever the packaging says."""
+    from scripts.identify_pending_collectibles import normalise_series
+
+    assert normalise_series("Summer Vacation") == "Summer Vacation Series"
+    assert normalise_series("Summer Vacation Series") == "Summer Vacation Series"
+    assert normalise_series("CRYBABY") == "Crybaby"
+    assert normalise_series("  fruit series  ") == "Fruit Series"
+
+
+def test_an_unknown_series_is_kept_as_written():
+    from scripts.identify_pending_collectibles import normalise_series
+
+    assert normalise_series("Sleeping Angel Series") == "Sleeping Angel Series"
+
+
+def test_a_series_that_says_nothing_becomes_none():
+    from scripts.identify_pending_collectibles import normalise_series
+
+    for value in ["", "   ", None, "Unknown", "n/a", "-"]:
+        assert normalise_series(value) is None, value

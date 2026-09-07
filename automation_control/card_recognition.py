@@ -161,7 +161,8 @@ class ExtractedCollectibles(BaseModel):
     collectibles: list[ExtractedCollectible]
 
 
-def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int = 16384) -> list[ExtractedCollectible]:
+def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int = 16384,
+                                context: str = "") -> list[ExtractedCollectible]:
     """The Module 19 counterpart to extract_card_details, for non-TCG
     collectibles (Sonny Angel, Smiski, blind boxes) rather than cards.
     Same model, same single-image-plus-prompt shape, same contract: never
@@ -180,7 +181,10 @@ def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int 
     response = client.messages.parse(
         model=MODEL,
         max_tokens=max_tokens,
-        messages=[{"role": "user", "content": [_image_block(photo_path), {"type": "text", "text": _COLLECTIBLE_PROMPT}]}],
+        messages=[{"role": "user", "content": [
+            _image_block(photo_path),
+            {"type": "text", "text": _COLLECTIBLE_PROMPT + (f"\n\n{context}" if context else "")},
+        ]}],
         output_format=ExtractedCollectibles,
     )
     if response.parsed_output is None:
