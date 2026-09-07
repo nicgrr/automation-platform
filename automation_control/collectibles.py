@@ -1,15 +1,15 @@
 """Sonny Angel, Smiski, and other blind-box collectibles -- Module 12.
 
-Catalogue only, same scope boundary as sealed_economics.py: InventoryItem's
-`card_id` is a NOT NULL foreign key into catalog_cards specifically (the
-TCG-card table), not the generic catalog_items table -- a leftover from
-before the generic catalogue existed. Actually tracking "I own 3 of this
-Sonny Angel" needs that column relaxed, which means rebuilding
-inventory_items (SQLite can't just drop a NOT NULL constraint via ALTER
-TABLE) while scan-ingest.service -- which writes to that table continuously
--- is stopped. That's a real, separate, reviewed migration, not something
-to shortcut here with a fake catalog_cards row. Tracked as a known
-limitation until then.
+Ownership tracking (`scripts/migrate_relax_inventory_card_id.py`): a real
+InventoryItem row (card_id=None, catalog_item_id set) is created whenever a
+collectible is added here with a nonzero quantity -- either through the
+manual form or through confirming an AI photo capture. This only covers
+quantities entered going forward; catalogue entries created before this
+migration have no retroactive inventory row (their owned quantity shows as
+0, not "unknown"), since there's no reliable source to backfill from. Each
+add creates its own new row rather than incrementing an existing one for
+the same figure -- restocking the same item as a second, separate purchase
+is a real future need but out of scope here.
 """
 
 import mimetypes
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .audit import record_event
@@ -30,12 +30,19 @@ from .card_recognition import RecognitionError, extract_collectible_details
 from .config import get_settings
 from .database import get_session
 from .image_processing import auto_orient
-from .models import CapturedCollectible, CardCaptureStatus, CatalogItem, CatalogItemType, CollectibleProduct
+from .models import CapturedCollectible, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["collectibles"])
 
 CAPTURE_FIELDS = ["brand", "series", "character", "variant", "blind_box_series"]
+
+
+def _int(value: str, default: int = 0) -> int:
+    try:
+        return int(value.strip()) if value.strip() else default
+    except ValueError:
+        return default
 
 
 def _dec(value: str, default: str = "0") -> Decimal:
@@ -51,6 +58,10 @@ def collectibles_page(user: str = Depends(require_dashboard_user), session: Sess
         select(CatalogItem, CollectibleProduct).join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id)
         .order_by(CatalogItem.name)
     ).all()
+    owned_by_item = dict(session.execute(
+        select(InventoryItem.catalog_item_id, func.sum(InventoryItem.quantity))
+        .where(InventoryItem.catalog_item_id.isnot(None)).group_by(InventoryItem.catalog_item_id)
+    ).all())
     table_rows = "".join(
         "<tr>"
         f"<td>{escape(item.name)}</td>"
@@ -58,13 +69,14 @@ def collectibles_page(user: str = Depends(require_dashboard_user), session: Sess
         f"<td class='muted'>{escape(cp.series or '—')}</td>"
         f"<td class='muted'>{escape(cp.variant or '—')}</td>"
         f"<td>{pill('secret', 'warn') if cp.is_secret else '—'}</td>"
+        f"<td>{owned_by_item.get(item.id, 0)}</td>"
         f"<td>{f'${cp.retail_price:,.2f}' if cp.retail_price else '—'}</td>"
         "</tr>"
         for item, cp in rows
-    ) or "<tr><td colspan=6>No collectibles catalogued yet.</td></tr>"
+    ) or "<tr><td colspan=7>No collectibles catalogued yet.</td></tr>"
     table = (
         "<div class='panel'><div class='table-wrap'><table>"
-        "<thead><tr><th>Name</th><th>Brand</th><th>Series</th><th>Variant</th><th></th><th>Retail</th></tr></thead>"
+        "<thead><tr><th>Name</th><th>Brand</th><th>Series</th><th>Variant</th><th></th><th>Owned</th><th>Retail</th></tr></thead>"
         f"<tbody>{table_rows}</tbody></table></div></div>"
     )
 
@@ -79,13 +91,14 @@ def collectibles_page(user: str = Depends(require_dashboard_user), session: Sess
         "<label>Blind box series<input name='blind_box_series'></label>"
         "<label><input name='is_secret' type='checkbox' value='true' style='width:auto'> Secret / chase figure</label>"
         "<label>Retail price<input name='retail_price' type='number' step='0.01'></label>"
+        "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='0'></label>"
         "<button type='submit'>Add</button></form></div>"
     )
     pending_count = len(session.scalars(select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)).all())
     body = (
         brand_header("Collectibles")
-        + "<p class='subtitle'>Module 12 -- Sonny Angel, Smiski, blind boxes. Catalogue only for now; "
-          "see this module's own docstring for why inventory tracking isn't wired up yet.</p>"
+        + "<p class='subtitle'>Module 12 -- Sonny Angel, Smiski, blind boxes, with real ownership tracking "
+          "(quantity owned, not just catalogued).</p>"
         + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
           f"<a href='/collectibles/review'>Review queue ({pending_count})</a></p></div>"
         + table + form + _STYLE
@@ -97,6 +110,7 @@ def collectibles_page(user: str = Depends(require_dashboard_user), session: Sess
 def create_collectible(
     name: str = Form(...), brand: str = Form(""), series: str = Form(""), character: str = Form(""),
     variant: str = Form(""), blind_box_series: str = Form(""), is_secret: str = Form(""), retail_price: str = Form(""),
+    quantity: str = Form("0"),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     item_id = str(uuid.uuid4())
@@ -106,6 +120,9 @@ def create_collectible(
         variant=variant or None, blind_box_series=blind_box_series or None, is_secret=bool(is_secret),
         retail_price=_dec(retail_price) if retail_price.strip() else None,
     ))
+    qty = _int(quantity)
+    if qty > 0:
+        session.add(InventoryItem(catalog_item_id=item_id, card_id=None, variant=CardVariant.NORMAL, condition="New", quantity=qty))
     session.commit()
     return RedirectResponse("/collectibles", status_code=303)
 
@@ -246,6 +263,7 @@ def collectible_review_form(capture_id: str, user: str = Depends(require_dashboa
         + field("variant", "Variant", capture.variant)
         + field("blind_box_series", "Blind box series", capture.blind_box_series)
         + f"<label><input name='is_secret' type='checkbox' value='true' style='width:auto'{' checked' if capture.is_secret else ''}> Secret / chase figure</label>"
+        + "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='1'></label>"
         + "<div style='display:flex;gap:12px;margin-top:6px'>"
         + "<button name='action' value='confirm'>Confirm &amp; add to catalogue</button>"
         + "<button name='action' value='reject' class='ghost'>Discard</button>"
@@ -261,6 +279,7 @@ def collectible_review_submit(
     action: str = Form("confirm"),
     brand: str = Form(""), series: str = Form(""), character: str = Form(""),
     variant: str = Form(""), blind_box_series: str = Form(""), is_secret: str = Form(""),
+    quantity: str = Form("1"),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     capture = session.get(CapturedCollectible, capture_id)
@@ -281,6 +300,9 @@ def collectible_review_submit(
         catalog_item_id=item_id, brand=brand or None, series=series or None, character=character or None,
         variant=variant or None, blind_box_series=blind_box_series or None, is_secret=bool(is_secret),
     ))
+    qty = _int(quantity, default=1)
+    if qty > 0:
+        session.add(InventoryItem(catalog_item_id=item_id, card_id=None, variant=CardVariant.NORMAL, condition="New", quantity=qty))
     capture.status = CardCaptureStatus.REVIEWED
     capture.reviewed_at = datetime.now(UTC)
     capture.catalog_item_id = item_id

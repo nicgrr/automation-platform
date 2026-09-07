@@ -3,6 +3,31 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Collectible ownership tracking (closes the Module 12 known limitation)
+
+- `scripts/migrate_relax_inventory_card_id.py`: `inventory_items.card_id` is
+  now nullable. Run for real against production with `scan-ingest.service`
+  and `scanbd.service` stopped (confirmed inactive first), after a manual
+  backup (`~/backups/automation-pre-inventory-card-id-relax-20260907-131503.db`).
+  Rehearsed twice against a throwaway copy of the live database before
+  touching it for real -- the first rehearsal caught a real bug (renaming a
+  table doesn't rename its own named indexes in SQLite, so the rebuild's
+  fresh `CREATE INDEX` calls collided with the old ones) that would
+  otherwise have hit production. Verified 995 rows / sum(quantity)=1372
+  identical before and after, `PRAGMA foreign_key_check` clean; both
+  services restarted clean afterwards.
+- `/collectibles`'s manual "Add a collectible" form and the Module 19
+  AI-capture review/confirm page both now take a quantity; a nonzero one
+  creates a real `InventoryItem` (`card_id=None`, `catalog_item_id` set) --
+  Sonny Angel/Smiski/blind boxes can finally be tracked as "I own N of
+  this," not just catalogued. The collectibles list now shows an Owned
+  column. Not retroactive: catalogue entries added before today show 0
+  owned rather than a guessed number.
+- 5 new tests (2 for the migration script itself using a hand-built legacy
+  schema, 3 for the ownership-creation behavior); full suite (598) green;
+  `ezbay.service` restarted and `/collectibles` smoke-tested (401, correctly
+  gated).
+
 ## 2026-09-07 — Module 19: AI photo recognition for collectibles
 
 - `POST /collectibles/capture`: photograph a Sonny Angel/Smiski/blind-box

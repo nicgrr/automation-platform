@@ -10,7 +10,7 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.card_recognition import ExtractedCollectible
 from automation_control.database import Base, get_session
-from automation_control.models import CapturedCollectible, CardCaptureStatus, CatalogItem, CollectibleProduct
+from automation_control.models import CapturedCollectible, CardCaptureStatus, CatalogItem, CollectibleProduct, InventoryItem
 
 
 @pytest.fixture
@@ -150,6 +150,28 @@ def test_review_confirm_creates_catalog_item_and_collectible_product(client, ses
     assert item.name == "Peach"
     product = session.get(CollectibleProduct, capture.catalog_item_id)
     assert product.brand == "Sonny Angel"
+
+    inventory_item = session.query(InventoryItem).filter_by(catalog_item_id=capture.catalog_item_id).one()
+    assert inventory_item.card_id is None
+    assert inventory_item.quantity == 1  # default confirm quantity
+
+
+def test_review_confirm_with_custom_quantity(client, session):
+    capture = CapturedCollectible(id="abc123", image_path="f", character="Peach", status=CardCaptureStatus.PENDING_REVIEW)
+    session.add(capture)
+    session.commit()
+
+    resp = client.post(
+        "/collectibles/review/abc123",
+        data={"action": "confirm", "character": "Peach", "quantity": "4"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    session.expire_all()
+    capture = session.get(CapturedCollectible, "abc123")
+    inventory_item = session.query(InventoryItem).filter_by(catalog_item_id=capture.catalog_item_id).one()
+    assert inventory_item.quantity == 4
 
 
 def test_review_reject_marks_rejected_without_creating_catalog_item(client, session):

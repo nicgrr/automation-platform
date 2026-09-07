@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
+from automation_control.models import InventoryItem
 
 
 @pytest.fixture
@@ -50,3 +51,31 @@ def test_collectibles_page_requires_login():
     client = TestClient(app)
     response = client.get("/collectibles", follow_redirects=False)
     assert response.status_code in (302, 303, 401)
+
+
+def test_adding_with_a_quantity_creates_an_inventory_item(client, session):
+    client.post(
+        "/collectibles",
+        data={"name": "Smiski Bathroom Series", "brand": "Smiski", "series": "", "character": "", "variant": "",
+              "blind_box_series": "", "is_secret": "", "retail_price": "", "quantity": "3"},
+        follow_redirects=False,
+    )
+    item = session.query(InventoryItem).one()
+    assert item.card_id is None
+    assert item.quantity == 3
+    assert item.catalog_item_id is not None
+
+    listing = client.get("/collectibles")
+    assert ">3<" in listing.text
+
+
+def test_adding_with_no_quantity_creates_no_inventory_item(client, session):
+    client.post(
+        "/collectibles",
+        data={"name": "Smiski Bathroom Series", "brand": "Smiski", "series": "", "character": "", "variant": "",
+              "blind_box_series": "", "is_secret": "", "retail_price": ""},
+        follow_redirects=False,
+    )
+    assert session.query(InventoryItem).count() == 0
+    listing = client.get("/collectibles")
+    assert ">0<" in listing.text

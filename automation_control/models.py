@@ -903,13 +903,22 @@ class InventoryItem(Base):
     original columns breaks. `card_id` stays the source of truth for the
     live scan-ingest pipeline until every reader is moved over to
     `catalog_item_id` in a later, separate change.
+
+    `card_id` was made nullable by scripts/migrate_relax_inventory_card_id.py
+    (a full table rebuild -- SQLite can't ALTER a NOT NULL away) so a
+    non-TCG collectible (Sonny Angel, Smiski -- no catalog_cards row at all)
+    can have real ownership: an InventoryItem with card_id=None and
+    catalog_item_id pointing at its CollectibleProduct. Every existing
+    TCG-facing query joins InventoryItem to CatalogCard on card_id, which
+    naturally still excludes these rows (NULL never matches a join), so no
+    other reader needed to change.
     """
 
     __tablename__ = "inventory_items"
     __table_args__ = (UniqueConstraint("card_id", "variant", "condition", name="uq_inventory_card_variant_condition"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    card_id: Mapped[str] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
+    card_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
     variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant), default=CardVariant.NORMAL, index=True)
     condition: Mapped[str] = mapped_column(String(64), default="Near Mint")
     quantity: Mapped[int] = mapped_column(Integer, default=1)
@@ -926,7 +935,7 @@ class InventoryItem(Base):
     grading_company: Mapped[str | None] = mapped_column(String(64))
     certification_number: Mapped[str | None] = mapped_column(String(64))
 
-    card: Mapped[CatalogCard] = relationship()
+    card: Mapped[CatalogCard | None] = relationship()
     catalog_item: Mapped[CatalogItem | None] = relationship()
     storage_location: Mapped[StorageLocation | None] = relationship()
 

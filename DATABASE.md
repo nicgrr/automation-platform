@@ -146,18 +146,40 @@ actually see it: per variant, current price, 7-day average, 30-day average,
 change %, high, low, last updated, source, plus a hand-drawn inline SVG
 sparkline (no charting library). Linked from `/search` results.
 
-### Module 12 — Sonny Angel / Smiski (done, 2026-09-07)
+### Module 12 — Sonny Angel / Smiski (done, 2026-09-07; ownership added 2026-09-07)
 Uses `collectible_products` (added in the Module 1 migration, previously
 empty). `/collectibles` lists/creates them (brand, series, character,
-variant, secret flag, retail price). **Known limitation, deliberate**:
-`inventory_items.card_id` is a NOT NULL foreign key into `catalog_cards`
-specifically (a leftover from before the generic catalogue existed) --
-actually tracking "I own 3 of this Sonny Angel" needs that column relaxed,
-which means rebuilding `inventory_items` while `scan-ingest.service` (which
-writes to it continuously) is stopped. That's a real, separate, reviewed
-migration for a maintenance window, not something to shortcut with a fake
-`catalog_cards` row. Catalogue-only for now, same boundary as Module 11's
-sealed products.
+variant, secret flag, retail price).
+
+Originally catalogue-only, same boundary as Module 11's sealed products,
+because `inventory_items.card_id` was a NOT NULL foreign key into
+`catalog_cards` specifically (a leftover from before the generic catalogue
+existed) -- there was no way to record "I own 3 of this Sonny Angel" at all.
+Closed by `scripts/migrate_relax_inventory_card_id.py` (below): the manual
+"Add a collectible" form and the AI-capture confirm page (Module 19) both
+now take a quantity and create a real `InventoryItem` (`card_id=None`,
+`catalog_item_id` set) when it's nonzero. Not retroactive -- catalogue
+entries added before this migration show 0 owned, not "unknown," since
+there's no reliable source to backfill a real quantity from. Each add is
+its own new row rather than incrementing an existing one for a repeat
+purchase of the same figure -- a real future need, out of scope here.
+
+### `inventory_items.card_id` made nullable (done, 2026-09-07)
+`scripts/migrate_relax_inventory_card_id.py` -- SQLite can't `ALTER` a
+NOT NULL column away, so this rebuilds the table: rename aside, drop its
+named indexes (renaming a table doesn't rename them, and SQLite's own
+DDL isn't reliably transactional through this driver, so a caught mid-way
+failure attempts automatic recovery by renaming the old table back rather
+than trusting a plain rollback), recreate from the current model, copy
+every row across, verify the row count matches exactly, drop the old
+table. Run against production with `scan-ingest.service` and
+`scanbd.service` stopped (that pipeline writes to this table continuously)
+after a manual backup
+(`~/backups/automation-pre-inventory-card-id-relax-20260907-131503.db`).
+Verified before/after: 995 rows, sum(quantity)=1372, unchanged;
+`PRAGMA foreign_key_check` clean. Rehearsed twice against a throwaway copy
+of the real database first -- the first rehearsal is what caught the
+index-collision bug before it ever touched production.
 
 ### Module 7 (continued) — Whatnot show tracking (done, 2026-09-07)
 ```
