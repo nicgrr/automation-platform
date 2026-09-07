@@ -3,6 +3,43 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — NL Vault storefront (Module 24)
+
+The public shop, plus the "Bulk Master" section.
+
+- **Deliberately a separate application** (`storefront/`, own process on
+  :8090) rather than routes on the admin app. The admin app holds
+  inventory control, scan management, eBay credentials and the pricing
+  engine behind one session cookie; the shop is the one part strangers
+  are meant to reach. Two apps means an auth mistake in one cannot expose
+  the other — asserted by a test that every admin path 404s on the shop.
+- Brand: the **Ligature** mark (concept 02), drawn as inline SVG so it
+  stays crisp at any size and inverts by inheriting `currentColor`.
+  Ink/brass/bone palette, deliberately not the dashboard's cyan/violet —
+  that palette reads as a tool, this one has to read as a shop.
+- New tables: `shop_listings`, `shipping_rates`, `shop_orders`,
+  `shop_order_items`, `bulk_lots`. Listing is an explicit act
+  (`scripts/list_for_sale.py`) — nothing is ever put on sale as a side
+  effect of scanning, and inventory is never mutated by listing.
+- **Bulk Master**: the value distribution made the case — 951 of ~980
+  owned cards are worth under $2 each, which cannot ship profitably as
+  singles against $9.95 postage. `scripts/build_bulk_lots.py` groups
+  those into per-set lots priced at a percentage of combined market value
+  with a postage floor, and never sweeps in a card already listed
+  individually. 24 lots covering 1,328 cards. Filters on the page:
+  search, sort, minimum card count, maximum price.
+- Cart is a cookie, not a table — an abandoned cart shouldn't leave rows
+  behind, and there are no accounts. Cart keys are typed (`B:` prefix for
+  a bulk lot) so one cart holds both singles and lots. The cookie is a
+  wish and the database is the truth: anything withdrawn or sold since it
+  was added silently drops out, and a tampered cookie is treated as empty
+  rather than an error.
+- Shipping: AU flat rate with a free-over threshold, plus an
+  international rate, as rows rather than constants so a postage rise
+  isn't a code change.
+- 17 new tests; full suite (715) green. Served over Tailscale at :8444
+  alongside the admin app, both still tailnet-only.
+
 ## 2026-09-07 — eBay prices now surface in inventory valuation
 
 Spotted while answering "does this reflect on the Pokémon cards I have

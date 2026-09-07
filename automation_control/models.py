@@ -992,3 +992,154 @@ class CardPrice(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     card: Mapped[CatalogCard] = relationship()
+
+
+# --- NL Vault storefront (Module 24) ----------------------------------------
+# The public shop is a *separate application* (storefront/) reading this same
+# database -- deliberately not extra routes on the admin app, so an
+# auth misconfiguration there can never expose inventory management,
+# scan control, or eBay credentials to the public internet. These tables
+# are the contract between the two.
+
+
+class ShopListingStatus(str, enum.Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    SOLD_OUT = "sold_out"
+    WITHDRAWN = "withdrawn"
+
+
+class ShopOrderStatus(str, enum.Enum):
+    PENDING_PAYMENT = "pending_payment"
+    PAID = "paid"
+    PACKED = "packed"
+    SHIPPED = "shipped"
+    CANCELLED = "cancelled"
+    REFUNDED = "refunded"
+
+
+class ShippingZone(str, enum.Enum):
+    AU = "au"
+    INTERNATIONAL = "international"
+
+
+class ShopListing(Base):
+    """One thing offered for sale on the storefront.
+
+    Deliberately separate from InventoryItem rather than a flag on it:
+    owning something and offering it publicly at a chosen price are
+    different decisions, and the shop must never implicitly list the whole
+    collection because a scan happened. `price` is set per listing rather
+    than read live from card_prices -- a shopper's price shouldn't move
+    because a market feed twitched mid-session.
+    """
+
+    __tablename__ = "shop_listings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    catalog_item_id: Mapped[str] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    title: Mapped[str] = mapped_column(String(256))
+    description: Mapped[str | None] = mapped_column(Text)
+    condition: Mapped[str | None] = mapped_column(String(64))
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[ShopListingStatus] = mapped_column(Enum(ShopListingStatus), default=ShopListingStatus.DRAFT, index=True)
+    image_url: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class ShippingRate(Base):
+    """Flat shipping per zone, with an optional free-over threshold.
+    Rates as rows rather than constants so postage price rises don't need
+    a code change -- same reasoning as MarketplaceFeeRule."""
+
+    __tablename__ = "shipping_rates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    zone: Mapped[ShippingZone] = mapped_column(Enum(ShippingZone), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    free_over: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+
+class ShopOrder(Base):
+    """A customer order. Payment is handled by Stripe Checkout, so no card
+    data ever reaches this server -- only the session/payment id needed to
+    reconcile. Totals are stored as charged rather than recomputed, so a
+    later price or postage change can't rewrite history."""
+
+    __tablename__ = "shop_orders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    reference: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(256), index=True)
+    ship_to_name: Mapped[str] = mapped_column(String(256))
+    ship_to_address: Mapped[str] = mapped_column(Text)
+    ship_to_country: Mapped[str] = mapped_column(String(64), default="Australia")
+    zone: Mapped[ShippingZone] = mapped_column(Enum(ShippingZone), default=ShippingZone.AU)
+    items_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    shipping_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    grand_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    status: Mapped[ShopOrderStatus] = mapped_column(Enum(ShopOrderStatus), default=ShopOrderStatus.PENDING_PAYMENT, index=True)
+    stripe_session_id: Mapped[str | None] = mapped_column(String(256), index=True)
+    stripe_payment_intent: Mapped[str | None] = mapped_column(String(256))
+    tracking_number: Mapped[str | None] = mapped_column(String(128))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ShopOrderItem(Base):
+    """A line on an order. Title and price are copied rather than
+    referenced, so an order still reads correctly after the listing behind
+    it is edited, sold, or withdrawn."""
+
+    __tablename__ = "shop_order_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id: Mapped[str] = mapped_column(ForeignKey("shop_orders.id"), index=True)
+    listing_id: Mapped[str | None] = mapped_column(ForeignKey("shop_listings.id"), index=True)
+    title: Mapped[str] = mapped_column(String(256))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+
+    order: Mapped[ShopOrder] = relationship()
+
+
+class BulkLot(Base):
+    """A set-based lot of low-value cards -- the "Bulk Master" section.
+
+    Its own table rather than a flavour of ShopListing: a lot has no
+    single catalog_item behind it, and forcing one would mean making
+    ShopListing.catalog_item_id nullable (a SQLite table rebuild) to model
+    something that is genuinely a different product. Most of a scanned
+    collection is commons worth under a dollar or two -- individually
+    unsellable once postage is $9.95, but a viable product by the
+    hundred, sorted by set.
+    """
+
+    __tablename__ = "bulk_lots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    set_id: Mapped[str | None] = mapped_column(ForeignKey("card_sets.id"), index=True)
+    game: Mapped[str] = mapped_column(String(32), default="pokemon", index=True)
+    title: Mapped[str] = mapped_column(String(256))
+    description: Mapped[str | None] = mapped_column(Text)
+    card_count: Mapped[int] = mapped_column(Integer, default=0)
+    market_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[ShopListingStatus] = mapped_column(Enum(ShopListingStatus), default=ShopListingStatus.DRAFT, index=True)
+    image_url: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    card_set: Mapped[CardSet] = relationship()

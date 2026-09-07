@@ -1,0 +1,184 @@
+"""Page shell for the public shop.
+
+Its own shell rather than automation_control.ui's: the admin tool is a
+dense light-grey dashboard, and a shop needs to look like a shop. Same
+plain-string-HTML convention though, and no CDN assets beyond the two
+Google fonts, so the storefront has no build step either.
+"""
+
+from .brand import BRASS, logo_lockup
+
+STYLE = """<style>
+:root{
+  --ink:#14181d; --ink-2:#20262d; --bone:#f7f5f1; --paper:#fff;
+  --brass:#b3852f; --brass-lit:#d9ab53; --teal:#14625f;
+  --rule:#e3ddd3; --muted:#6d6558;
+  --shadow:0 1px 2px rgba(20,24,29,.05), 0 10px 30px rgba(20,24,29,.07);
+  --radius:14px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bone);color:var(--ink);
+  font-family:Archivo,ui-sans-serif,system-ui,-apple-system,sans-serif;
+  line-height:1.55;-webkit-font-smoothing:antialiased;
+}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+
+/* ---- header ---- */
+.topbar{
+  position:sticky;top:0;z-index:20;background:var(--ink);color:var(--bone);
+  display:flex;align-items:center;gap:20px;padding:14px 22px;
+}
+.nl-lockup{display:inline-flex;align-items:center;gap:10px}
+.nl-mark{flex:none}
+.nl-words{display:flex;flex-direction:column;line-height:1}
+.nl-words b{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:19px;letter-spacing:-.01em}
+.nl-words i{font-style:normal;font-size:9.5px;letter-spacing:.34em;opacity:.75;margin-top:2px}
+
+.shop-search{flex:1 1 auto;min-width:0;max-width:420px}
+.shop-search input{
+  width:100%;padding:9px 15px;border-radius:999px;border:1px solid #333c46;
+  background:#1c222a;color:var(--bone);font-size:13.5px;font-family:inherit;
+}
+.shop-search input::placeholder{color:#7f8894}
+.shop-search input:focus{outline:none;border-color:var(--brass)}
+.topnav{display:flex;align-items:center;gap:18px;margin-left:auto;font-size:13.5px;flex:none}
+.topnav a:hover{color:var(--brass-lit)}
+.cart-pill{
+  display:inline-flex;align-items:center;gap:7px;background:var(--brass);color:#1a1206;
+  padding:7px 14px;border-radius:999px;font-weight:700;font-size:13px;
+}
+@media (max-width:720px){ .topnav .hide-sm{display:none} }
+
+/* ---- layout ---- */
+main{max-width:1180px;margin:0 auto;padding:32px 22px 90px}
+.page-head{margin-bottom:26px}
+h1{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:clamp(28px,4.5vw,40px);
+   line-height:1.05;margin:0 0 8px;letter-spacing:-.02em;text-wrap:balance}
+.page-head p{margin:0;color:var(--muted);font-size:15px}
+h2{font-family:Fraunces,Georgia,serif;font-weight:700;font-size:22px;margin:0 0 14px}
+
+/* ---- product grid ---- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:18px}
+.card{
+  background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
+  overflow:hidden;box-shadow:var(--shadow);display:flex;flex-direction:column;
+  transition:transform .12s ease, box-shadow .12s ease;
+}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 10px rgba(20,24,29,.08),0 18px 40px rgba(20,24,29,.10)}
+.card-art{aspect-ratio:5/7;background:#eee9e1;display:grid;place-items:center;overflow:hidden}
+.card-art img{width:100%;height:100%;object-fit:contain}
+.card-art .noart{color:var(--muted);font-size:12px}
+.card-body{padding:12px 13px 14px;display:flex;flex-direction:column;gap:3px;flex:1}
+.card-title{font-weight:600;font-size:14px;line-height:1.3}
+.card-sub{font-size:12px;color:var(--muted)}
+.card-price{font-family:Fraunces,Georgia,serif;font-weight:700;font-size:19px;margin-top:auto;padding-top:8px}
+.tag{
+  display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--teal);background:#e4f0ef;padding:2px 8px;border-radius:999px;
+}
+.tag.low{color:#8a4b12;background:#fbeedd}
+
+/* ---- buttons ---- */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  background:var(--ink);color:var(--bone);border:none;padding:12px 22px;border-radius:10px;
+  font-weight:600;font-size:14.5px;font-family:inherit;cursor:pointer;
+}
+.btn:hover{background:var(--ink-2)}
+.btn.brass{background:var(--brass);color:#1a1206}
+.btn.brass:hover{background:var(--brass-lit)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--rule)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ---- panels / detail ---- */
+.panel{background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
+       padding:22px;box-shadow:var(--shadow)}
+.detail{display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);gap:34px;align-items:start}
+@media (max-width:780px){ .detail{grid-template-columns:1fr} }
+.detail-art{background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
+            padding:18px;box-shadow:var(--shadow)}
+.detail-price{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:34px;margin:6px 0 4px}
+.spec-list{list-style:none;margin:18px 0 0;padding:0;border-top:1px solid var(--rule)}
+.spec-list li{display:flex;justify-content:space-between;gap:16px;padding:9px 0;
+              border-bottom:1px solid var(--rule);font-size:14px}
+.spec-list li span:first-child{color:var(--muted)}
+
+/* ---- cart ---- */
+.line{display:flex;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid var(--rule)}
+.line:last-child{border-bottom:none}
+.line-art{width:52px;aspect-ratio:5/7;background:#eee9e1;border-radius:6px;overflow:hidden;flex:none}
+.line-art img{width:100%;height:100%;object-fit:contain}
+.line-main{flex:1;min-width:0}
+.line-title{font-weight:600;font-size:14px}
+.totals{margin-top:18px;border-top:2px solid var(--ink);padding-top:14px}
+.totals div{display:flex;justify-content:space-between;padding:5px 0;font-size:14.5px}
+.totals .grand{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:22px;padding-top:10px}
+
+.empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty .mark{opacity:.25;margin:0 auto 16px}
+.muted{color:var(--muted);font-size:14px}
+.notice{border-left:3px solid var(--brass);padding:10px 0 10px 15px;margin:16px 0;font-size:14px}
+
+label.field{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted);margin-bottom:14px}
+label.field input,label.field select,label.field textarea{
+  border:1px solid var(--rule);border-radius:9px;padding:11px 13px;font-size:14.5px;
+  font-family:inherit;color:var(--ink);background:var(--paper);
+}
+label.field input:focus,label.field select:focus,label.field textarea:focus{
+  outline:none;border-color:var(--brass);box-shadow:0 0 0 3px rgba(179,133,47,.15)}
+
+.filters{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:22px}
+.filters .field{margin-bottom:0;flex:1 1 150px;min-width:120px}
+.filters .btn{flex:none}
+.bulk-art{background:linear-gradient(160deg,#20262d,#14181d);color:var(--bone)}
+.bulk-art img{object-fit:contain;padding:22px}
+.bulk-count{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:44px;color:var(--brass)}
+.bulk-count.small{font-size:16px;display:grid;place-items:center;height:100%;background:var(--ink);color:var(--brass)}
+.bulk-count.big{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:76px;color:var(--brass)}
+
+footer{border-top:1px solid var(--rule);margin-top:70px;padding:26px 22px;color:var(--muted);font-size:13px}
+footer .inner{max-width:1180px;margin:0 auto;display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between}
+</style>"""
+
+FONTS = (
+    "<link rel='preconnect' href='https://fonts.googleapis.com'>"
+    "<link rel='preconnect' href='https://fonts.gstatic.com' crossorigin>"
+    "<link rel='stylesheet' href='https://fonts.googleapis.com/css2?"
+    "family=Fraunces:opsz,wght@9..144,700;9..144,900&family=Archivo:wght@400;500;600;700&display=swap'>"
+)
+
+
+def header(cart_count: int = 0, query: str = "") -> str:
+    safe_query = query.replace("'", "&#39;").replace('"', "&quot;")
+    badge = f"<span class='cart-pill'>Cart {cart_count}</span>" if cart_count else "<span class='cart-pill'>Cart</span>"
+    return (
+        "<header class='topbar'>"
+        f"<a href='/'>{logo_lockup()}</a>"
+        "<form class='shop-search' method='get' action='/browse'>"
+        f"<input name='q' value='{safe_query}' placeholder='Search the vault…' autocomplete='off'>"
+        "</form>"
+        "<nav class='topnav'>"
+        "<a href='/browse' class='hide-sm'>Browse</a><a href='/bulk' class='hide-sm'>Bulk Master</a>"
+        "<a href='/shipping' class='hide-sm'>Shipping</a>"
+        f"<a href='/cart'>{badge}</a>"
+        "</nav></header>"
+    )
+
+
+def page(title: str, body: str, *, cart_count: int = 0, query: str = "") -> str:
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>{title}</title>"
+        f"<meta name='theme-color' content='{BRASS}'>"
+        f"{FONTS}{STYLE}</head><body>"
+        f"{header(cart_count, query)}"
+        f"<main>{body}</main>"
+        "<footer><div class='inner'>"
+        "<span>NL Vault — trading cards &amp; collectibles, shipped from Australia.</span>"
+        "<span><a href='/shipping'>Shipping &amp; returns</a></span>"
+        "</div></footer>"
+        "</body></html>"
+    )

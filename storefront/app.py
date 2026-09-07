@@ -1,0 +1,472 @@
+"""NL Vault storefront -- the public shop.
+
+Runs as its own process (see scripts/start-storefront.sh) against the same
+database as the admin app, but with a deliberately narrow surface: it
+reads catalog_items/shop_listings and writes only shop_orders. There is no
+route here that can touch inventory, scanning, pricing feeds or eBay
+credentials, by construction rather than by permission check.
+
+The cart lives in a signed cookie rather than a table -- an abandoned cart
+shouldn't leave rows behind, and there are no accounts to attach one to.
+"""
+
+import json
+from decimal import Decimal
+from html import escape
+
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from automation_control.database import get_session
+from automation_control.models import (
+    BulkLot, CatalogItem, ShippingRate, ShippingZone, ShopListing, ShopListingStatus,
+)
+
+from .brand import logo_mark
+from .ui import page
+
+router = APIRouter()
+
+CART_COOKIE = "nlv_cart"
+MAX_PER_LINE = 20
+
+
+# --- cart plumbing ----------------------------------------------------------
+
+def read_cart(request: Request) -> dict[str, int]:
+    """{listing_id: quantity}. Malformed or tampered cookies are treated as
+    an empty cart rather than an error -- a shopper should never see a
+    stack trace because a cookie got mangled."""
+    raw = request.cookies.get(CART_COOKIE)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    cart: dict[str, int] = {}
+    for key, value in data.items():
+        try:
+            quantity = int(value)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(key, str) and 0 < quantity <= MAX_PER_LINE:
+            cart[key] = quantity
+    return cart
+
+
+def write_cart(response, cart: dict[str, int]) -> None:
+    if cart:
+        response.set_cookie(
+            CART_COOKIE, json.dumps(cart), max_age=14 * 24 * 3600,
+            httponly=True, samesite="lax",
+        )
+    else:
+        response.delete_cookie(CART_COOKIE)
+
+
+def cart_count(request: Request) -> int:
+    return sum(read_cart(request).values())
+
+
+def _money(value: Decimal | float | None) -> str:
+    return "—" if value is None else f"${Decimal(str(value)):,.2f}"
+
+
+def _art(item: CatalogItem | None, listing: ShopListing) -> str:
+    url = listing.image_url or (item.image_url if item else None)
+    if not url:
+        return "<span class='noart'>no image</span>"
+    return f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>"
+
+
+def _line_art(line: dict) -> str:
+    if line["is_lot"]:
+        lot = line["listing"]
+        if lot.image_url:
+            return f"<img src='{escape(lot.image_url)}' alt=''>"
+        return f"<span class='bulk-count small'>{lot.card_count}</span>"
+    return _art(line["item"], line["listing"])
+
+
+# --- browsing ---------------------------------------------------------------
+
+def _active_listings(session: Session, query: str = "", limit: int = 60):
+    stmt = (
+        select(ShopListing, CatalogItem)
+        .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0)
+    )
+    if query:
+        stmt = stmt.where(ShopListing.title.ilike(f"%{query}%"))
+    return session.execute(stmt.order_by(ShopListing.price.desc()).limit(limit)).all()
+
+
+def _card(listing: ShopListing, item: CatalogItem | None) -> str:
+    low_stock = "<span class='tag low'>Last one</span>" if listing.quantity == 1 else ""
+    return (
+        f"<a class='card' href='/item/{escape(listing.id)}'>"
+        f"<div class='card-art'>{_art(item, listing)}</div>"
+        "<div class='card-body'>"
+        f"<div class='card-title'>{escape(listing.title)}</div>"
+        f"<div class='card-sub'>{escape(listing.condition or 'Ungraded')}</div>"
+        f"<div class='card-price'>{_money(listing.price)} {low_stock}</div>"
+        "</div></a>"
+    )
+
+
+@router.get("/", response_class=HTMLResponse)
+def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    rows = _active_listings(session, limit=12)
+    if rows:
+        grid = f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
+        body = (
+            "<div class='page-head'><h1>The vault is open</h1>"
+            "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p></div>"
+            + grid
+            + "<p style='margin-top:26px'><a class='btn ghost' href='/browse'>Browse everything</a></p>"
+        )
+    else:
+        body = (
+            "<div class='page-head'><h1>The vault is open</h1>"
+            "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p></div>"
+            "<div class='panel empty'>"
+            f"<div class='mark'>{logo_mark(64)}</div>"
+            "<h2>Nothing listed yet</h2>"
+            "<p class='muted'>Stock is added from the vault as it's catalogued. Check back shortly.</p>"
+            "</div>"
+        )
+    return HTMLResponse(page("NL Vault", body, cart_count=cart_count(request)))
+
+
+@router.get("/browse", response_class=HTMLResponse)
+def browse(request: Request, q: str = Query(""), session: Session = Depends(get_session)) -> HTMLResponse:
+    query = q.strip()
+    rows = _active_listings(session, query)
+    heading = f"Results for “{escape(query)}”" if query else "Everything in the vault"
+    if rows:
+        content = f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
+        sub = f"{len(rows)} item(s)"
+    else:
+        content = (
+            "<div class='panel empty'>"
+            f"<div class='mark'>{logo_mark(64)}</div>"
+            "<h2>Nothing matches</h2>"
+            "<p class='muted'>Try a different search, or browse everything.</p>"
+            "</div>"
+        )
+        sub = "No matches"
+    body = f"<div class='page-head'><h1>{heading}</h1><p>{sub}</p></div>{content}"
+    return HTMLResponse(page("Browse — NL Vault", body, cart_count=cart_count(request), query=query))
+
+
+@router.get("/item/{listing_id}", response_class=HTMLResponse)
+def item_detail(listing_id: str, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    listing = session.get(ShopListing, listing_id)
+    if listing is None or listing.status != ShopListingStatus.ACTIVE:
+        raise HTTPException(status_code=404, detail="item not found")
+    item = session.get(CatalogItem, listing.catalog_item_id)
+
+    sold_out = listing.quantity <= 0
+    buy = (
+        "<button class='btn' disabled>Sold out</button>" if sold_out else
+        f"<form method='post' action='/cart/add'>"
+        f"<input type='hidden' name='listing_id' value='{escape(listing.id)}'>"
+        "<button class='btn brass' type='submit'>Add to cart</button></form>"
+    )
+    description = f"<p class='muted' style='margin-top:14px'>{escape(listing.description)}</p>" if listing.description else ""
+
+    body = (
+        "<div class='detail'>"
+        f"<div class='detail-art'>{_art(item, listing)}</div>"
+        "<div>"
+        f"<h1>{escape(listing.title)}</h1>"
+        f"<div class='detail-price'>{_money(listing.price)} <span class='muted' style='font-size:15px'>{escape(listing.currency)}</span></div>"
+        f"{description}"
+        "<ul class='spec-list'>"
+        f"<li><span>Condition</span><span>{escape(listing.condition or 'Ungraded')}</span></li>"
+        f"<li><span>Available</span><span>{listing.quantity}</span></li>"
+        "<li><span>Ships from</span><span>Australia</span></li>"
+        "</ul>"
+        f"<div style='margin-top:22px'>{buy}</div>"
+        "<div class='notice'>Tracked postage Australia-wide. International shipping available at checkout.</div>"
+        "</div></div>"
+    )
+    return HTMLResponse(page(f"{listing.title} — NL Vault", body, cart_count=cart_count(request)))
+
+
+# --- cart -------------------------------------------------------------------
+
+def resolve_saleable(session: Session, key: str):
+    """Cart keys carry their own type: a bare id is a single listing, a
+    'B:' prefix is a bulk lot. One cart holds both, and an unknown or
+    withdrawn key simply resolves to None so the line drops out quietly."""
+    if key.startswith("B:"):
+        lot = session.get(BulkLot, key[2:])
+        if lot is None or lot.status != ShopListingStatus.ACTIVE or lot.quantity <= 0:
+            return None
+        return lot
+    listing = session.get(ShopListing, key)
+    if listing is None or listing.status != ShopListingStatus.ACTIVE or listing.quantity <= 0:
+        return None
+    return listing
+
+
+@router.post("/cart/add")
+def cart_add(request: Request, listing_id: str = Form(...), session: Session = Depends(get_session)):
+    saleable = resolve_saleable(session, listing_id)
+    if saleable is None:
+        raise HTTPException(status_code=404, detail="item not available")
+    cart = read_cart(request)
+    cart[listing_id] = min(cart.get(listing_id, 0) + 1, saleable.quantity, MAX_PER_LINE)
+    response = RedirectResponse("/cart", status_code=303)
+    write_cart(response, cart)
+    return response
+
+
+@router.post("/cart/remove")
+def cart_remove(request: Request, listing_id: str = Form(...)):
+    cart = read_cart(request)
+    cart.pop(listing_id, None)
+    response = RedirectResponse("/cart", status_code=303)
+    write_cart(response, cart)
+    return response
+
+
+def cart_lines(session: Session, cart: dict[str, int]):
+    """Resolve a cookie cart against live listings, dropping anything that
+    has since been withdrawn or sold, and clamping to what's actually in
+    stock -- the cookie is a wish, the database is the truth."""
+    lines = []
+    for key, wanted in cart.items():
+        saleable = resolve_saleable(session, key)
+        if saleable is None:
+            continue
+        quantity = min(wanted, saleable.quantity)
+        is_lot = isinstance(saleable, BulkLot)
+        item = None if is_lot else session.get(CatalogItem, saleable.catalog_item_id)
+        lines.append({
+            "key": key, "listing": saleable, "item": item, "is_lot": is_lot,
+            "quantity": quantity, "line_total": Decimal(str(saleable.price)) * quantity,
+        })
+    return lines
+
+
+def shipping_for(session: Session, zone: ShippingZone, items_total: Decimal) -> tuple[Decimal, str]:
+    rate = session.scalar(select(ShippingRate).where(ShippingRate.zone == zone).limit(1))
+    if rate is None:
+        return Decimal("0"), "Shipping calculated at checkout"
+    if rate.free_over is not None and items_total >= Decimal(str(rate.free_over)):
+        return Decimal("0"), f"{rate.label} — free over {_money(rate.free_over)}"
+    return Decimal(str(rate.price)), rate.label
+
+
+@router.get("/cart", response_class=HTMLResponse)
+def cart_view(request: Request, zone: str = Query("au"), session: Session = Depends(get_session)) -> HTMLResponse:
+    lines = cart_lines(session, read_cart(request))
+    if not lines:
+        body = (
+            "<div class='page-head'><h1>Your cart</h1></div>"
+            "<div class='panel empty'>"
+            f"<div class='mark'>{logo_mark(64)}</div>"
+            "<h2>Nothing in here yet</h2>"
+            "<p class='muted'>Everything you add will show up here.</p>"
+            "<p style='margin-top:18px'><a class='btn ghost' href='/browse'>Browse the vault</a></p>"
+            "</div>"
+        )
+        return HTMLResponse(page("Cart — NL Vault", body, cart_count=0))
+
+    selected_zone = ShippingZone.INTERNATIONAL if zone == "international" else ShippingZone.AU
+    items_total = sum((line["line_total"] for line in lines), Decimal("0"))
+    ship_cost, ship_label = shipping_for(session, selected_zone, items_total)
+
+    rows = "".join(
+        "<div class='line'>"
+        f"<div class='line-art'>{_line_art(line)}</div>"
+        "<div class='line-main'>"
+        f"<div class='line-title'>{escape(line['listing'].title)}</div>"
+        f"<div class='muted'>{_money(line['listing'].price)} × {line['quantity']}</div>"
+        "</div>"
+        f"<div style='font-weight:600'>{_money(line['line_total'])}</div>"
+        f"<form method='post' action='/cart/remove'>"
+        f"<input type='hidden' name='listing_id' value='{escape(line['key'])}'>"
+        "<button class='btn ghost' style='padding:7px 12px;font-size:13px'>Remove</button></form>"
+        "</div>"
+        for line in lines
+    )
+
+    au_selected = " selected" if selected_zone == ShippingZone.AU else ""
+    intl_selected = " selected" if selected_zone == ShippingZone.INTERNATIONAL else ""
+
+    body = (
+        "<div class='page-head'><h1>Your cart</h1></div>"
+        f"<div class='panel'>{rows}"
+        "<form method='get' action='/cart' style='margin-top:18px;max-width:320px'>"
+        "<label class='field'>Ship to"
+        f"<select name='zone' onchange='this.form.submit()'>"
+        f"<option value='au'{au_selected}>Australia</option>"
+        f"<option value='international'{intl_selected}>International</option>"
+        "</select></label></form>"
+        "<div class='totals'>"
+        f"<div><span>Items</span><span>{_money(items_total)}</span></div>"
+        f"<div><span>{escape(ship_label)}</span><span>{_money(ship_cost)}</span></div>"
+        f"<div class='grand'><span>Total</span><span>{_money(items_total + ship_cost)}</span></div>"
+        "</div>"
+        f"<div style='margin-top:20px'><a class='btn brass' href='/checkout?zone={selected_zone.value}'>Checkout</a></div>"
+        "</div>"
+    )
+    return HTMLResponse(page("Cart — NL Vault", body, cart_count=cart_count(request)))
+
+
+# --- Bulk Master ------------------------------------------------------------
+# Most of a scanned collection is commons worth under a dollar or two --
+# unsellable one at a time once postage is $9.95, but a real product sorted
+# by set and sold by the hundred. This is that section.
+
+BULK_SORTS = {
+    "cards_desc": ("Most cards", BulkLot.card_count.desc()),
+    "price_asc": ("Cheapest first", BulkLot.price.asc()),
+    "price_desc": ("Dearest first", BulkLot.price.desc()),
+    "value_desc": ("Best value", BulkLot.market_value.desc()),
+}
+
+
+@router.get("/bulk", response_class=HTMLResponse)
+def bulk_master(
+    request: Request,
+    q: str = Query(""),
+    sort: str = Query("cards_desc"),
+    min_cards: int = Query(0),
+    max_price: float = Query(0),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    query = q.strip()
+    sort_key = sort if sort in BULK_SORTS else "cards_desc"
+
+    stmt = select(BulkLot).where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
+    if query:
+        stmt = stmt.where(BulkLot.title.ilike(f"%{query}%"))
+    if min_cards > 0:
+        stmt = stmt.where(BulkLot.card_count >= min_cards)
+    if max_price > 0:
+        stmt = stmt.where(BulkLot.price <= Decimal(str(max_price)))
+    lots = session.scalars(stmt.order_by(BULK_SORTS[sort_key][1]).limit(120)).all()
+
+    sort_options = "".join(
+        f"<option value='{key}'{' selected' if key == sort_key else ''}>{escape(label)}</option>"
+        for key, (label, _) in BULK_SORTS.items()
+    )
+    filters = (
+        "<form class='panel filters' method='get' action='/bulk'>"
+        f"<label class='field'>Search<input name='q' value='{escape(query)}' placeholder='Set name…'></label>"
+        f"<label class='field'>Sort<select name='sort'>{sort_options}</select></label>"
+        f"<label class='field'>Min cards<input name='min_cards' type='number' min='0' step='1' value='{min_cards or ''}'></label>"
+        f"<label class='field'>Max price<input name='max_price' type='number' min='0' step='1' value='{max_price or ''}'></label>"
+        "<button class='btn' type='submit'>Apply</button>"
+        "<a class='btn ghost' href='/bulk'>Reset</a>"
+        "</form>"
+    )
+
+    if lots:
+        cards = "".join(
+            f"<a class='card' href='/bulk/{escape(lot.id)}'>"
+            "<div class='card-art bulk-art'>"
+            + (f"<img src='{escape(lot.image_url)}' alt='' loading='lazy'>" if lot.image_url
+               else f"<span class='bulk-count'>{lot.card_count}</span>")
+            + "</div>"
+            "<div class='card-body'>"
+            f"<div class='card-title'>{escape(lot.title)}</div>"
+            f"<div class='card-sub'>{lot.card_count} cards · market {_money(lot.market_value)}</div>"
+            f"<div class='card-price'>{_money(lot.price)}</div>"
+            "</div></a>"
+            for lot in lots
+        )
+        content = f"<div class='grid'>{cards}</div>"
+        count_note = f"{len(lots)} lot(s)"
+    else:
+        content = (
+            "<div class='panel empty'>"
+            f"<div class='mark'>{logo_mark(64)}</div>"
+            "<h2>No lots match those filters</h2>"
+            "<p class='muted'>Try widening the price or card count.</p></div>"
+        )
+        count_note = "No matches"
+
+    body = (
+        "<div class='page-head'><h1>Bulk Master</h1>"
+        f"<p>Sorted, sleeved lots by set — the sensible way to buy commons. {count_note}.</p></div>"
+        f"{filters}{content}"
+    )
+    return HTMLResponse(page("Bulk Master — NL Vault", body, cart_count=cart_count(request), query=query))
+
+
+@router.get("/bulk/{lot_id}", response_class=HTMLResponse)
+def bulk_detail(lot_id: str, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    lot = session.get(BulkLot, lot_id)
+    if lot is None or lot.status != ShopListingStatus.ACTIVE:
+        raise HTTPException(status_code=404, detail="lot not found")
+
+    saving = ""
+    if lot.market_value and Decimal(str(lot.market_value)) > Decimal(str(lot.price)):
+        pct = (Decimal("1") - Decimal(str(lot.price)) / Decimal(str(lot.market_value))) * 100
+        saving = f"<span class='tag'>{pct:.0f}% under market</span>"
+
+    art = (
+        f"<img src='{escape(lot.image_url)}' alt='' style='max-height:220px;margin:0 auto'>"
+        if lot.image_url else f"<div class='bulk-count big'>{lot.card_count}</div>"
+    )
+    body = (
+        "<div class='detail'>"
+        f"<div class='detail-art' style='display:grid;place-items:center;min-height:240px'>{art}</div>"
+        "<div>"
+        f"<h1>{escape(lot.title)}</h1>"
+        f"<div class='detail-price'>{_money(lot.price)} {saving}</div>"
+        f"<p class='muted'>{escape(lot.description or '')}</p>"
+        "<ul class='spec-list'>"
+        f"<li><span>Cards in lot</span><span>{lot.card_count}</span></li>"
+        f"<li><span>Combined market value</span><span>{_money(lot.market_value)}</span></li>"
+        "<li><span>Condition</span><span>Played to Near Mint, sorted by set</span></li>"
+        "<li><span>Ships from</span><span>Australia</span></li>"
+        "</ul>"
+        "<form method='post' action='/cart/add' style='margin-top:22px'>"
+        f"<input type='hidden' name='listing_id' value='B:{escape(lot.id)}'>"
+        "<button class='btn brass' type='submit'>Add lot to cart</button></form>"
+        "<div class='notice'>Bulk lots ship in a single tracked parcel — combine several and you still pay postage once.</div>"
+        "</div></div>"
+    )
+    return HTMLResponse(page(f"{lot.title} — NL Vault", body, cart_count=cart_count(request)))
+
+
+@router.get("/shipping", response_class=HTMLResponse)
+def shipping_info(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    rates = session.scalars(select(ShippingRate).order_by(ShippingRate.zone)).all()
+    rows = "".join(
+        f"<li><span>{escape(rate.label)}</span><span>{_money(rate.price)}"
+        + (f" — free over {_money(rate.free_over)}" if rate.free_over is not None else "")
+        + "</span></li>"
+        for rate in rates
+    ) or "<li><span>Rates</span><span>Calculated at checkout</span></li>"
+    body = (
+        "<div class='page-head'><h1>Shipping &amp; returns</h1>"
+        "<p>Everything ships from Australia, packed to survive the post.</p></div>"
+        f"<div class='panel'><h2>Rates</h2><ul class='spec-list'>{rows}</ul>"
+        "<div class='notice'>International orders are welcome — shipping is charged at the international "
+        "rate above, and any customs duties are the buyer's responsibility.</div>"
+        "<h2 style='margin-top:26px'>Returns</h2>"
+        "<p class='muted'>If something arrives damaged or isn't as described, contact us within 7 days "
+        "of delivery and we'll make it right.</p></div>"
+    )
+    return HTMLResponse(page("Shipping — NL Vault", body, cart_count=cart_count(request)))
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="NL Vault", docs_url=None, redoc_url=None, openapi_url=None)
+    app.include_router(router)
+    return app
+
+
+app = create_app()
