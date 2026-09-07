@@ -155,7 +155,10 @@ def test_review_confirm_creates_catalog_item_and_collectible_product(client, ses
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/collectibles"
+    # confirm advances through the queue rather than dumping you back on
+    # the collectibles page -- with nothing else pending it lands on the
+    # queue entry point, which renders the "queue is empty" page
+    assert resp.headers["location"] == "/collectibles/review"
 
     session.expire_all()
     capture = session.get(CapturedCollectible, "abc123")
@@ -298,3 +301,107 @@ def test_bulk_capture_status_page_shows_progress_while_running(client, session):
     assert resp.status_code == 200
     assert "2 of 5" in resp.text
     assert "refresh" in resp.text.lower()
+
+
+# --- one-by-one review queue ------------------------------------------------
+
+def _pending_capture(session, character="Peach", **kw):
+    from automation_control.models import CapturedCollectible, CardCaptureStatus
+
+    capture = CapturedCollectible(
+        image_path="captured_cards/collectibles/x.jpg", brand="Sonny Angel",
+        character=character, status=CardCaptureStatus.PENDING_REVIEW, **kw,
+    )
+    session.add(capture)
+    session.commit()
+    return capture
+
+
+def test_review_entry_point_goes_straight_to_the_first_figure(client, session):
+    """Reviewing forty figures only works if you don't have to go via a
+    list between each one."""
+    first = _pending_capture(session, "Peach")
+    _pending_capture(session, "Banana")
+
+    resp = client.get("/collectibles/review", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/collectibles/review/{first.id}"
+
+
+def test_review_entry_point_reports_an_empty_queue(client, session):
+    resp = client.get("/collectibles/review", follow_redirects=False)
+    assert resp.status_code == 200
+    assert "Queue is empty" in resp.text
+
+
+def test_confirm_advances_to_the_next_pending_figure(client, session):
+    first = _pending_capture(session, "Peach")
+    second = _pending_capture(session, "Banana")
+
+    resp = client.post(f"/collectibles/review/{first.id}",
+                       data={"action": "confirm", "brand": "Sonny Angel",
+                             "character": "Peach", "quantity": "1"},
+                       follow_redirects=False)
+    assert resp.headers["location"] == f"/collectibles/review/{second.id}"
+
+
+def test_discard_also_advances(client, session):
+    first = _pending_capture(session, "Peach")
+    second = _pending_capture(session, "Banana")
+
+    resp = client.post(f"/collectibles/review/{first.id}",
+                       data={"action": "reject"}, follow_redirects=False)
+    assert resp.headers["location"] == f"/collectibles/review/{second.id}"
+
+
+def test_skip_advances_without_deciding_anything(client, session):
+    """A skip is "not now", not a decision -- the row must stay pending."""
+    from automation_control.models import CapturedCollectible, CardCaptureStatus
+
+    first = _pending_capture(session, "Peach")
+    second = _pending_capture(session, "Banana")
+
+    resp = client.post(f"/collectibles/review/{first.id}",
+                       data={"action": "skip"}, follow_redirects=False)
+    assert resp.headers["location"] == f"/collectibles/review/{second.id}"
+
+    session.expire_all()
+    assert session.get(CapturedCollectible, first.id).status == CardCaptureStatus.PENDING_REVIEW
+    assert session.get(CapturedCollectible, first.id).reviewed_at is None
+
+
+def test_a_skipped_figure_comes_back_round_rather_than_being_stranded(client, session):
+    first = _pending_capture(session, "Peach")
+    second = _pending_capture(session, "Banana")
+
+    # skip the last one in the queue -- it should wrap to the first
+    resp = client.post(f"/collectibles/review/{second.id}",
+                       data={"action": "skip"}, follow_redirects=False)
+    assert resp.headers["location"] == f"/collectibles/review/{first.id}"
+
+
+def test_review_page_shows_position_in_the_queue(client, session):
+    first = _pending_capture(session, "Peach")
+    _pending_capture(session, "Banana")
+    _pending_capture(session, "Melon")
+
+    body = client.get(f"/collectibles/review/{first.id}").text
+    assert "Figure 1 of 3" in body
+    assert "Skip for now" in body
+    assert "Confirm &amp; next" in body
+
+
+def test_the_full_queue_is_still_listable(client, session):
+    _pending_capture(session, "Peach")
+    body = client.get("/collectibles/review/all").text
+    assert "Peach" in body
+    assert "1 awaiting review" in body
+
+
+def test_cursor_starts_in_the_field_the_ai_left_blank(client, session):
+    blank = _pending_capture(session, character=None)
+    named = _pending_capture(session, character="Peach")
+
+    assert "autofocus" in client.get(f"/collectibles/review/{blank.id}").text
+    # a figure the AI already named doesn't steal focus into a filled field
+    assert "autofocus" not in client.get(f"/collectibles/review/{named.id}").text

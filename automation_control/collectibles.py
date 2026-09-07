@@ -353,19 +353,60 @@ def collectible_capture_bulk_status(batch_id: str, user: str = Depends(require_d
     return HTMLResponse(page("EzBay — Bulk capture status", body, head_extra=head_extra))
 
 
-@router.get("/collectibles/review", response_class=HTMLResponse)
-def collectible_review_list(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    pending = session.scalars(
-        select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)
-        .order_by(CapturedCollectible.captured_at)
+def _pending(session: Session) -> list[CapturedCollectible]:
+    return session.scalars(
+        select(CapturedCollectible)
+        .where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)
+        .order_by(CapturedCollectible.captured_at, CapturedCollectible.id)
     ).all()
+
+
+def _next_after(session: Session, current: CapturedCollectible | None) -> CapturedCollectible | None:
+    """The next figure still awaiting a decision.
+
+    Reviewing forty figures one page at a time only works if the next one
+    arrives on its own -- going back to a list between every decision is
+    most of the work. Wraps to the top so a skipped figure comes back
+    round rather than being stranded at the end of the queue.
+    """
+    queue = _pending(session)
+    if not queue:
+        return None
+    if current is None:
+        return queue[0]
+    ids = [c.id for c in queue]
+    if current.id in ids:
+        index = ids.index(current.id)
+        return queue[(index + 1) % len(queue)] if len(queue) > 1 else None
+    return queue[0]
+
+
+def _queue_done_page() -> HTMLResponse:
+    body = (
+        brand_header("Collectible review queue")
+        + "<div class='panel'><h2>Queue is empty</h2>"
+          "<p>Everything captured so far has been confirmed or discarded.</p>"
+          "<p><a class='btn' href='/collectibles'>Back to collectibles</a> "
+          "<a class='btn ghost' href='/collectibles/capture'>Capture another</a></p></div>"
+    )
+    return HTMLResponse(page("EzBay — Collectible review", body))
+
+
+@router.get("/collectibles/review", response_class=HTMLResponse)
+def collectible_review_start(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    """Straight into the first figure rather than a list -- the queue is
+    the point. The full list is still at /collectibles/review/all."""
+    nxt = _next_after(session, None)
+    if nxt is None:
+        return _queue_done_page()
+    return RedirectResponse(f"/collectibles/review/{nxt.id}", status_code=303)
+
+
+@router.get("/collectibles/review/all", response_class=HTMLResponse)
+def collectible_review_list(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+    pending = _pending(session)
     if not pending:
-        body = (
-            brand_header("Collectible review queue")
-            + "<div class='panel'><p>Queue is empty -- everything captured so far has been confirmed or discarded.</p>"
-              "<p><a class='btn' href='/collectibles/capture'>Capture another</a></p></div>"
-        )
-        return HTMLResponse(page("EzBay — Collectible review", body))
+        return _queue_done_page()
 
     rows = "".join(
         f"<tr><td><a href='/collectibles/review/{escape(c.id)}'>{escape(c.character or c.brand or '(unidentified)')}</a></td>"
@@ -375,6 +416,8 @@ def collectible_review_list(user: str = Depends(require_dashboard_user), session
     )
     body = (
         brand_header("Collectible review queue")
+        + f"<p class='subtitle'>{len(pending)} awaiting review. "
+          "<a class='btn' href='/collectibles/review'>Review one by one</a></p>"
         + f"<div class='panel'><div class='table-wrap'><table><thead><tr><th>Figure</th><th>Brand</th><th>Series</th><th>Captured</th></tr></thead>"
         + f"<tbody>{rows}</tbody></table></div></div>"
         + _STYLE
@@ -388,25 +431,50 @@ def collectible_review_form(capture_id: str, user: str = Depends(require_dashboa
     if capture is None:
         raise HTTPException(status_code=404, detail="capture not found")
 
-    def field(name: str, label: str, value: str | None) -> str:
+    def field(name: str, label: str, value: str | None, autofocus: bool = False) -> str:
         safe_value = escape(value or "")
-        return f"<label>{label}<input name='{name}' value='{safe_value}'></label>"
+        focus = " autofocus" if autofocus else ""
+        return f"<label>{label}<input name='{name}' value='{safe_value}'{focus}></label>"
+
+    # Position in the queue, so a run of forty has a visible end.
+    queue = _pending(session)
+    ids = [c.id for c in queue]
+    position = ids.index(capture_id) + 1 if capture_id in ids else 0
+    remaining = len(queue)
+    progress = (
+        f"<p class='subtitle'>Figure {position} of {remaining} awaiting review · "
+        "<a href='/collectibles/review/all'>see the whole queue</a></p>"
+        if position else "<p class='subtitle'>Already reviewed.</p>"
+    )
+    bar = (
+        f"<div class='revbar'><span style='width:{(position - 1) / remaining * 100:.1f}%'></span></div>"
+        if position and remaining else ""
+    )
+
+    # The AI leaves character blank rather than guessing, so that's the
+    # field the cursor belongs in -- it's the one being typed most often.
+    focus_character = not (capture.character or "").strip()
 
     body = (
         brand_header("Review capture")
-        + f"<div class='panel'><p><img src='/collectibles/capture/image/{escape(capture_id)}' style='max-width:280px;border-radius:8px'></p>"
+        + progress + bar
+        + "<div class='panel review-one'>"
+        + f"<a class='revshot' href='/collectibles/capture/image/{escape(capture_id)}' target='_blank' rel='noopener'>"
+          f"<img src='/collectibles/capture/image/{escape(capture_id)}' alt='Captured figure'></a>"
         + f"<form method='post' action='/collectibles/review/{escape(capture_id)}' class='calc-form'>"
         + field("brand", "Brand", capture.brand)
         + field("series", "Series", capture.series)
-        + field("character", "Character", capture.character)
+        + field("character", "Character", capture.character, autofocus=focus_character)
         + field("variant", "Variant", capture.variant)
         + field("blind_box_series", "Blind box series", capture.blind_box_series)
         + f"<label><input name='is_secret' type='checkbox' value='true' style='width:auto'{' checked' if capture.is_secret else ''}> Secret / chase figure</label>"
         + "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='1'></label>"
-        + "<div style='display:flex;gap:12px;margin-top:6px'>"
-        + "<button name='action' value='confirm'>Confirm &amp; add to catalogue</button>"
-        + "<button name='action' value='reject' class='ghost'>Discard</button>"
+        + "<div class='revactions'>"
+        + "<button name='action' value='confirm'>Confirm &amp; next</button>"
+        + "<button name='action' value='skip' class='ghost'>Skip for now</button>"
+        + "<button name='action' value='reject' class='ghost danger'>Discard</button>"
         + "</div></form></div>"
+        + _REVIEW_STYLE
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Review capture", body))
@@ -425,12 +493,25 @@ def collectible_review_submit(
     if capture is None:
         raise HTTPException(status_code=404, detail="capture not found")
 
+    def onward() -> RedirectResponse:
+        """Straight to the next figure, or the done page when the queue
+        empties -- never back to a list mid-run."""
+        nxt = _next_after(session, capture)
+        if nxt is None:
+            return RedirectResponse("/collectibles/review", status_code=303)
+        return RedirectResponse(f"/collectibles/review/{nxt.id}", status_code=303)
+
+    if action == "skip":
+        # Deliberately writes nothing: a skip is "not now", not a decision,
+        # so the row stays pending and comes back round on the next pass.
+        return onward()
+
     if action == "reject":
         capture.status = CardCaptureStatus.REJECTED
         capture.reviewed_at = datetime.now(UTC)
         session.commit()
         record_event(session, actor_type="user", actor_id=user, action="collectible.reject", resource_type="captured_collectible", resource_id=capture_id, outcome="success", correlation_id=str(uuid.uuid4()), details={})
-        return RedirectResponse("/collectibles/review", status_code=303)
+        return onward()
 
     name = character.strip() or brand.strip() or "Unnamed collectible"
     item_id = str(uuid.uuid4())
@@ -447,7 +528,7 @@ def collectible_review_submit(
     capture.catalog_item_id = item_id
     session.commit()
     record_event(session, actor_type="user", actor_id=user, action="collectible.confirm", resource_type="captured_collectible", resource_id=capture_id, outcome="success", correlation_id=str(uuid.uuid4()), details={"catalog_item_id": item_id})
-    return RedirectResponse("/collectibles", status_code=303)
+    return onward()
 
 
 @router.get("/collectibles/capture/image/{capture_id}")
@@ -457,6 +538,20 @@ def collectible_capture_image(capture_id: str, user: str = Depends(require_dashb
         raise HTTPException(status_code=404, detail="capture not found")
     return FileResponse(capture.image_path)
 
+
+_REVIEW_STYLE = """<style>
+.revbar{height:5px;border-radius:99px;background:var(--surface-sunken);overflow:hidden;margin:0 0 18px}
+.revbar span{display:block;height:100%;background:var(--accent);transition:width .2s ease}
+.review-one{display:grid;gap:24px;grid-template-columns:minmax(200px,300px) 1fr;align-items:start}
+.revshot{display:block;border-radius:10px;overflow:hidden;background:var(--surface-sunken);
+  border:1px solid var(--panel-border)}
+.revshot img{width:100%;display:block}
+.revactions{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.revactions .danger{color:var(--danger);border-color:var(--danger)}
+@media (max-width:720px){.review-one{grid-template-columns:1fr}
+  .revshot{max-width:260px;margin:0 auto}}
+@media (prefers-reduced-motion:reduce){.revbar span{transition:none}}
+</style>"""
 
 _STYLE = """<style>
 .calc-form{display:flex;flex-direction:column;gap:12px;max-width:420px}
