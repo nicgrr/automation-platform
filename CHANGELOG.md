@@ -3,6 +3,17 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Supplier products UI (closes a known gap from Phase 2)
+
+- `supplier_products` has existed since the Phase 2 migration with no UI at
+  all. Added `GET /suppliers/{id}` (a real detail page -- contact info,
+  website, discount, minimum order, and a table of what they sell) and
+  `POST /suppliers/{id}/products` to add one. Supplier names on `/suppliers`
+  now link to their detail page. No schema change.
+- 6 new tests; full suite (602) green; `ezbay.service` restarted and both
+  new routes smoke-tested (401, correctly gated); production DB confirmed
+  clean (`suppliers`/`supplier_products` still 0 rows).
+
 ## 2026-09-07 — Collectible ownership tracking (closes the Module 12 known limitation)
 
 - `scripts/migrate_relax_inventory_card_id.py`: `inventory_items.card_id` is

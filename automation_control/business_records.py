@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
 from .database import get_session
-from .models import Goal, GoalKind, ReleaseCalendarEntry, Supplier, SupplierStatus
+from .models import Goal, GoalKind, ReleaseCalendarEntry, Supplier, SupplierProduct, SupplierStatus
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["business-records"])
@@ -41,7 +41,7 @@ def suppliers_page(user: str = Depends(require_dashboard_user), session: Session
     }
     rows = "".join(
         "<tr>"
-        f"<td>{escape(s.name)}</td>"
+        f"<td><a href='/suppliers/{escape(s.id)}'>{escape(s.name)}</a></td>"
         f"<td>{escape(s.categories or '—')}</td>"
         f"<td>{pill(s.account_status.value.replace('_', ' ').title(), status_kind.get(s.account_status, 'neutral'))}</td>"
         f"<td>{f'{s.wholesale_discount_pct}%' if s.wholesale_discount_pct else '—'}</td>"
@@ -80,6 +80,63 @@ def create_supplier(
     ))
     session.commit()
     return RedirectResponse("/suppliers", status_code=303)
+
+
+@router.get("/suppliers/{supplier_id}", response_class=HTMLResponse)
+def supplier_detail_page(supplier_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+    supplier = session.get(Supplier, supplier_id)
+    if supplier is None:
+        raise HTTPException(status_code=404, detail="supplier not found")
+
+    products = session.scalars(select(SupplierProduct).where(SupplierProduct.supplier_id == supplier_id).order_by(SupplierProduct.description)).all()
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(p.description)}</td>"
+        f"<td>${p.cost:,.2f}</td>"
+        f"<td>{p.min_order_qty if p.min_order_qty is not None else '—'}</td>"
+        "</tr>"
+        for p in products
+    ) or "<tr><td colspan=3>No products on file for this supplier yet.</td></tr>"
+    table = f"<div class='panel'><h2>What they sell</h2><div class='table-wrap'><table><thead><tr><th>Product</th><th>Cost</th><th>Min order qty</th></tr></thead><tbody>{rows}</tbody></table></div></div>"
+
+    form = (
+        "<div class='panel'><h2>Add a product</h2>"
+        f"<form method='post' action='/suppliers/{escape(supplier_id)}/products' class='calc-form'>"
+        "<label>Description<input name='description' required placeholder='Sonny Angel Mini Figures - Fruits Series'></label>"
+        "<label>Cost<input name='cost' type='number' step='0.01' required></label>"
+        "<label>Min order qty<input name='min_order_qty' type='number' step='1'></label>"
+        "<button type='submit'>Add</button></form></div>"
+    )
+
+    details = (
+        "<div class='panel'>"
+        f"<p><strong>Contact:</strong> {escape(supplier.contact or '—')}</p>"
+        f"<p><strong>Website:</strong> {escape(supplier.website or '—')}</p>"
+        f"<p><strong>Categories:</strong> {escape(supplier.categories or '—')}</p>"
+        f"<p><strong>Wholesale discount:</strong> {f'{supplier.wholesale_discount_pct}%' if supplier.wholesale_discount_pct else '—'}</p>"
+        f"<p><strong>Minimum order:</strong> {f'${supplier.minimum_order:,.2f}' if supplier.minimum_order else '—'}</p>"
+        "</div>"
+    )
+    body = (
+        brand_header(escape(supplier.name)) + "<p class='subtitle'><a href='/suppliers'>&larr; All suppliers</a></p>"
+        + details + table + form + _STYLE
+    )
+    return HTMLResponse(page(f"EzBay — {supplier.name}", body))
+
+
+@router.post("/suppliers/{supplier_id}/products")
+def create_supplier_product(
+    supplier_id: str, description: str = Form(...), cost: str = Form("0"), min_order_qty: str = Form(""),
+    user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+):
+    if session.get(Supplier, supplier_id) is None:
+        raise HTTPException(status_code=404, detail="supplier not found")
+    session.add(SupplierProduct(
+        id=str(uuid.uuid4()), supplier_id=supplier_id, description=description,
+        cost=_dec(cost), min_order_qty=int(min_order_qty) if min_order_qty.strip() else None,
+    ))
+    session.commit()
+    return RedirectResponse(f"/suppliers/{supplier_id}", status_code=303)
 
 
 # --- Module 14: goals ---------------------------------------------------------
