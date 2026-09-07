@@ -1143,3 +1143,33 @@ class BulkLot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     card_set: Mapped[CardSet] = relationship()
+
+
+class ShopCostConfig(Base):
+    """What it actually costs to fulfil an order -- the inputs to a real
+    break-even price.
+
+    The bulk-lot builder previously used a hardcoded $12 floor, which was a
+    guess dressed up as a rule: it couldn't say whether $12 was profitable,
+    and at these order values the fixed payment fee alone is a material
+    share of the take. These are the numbers that decide it, stored rather
+    than constants so postage rises and fee changes aren't code edits.
+
+    Card cost basis is deliberately not in here -- it's per item
+    (`inventory_items.allocated_cost_basis`) and mostly unknown for a
+    scanned collection, so the break-even below treats unknown stock cost
+    as zero and says so, rather than inventing a number.
+    """
+
+    __tablename__ = "shop_cost_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    label: Mapped[str] = mapped_column(String(128), default="Default")
+    postage_cost_au: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("9.95"))
+    postage_cost_intl: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("29.95"))
+    packaging_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("1.20"))
+    payment_pct: Mapped[Decimal] = mapped_column(Numeric(5, 3), default=Decimal("1.650"))
+    payment_fixed: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.30"))
+    target_margin_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("25.00"))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

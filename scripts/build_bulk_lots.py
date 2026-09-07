@@ -23,12 +23,13 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import SessionLocal
 from automation_control.models import (
-    BulkLot, CardSet, CatalogCard, InventoryItem, ShopListing, ShopListingStatus,
+    BulkLot, CardSet, CatalogCard, InventoryItem, ShippingRate, ShippingZone,
+    ShopListing, ShopListingStatus,
 )
+from automation_control.shop_pricing import default_costs, price_floor
 from scripts.list_for_sale import best_price
 
 MIN_CARDS_PER_LOT = 5
-PRICE_FLOOR = Decimal("12.00")
 
 
 def _round(value: Decimal) -> Decimal:
@@ -57,6 +58,19 @@ def main(argv: list[str] | None = None) -> int:
                 session.commit()
             print(f"{'would delete' if args.dry_run else 'deleted'} {len(lots)} lot(s).")
             return 0
+
+        # A real floor rather than a guessed one: what it costs to fulfil,
+        # grossed up for payment fees, plus the target margin. Assumes the
+        # customer pays postage, which is the normal case -- the free
+        # shipping threshold is flagged on /shop-pricing instead.
+        au_rate = session.scalar(select(ShippingRate).where(ShippingRate.zone == ShippingZone.AU).limit(1))
+        floor_model = price_floor(
+            default_costs(session),
+            shipping_charged=Decimal(str(au_rate.price)) if au_rate else Decimal("0"),
+        )
+        price_floor_value = floor_model.floor
+        print(f"floor: ${price_floor_value} (break-even ${floor_model.break_even} "
+              f"+ {floor_model.margin_pct}% margin, customer pays postage)\n")
 
         listed_singles = {row for row in session.scalars(select(ShopListing.inventory_item_id)) if row}
         existing_sets = {row for row in session.scalars(select(BulkLot.set_id)) if row}
@@ -98,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
 
             card_set = session.get(CardSet, set_id)
             set_name = card_set.name if card_set else set_id
-            price = max(_round(bucket["value"] * multiplier), PRICE_FLOOR)
+            price = max(_round(bucket["value"] * multiplier), price_floor_value)
             title = f"{set_name} — bulk lot ({bucket['cards']} cards)"
 
             print(f"  {'would build' if args.dry_run else 'built'}: {title} — ${price} "

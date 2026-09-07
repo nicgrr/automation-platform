@@ -38,6 +38,7 @@ from .scan_ingest_status import router as scan_ingest_status_router
 from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, JobRead
 from .sealed_economics import router as sealed_economics_router
 from .search import router as search_router
+from .shop_admin import router as shop_admin_router
 from .ui import brand_header, page
 from .whatnot import router as whatnot_router
 
@@ -75,6 +76,7 @@ app.include_router(data_export_router)
 app.include_router(quick_price_router)
 app.include_router(market_search_router)
 app.include_router(deal_check_router)
+app.include_router(shop_admin_router)
 
 
 def correlation_id() -> str:
