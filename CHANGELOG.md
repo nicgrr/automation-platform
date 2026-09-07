@@ -3,6 +3,26 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 20: generic import/export
+
+- `/export`: CSV downloads for inventory, sales, sale line items, customers,
+  and suppliers -- every export is a plain read-only query, nothing here
+  writes to the database. Linked from the dashboard's Business quick links.
+- `scripts/import_suppliers_csv.py`: bulk-import suppliers from a CSV,
+  same dry-run/idempotent-upsert convention as the existing
+  `import_tcg_catalog_csv.py`, keyed on exact (case-insensitive) name since
+  suppliers have no other natural key. An invalid `account_status` value is
+  skipped with a warning rather than aborting the whole file.
+- Import stays a CLI script rather than a web upload form, matching the
+  existing convention (`import_tcg_catalog_csv.py`) -- bulk data entry from
+  a spreadsheet is an occasional back-office task, not something done from
+  a phone. Export is the web-facing half since that's naturally a
+  dashboard action.
+- 15 new tests (6 for the export routes, 5 for the import script, 4 dashboard
+  link/list checks updated); full suite (619) green; `ezbay.service`
+  restarted and all five export routes plus `/export` itself smoke-tested
+  (401, correctly gated).
+
 ## 2026-09-07 — Bulk photo capture for collectibles
 
 - `/collectibles/capture/bulk`: select multiple photos at once, mirroring

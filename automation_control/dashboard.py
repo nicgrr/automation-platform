@@ -234,6 +234,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
       <a href="/release-calendar">Release calendar</a>
       <a href="/sealed-products">Sealed products</a>
       <a href="/collectibles">Collectibles</a>
+      <a href="/export">Export data</a>
     </div>
   </div>
 </main>

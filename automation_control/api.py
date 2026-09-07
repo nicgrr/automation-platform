@@ -20,6 +20,7 @@ from .collectibles import router as collectibles_router
 from .commerce import router as commerce_router
 from .config import Settings, get_settings
 from .dashboard import router as dashboard_router
+from .data_export import router as data_export_router
 from .database import Base, engine, get_session
 from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_sandbox_client_id, valid_sandbox_runame, valid_user_access_token
 from .foil_review import router as foil_review_router
@@ -67,6 +68,7 @@ app.include_router(collectibles_router)
 app.include_router(whatnot_router)
 app.include_router(price_history_router)
 app.include_router(dashboard_router)
+app.include_router(data_export_router)
 
 
 def correlation_id() -> str:
