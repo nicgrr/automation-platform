@@ -3,6 +3,41 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — One Piece pricing, for free, in place of a $49/month API
+
+Asked to look into a "price charting API" and report the cost. Researched
+PriceCharting.com specifically before adding anything: API access requires
+their $49/month "Legendary" tier (their $6/mo tier doesn't include API
+access at all), and -- despite the name -- their own docs say the API
+"only supports current item values... historic prices and historic sales
+are not supported." Reported that cost and limitation before spending
+anything. optcgapi.com, the same free API used minutes earlier for the
+One Piece catalogue, already returns `market_price` in the identical
+per-card response at no cost, so that's what got wired in instead.
+
+- Extended `scripts/import_one_piece_from_optcgapi.py` (no new script) to
+  also write one `card_prices` row per card per run
+  (`source="optcgapi_market"`, `currency="USD"`) using the same
+  `catalog_item_id` every other One Piece row already uses. The FK on
+  `card_prices.card_id` is declared against `catalog_cards` (Pokémon's
+  table specifically), but it's not enforced by SQLite, and everything
+  that actually reads `card_prices` -- `_latest_prices`, `deal_check.py`'s
+  matcher, `market_search.py`'s catalogue cross-reference -- already keys
+  off this id-space rather than joining through `catalog_cards`, so this
+  works with zero reader-side changes. Append-only like the rest of
+  `card_prices`, so re-running the script periodically builds real (if
+  coarse) price history for a game that otherwise has none -- for free.
+  Added `--no-prices` to keep the catalogue-only path available.
+- 3 new tests (correct price recorded and preferring the non-parallel
+  printing's value, append-only re-run behavior, `--no-prices` skips
+  writing); full suite (680) green.
+- Run against production after a manual backup
+  (`~/backups/automation-pre-one-piece-prices-20260907-202714.db`): 2,708
+  price observations recorded (some cards legitimately appear in more
+  than one set's listing, e.g. bundled promos, hence more observations
+  than the 2,379 distinct cards). Verified via `fx.to_aud()` directly and
+  a live `/search` query against production; `ezbay.service` restarted.
+
 ## 2026-09-07 — One Piece catalogue populated from a real API
 
 Asked to "get data to the platform" -- scoped to the One Piece catalogue

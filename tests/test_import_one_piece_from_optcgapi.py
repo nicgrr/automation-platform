@@ -4,17 +4,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
-from automation_control.models import CatalogItem, TcgCard
+from automation_control.models import CardPrice, CatalogItem, TcgCard
 
 ALL_SETS = [{"set_name": "Romance Dawn", "set_id": "OP-01"}]
 
 OP01_CARDS = [
     {"card_name": "Roronoa Zoro (001)", "set_name": "Romance Dawn", "set_id": "OP-01", "rarity": "L",
-     "card_set_id": "OP01-001", "card_image": "https://example.test/OP01-001.jpg"},
+     "card_set_id": "OP01-001", "card_image": "https://example.test/OP01-001.jpg", "market_price": 2.08},
     {"card_name": "Roronoa Zoro (001) (Parallel)", "set_name": "Romance Dawn", "set_id": "OP-01", "rarity": "L",
-     "card_set_id": "OP01-001", "card_image": "https://example.test/OP01-001_p1.jpg"},
+     "card_set_id": "OP01-001", "card_image": "https://example.test/OP01-001_p1.jpg", "market_price": 568.01},
     {"card_name": "Monkey.D.Luffy (P-055) (Jolly Roger Foil)", "set_name": "Romance Dawn", "set_id": "OP-01",
-     "rarity": "SEC", "card_set_id": "P-055", "card_image": "https://example.test/P-055.jpg"},
+     "rarity": "SEC", "card_set_id": "P-055", "card_image": "https://example.test/P-055.jpg", "market_price": None},
 ]
 
 
@@ -62,6 +62,68 @@ def test_import_creates_one_row_per_physical_card_preferring_non_parallel(tmp_pa
 
         item = session.get(CatalogItem, by_number["001"].catalog_item_id)
         assert item.image_url == "https://example.test/OP01-001.jpg"
+
+
+def test_import_records_market_price_preferring_the_non_parallel_value(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 't.db'}")
+    Base.metadata.create_all(engine)
+
+    from scripts import import_one_piece_from_optcgapi as script
+    from sqlalchemy.orm import sessionmaker
+    monkeypatch.setattr(script, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(script.httpx, "Client", lambda **kwargs: _mock_client())
+    monkeypatch.setattr(script.time, "sleep", lambda *_: None)
+
+    script.main([])
+
+    with Session(engine) as session:
+        zoro = session.query(TcgCard).filter_by(number="001").one()
+        prices = session.query(CardPrice).filter_by(card_id=zoro.catalog_item_id).all()
+        assert len(prices) == 1
+        assert float(prices[0].price) == 2.08  # the non-parallel printing's price, not the parallel's 568.01
+        assert prices[0].source == "optcgapi_market"
+        assert prices[0].currency == "USD"
+
+        # P-055 had market_price=None -- no fabricated price row
+        luffy = session.query(TcgCard).filter_by(number="055").one()
+        assert session.query(CardPrice).filter_by(card_id=luffy.catalog_item_id).count() == 0
+
+
+def test_reimporting_appends_a_new_price_observation_each_time(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 't.db'}")
+    Base.metadata.create_all(engine)
+
+    from scripts import import_one_piece_from_optcgapi as script
+    from sqlalchemy.orm import sessionmaker
+    monkeypatch.setattr(script, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(script.httpx, "Client", lambda **kwargs: _mock_client())
+    monkeypatch.setattr(script.time, "sleep", lambda *_: None)
+
+    script.main([])
+    script.main([])
+
+    with Session(engine) as session:
+        zoro = session.query(TcgCard).filter_by(number="001").one()
+        # append-only, same convention as the rest of card_prices -- two
+        # runs means two observations, not one row overwritten
+        assert session.query(CardPrice).filter_by(card_id=zoro.catalog_item_id).count() == 2
+
+
+def test_no_prices_flag_skips_writing_card_prices(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 't.db'}")
+    Base.metadata.create_all(engine)
+
+    from scripts import import_one_piece_from_optcgapi as script
+    from sqlalchemy.orm import sessionmaker
+    monkeypatch.setattr(script, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(script.httpx, "Client", lambda **kwargs: _mock_client())
+    monkeypatch.setattr(script.time, "sleep", lambda *_: None)
+
+    script.main(["--no-prices"])
+
+    with Session(engine) as session:
+        assert session.query(CardPrice).count() == 0
+        assert session.query(TcgCard).filter_by(game="one_piece").count() == 2
 
 
 def test_reimporting_updates_instead_of_duplicating(tmp_path, monkeypatch):

@@ -174,6 +174,39 @@ drift), 0 skipped after fixing a regex bug caught during rehearsal (see
 CHANGELOG.md). Verified: 2,379 total one_piece rows across 46 distinct
 set codes, `PRAGMA foreign_key_check` clean, live service restarted.
 
+### One Piece pricing (done, 2026-09-07)
+Asked about a "price charting API" -- PriceCharting.com's actual cost
+turned out to be $49/month minimum for API access (their cheaper $6/mo
+tier doesn't include it), and its own docs say it doesn't support
+historic prices at all despite the name. Reported that cost before
+building anything. optcgapi.com -- the same free API used for the
+catalogue above -- already returns `market_price` in the identical
+response, at no cost, so `scripts/import_one_piece_from_optcgapi.py` was
+extended to also write it, rather than paying for a second source with a
+real monthly cost and a worse feature set.
+
+One `card_prices` row per card per run, `source="optcgapi_market"`,
+`currency="USD"` (converted to AUD downstream the same way every other
+USD-denominated source already is), `card_id` set to the card's
+`catalog_item_id`. That FK is declared against `catalog_cards`
+specifically (Pokémon's table, not One Piece's) -- it isn't enforced by
+SQLite, and every actual reader of `card_prices` (`_latest_prices`,
+`deal_check.py`'s matcher, `market_search.py`'s catalogue cross-reference)
+already keys off this same id-space rather than joining through
+`catalog_cards`, so this works today with no reader changes needed.
+Append-only, same convention as the rest of `card_prices` -- re-running
+the script adds a fresh observation rather than overwriting, so this
+becomes real (if coarse) price history over time for free, for a game
+that otherwise has none.
+
+Run against production after a manual backup
+(`~/backups/automation-pre-one-piece-prices-20260907-202714.db`): 2,708
+price observations recorded across the full catalogue (some cards appear
+in more than one set's listing -- e.g. promos bundled with several
+releases -- so observation count exceeds the 2,379 distinct cards; that's
+expected, not a data error). Verified via `fx.to_aud()` directly and via
+a live `/search` query against production.
+
 ### Module 12 — Sonny Angel / Smiski (done, 2026-09-07; ownership added 2026-09-07)
 Uses `collectible_products` (added in the Module 1 migration, previously
 empty). `/collectibles` lists/creates them (brand, series, character,
