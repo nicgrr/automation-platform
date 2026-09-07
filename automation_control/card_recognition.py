@@ -154,7 +154,7 @@ class ExtractedCollectibles(BaseModel):
     collectibles: list[ExtractedCollectible]
 
 
-def extract_collectible_details(photo_path: Path, api_key: str) -> list[ExtractedCollectible]:
+def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int = 8192) -> list[ExtractedCollectible]:
     """The Module 19 counterpart to extract_card_details, for non-TCG
     collectibles (Sonny Angel, Smiski, blind boxes) rather than cards.
     Same model, same single-image-plus-prompt shape, same contract: never
@@ -164,10 +164,13 @@ def extract_collectible_details(photo_path: Path, api_key: str) -> list[Extracte
     results land in CapturedCollectible pending human confirmation, never
     straight into the catalogue.
     """
+    # 2048 was sized for a photo of one figure. A display-cabinet shelf
+    # holds forty-odd, and a truncated response fails the schema parse and
+    # loses the whole batch -- so the ceiling is a parameter now.
     client = Anthropic(api_key=api_key)
     response = client.messages.parse(
         model=MODEL,
-        max_tokens=2048,
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": [_image_block(photo_path), {"type": "text", "text": _COLLECTIBLE_PROMPT}]}],
         output_format=ExtractedCollectibles,
     )
