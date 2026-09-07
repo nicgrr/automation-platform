@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from automation_control.config import Settings
 from automation_control.database import Base
 from automation_control.models import (
+    CollectibleProduct,
     CardPrice, CardVariant, CatalogItem, CatalogItemType, InventoryItem, TcgCard,
 )
 from scripts import import_ebay_prices as script
@@ -49,9 +50,11 @@ def patched(monkeypatch, engine):
     return engine
 
 
-def _listings(*values, currency="AUD"):
+def _listings(*values, currency="AUD", title="Divine Departure OP13-076"):
+    # titles must mention the item, or the relevance filter (correctly)
+    # discards them as unrelated results
     return {"itemSummaries": [
-        {"itemId": str(i), "title": f"listing {i}", "price": {"value": str(v), "currency": currency}}
+        {"itemId": str(i), "title": title, "price": {"value": str(v), "currency": currency}}
         for i, v in enumerate(values)
     ]}
 
@@ -59,12 +62,44 @@ def _listings(*values, currency="AUD"):
 def test_build_query_prefers_set_code_and_number():
     item = CatalogItem(id="x", item_type=CatalogItemType.TCG_CARD, name="Divine Departure")
     tcg = TcgCard(catalog_item_id="x", game="one_piece", set_code="OP13", number="076")
-    assert script.build_query(item, tcg) == "Divine Departure OP13-076"
+    assert script.build_query(item, tcg) == ("Divine Departure OP13-076", "Divine Departure")
+
+
+def test_build_query_uses_set_name_for_pokemon_rows_without_a_set_code():
+    # every pokemon row has set_id + card_sets rather than a set_code, so
+    # without this they all degraded to a bare, useless name search
+    item = CatalogItem(id="xy11-1", item_type=CatalogItemType.TCG_CARD, name="Tangela")
+    tcg = TcgCard(catalog_item_id="xy11-1", game="pokemon", set_id="xy11", number="1")
+    assert script.build_query(item, tcg, set_name="Steam Siege") == ("Tangela Steam Siege 1", "Tangela")
+
+
+def test_build_query_uses_brand_for_collectibles():
+    # regression: a Sonny Angel named "Hamburger" searched eBay for
+    # "Hamburger" and priced against kitchen gadgets
+    item = CatalogItem(id="c1", item_type=CatalogItemType.COLLECTIBLE, name="Hamburger")
+    collectible = CollectibleProduct(catalog_item_id="c1", brand="Sonny Angel", is_secret=False)
+    assert script.build_query(item, None, collectible=collectible) == ("Sonny Angel Hamburger", "Sonny Angel")
+
+
+def test_build_query_targets_the_secret_variant_when_flagged():
+    # a secret/chase figure is worth materially more than the regular one,
+    # so pricing it against regular listings understates it
+    item = CatalogItem(id="c1", item_type=CatalogItemType.COLLECTIBLE, name="Hamburger")
+    collectible = CollectibleProduct(catalog_item_id="c1", brand="Sonny Angel", is_secret=True)
+    assert script.build_query(item, None, collectible=collectible) == ("Sonny Angel Hamburger secret", "Sonny Angel")
 
 
 def test_build_query_falls_back_to_name_without_a_code():
     item = CatalogItem(id="x", item_type=CatalogItemType.TCG_CARD, name="Some Promo")
-    assert script.build_query(item, None) == "Some Promo"
+    assert script.build_query(item, None) == ("Some Promo", "Some Promo")
+
+
+def test_irrelevant_listings_are_excluded_from_pricing():
+    listings = [
+        {"title": "Sonny Angel Hamburger Mini Figure", "price": "40.00"},
+        {"title": "Hamburger Press Kitchen Gadget", "price": "5.00"},
+    ]
+    assert script._price_values(listings, "Sonny Angel") == [Decimal("40.00")]
 
 
 def test_records_low_and_median_as_separate_sources(patched):
@@ -119,7 +154,7 @@ def test_api_failure_on_one_card_does_not_abort_the_run(patched):
         session.add(InventoryItem(id="inv2", card_id=None, catalog_item_id="op13-077", variant=CardVariant.NORMAL, quantity=1))
         session.commit()
 
-    search = AsyncMock(side_effect=[EbayApiError("boom"), _listings(30, 40)])
+    search = AsyncMock(side_effect=[EbayApiError("boom"), _listings(30, 40, title="Second Card OP13-077")])
     with patch.object(script.EbaySandboxReadAdapter, "search_market", new=search):
         assert script.main([]) == 0
 

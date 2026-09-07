@@ -3,6 +3,44 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — eBay switched to production, and real prices are flowing
+
+The production keyset was returning `invalid_client`. Diagnosed it down
+to eBay's side rather than ours: an identical token request succeeded with
+sandbox credentials and failed with production ones, ruling out our code
+and the credential format. The actual cause was eBay's **Marketplace
+Account Deletion** compliance requirement — the keyset was disabled until
+either a deletion-notification webhook was implemented or an exemption was
+granted. Took the exemption route (accurate here: this app persists no
+eBay user data — only its own OAuth token and anonymous price figures),
+which avoids exposing this deliberately-private, Tailscale-only server on
+a public HTTPS endpoint.
+
+- `EBAY_ENV=production` with production credentials; `start-control-plane.sh`'s
+  guard relaxed to accept `sandbox|production` while still rejecting typos.
+  Production unlocks **reads only** — the adapter still has no mutation
+  methods and `listing_pipeline/publish.py` is still an unimplemented
+  placeholder, so no code path can create or edit a listing.
+- Cleared the stale sandbox OAuth token row, which would have been
+  mislabelled against production.
+- **Two real data-quality bugs caught before they could poison anything:**
+  every Pokémon row has an empty `set_code` (they use `set_id` +
+  `card_sets`), so all 20,479 of them were searching eBay by bare card
+  name; and collectibles had no brand in the query, so a Sonny Angel
+  called "Hamburger" was being priced against kitchen gadgets. Queries now
+  use set code + number (One Piece), set name + number (Pokémon), or
+  brand + name (collectibles), plus a relevance filter that discards
+  results whose title doesn't mention the item.
+- Secret/chase collectibles now include "secret" in the query. On the one
+  owned secret figure this moved the median from $45.81 to $198.51 -- the
+  naive query had been pricing it against regular versions of the same
+  character and understating it roughly 4x.
+- 4 new tests (Pokémon set-name queries, collectible brand queries, secret
+  variant targeting, relevance filtering). Full suite (694) green;
+  service restarted and healthy in production mode; 50 real price rows
+  written and verified; DB integrity clean. Backups taken before every
+  step.
+
 ## 2026-09-07 — Module 23: eBay active-listing prices
 
 Asked to add eBay prices. Checked what's actually possible first: eBay has

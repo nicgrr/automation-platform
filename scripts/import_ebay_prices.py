@@ -53,24 +53,54 @@ from automation_control.adapters.ebay import EbayApiError, EbaySandboxReadAdapte
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import OAuthError, configured, ebay_services
-from automation_control.models import CardPrice, CatalogItem, InventoryItem, TcgCard
+from automation_control.models import CardPrice, CardSet, CatalogItem, CollectibleProduct, InventoryItem, TcgCard
 
 DEFAULT_LIMIT = 200
 CALL_DELAY_SECONDS = 0.4
 
 
-def build_query(item: CatalogItem, tcg: TcgCard | None) -> str:
-    """What to actually search eBay for. Set code + number is the most
-    discriminating thing a card listing reliably contains ("OP13-076"),
-    so lead with it when we have one and fall back to the plain name."""
-    if tcg is not None and tcg.set_code and tcg.number:
-        return f"{item.name} {tcg.set_code}-{tcg.number}".strip()
-    return item.name
+def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = None, collectible: CollectibleProduct | None = None) -> tuple[str, str]:
+    """(search query, token that must appear in a result's title).
+
+    A bare catalogue name is far too vague to price against: this app owns
+    a Sonny Angel literally called "Hamburger", and searching eBay for
+    that returns kitchen gadgets. So each item type gets the most
+    discriminating identifier it actually has, and the second return value
+    is used to throw away results that clearly aren't the same thing:
+
+      One Piece   set code + number  ("Divine Departure OP13-076")
+      Pokémon     set name + number  ("Tangela Steam Siege 1") -- these
+                  rows have set_id/card_sets rather than a set_code
+      Collectible brand + name       ("Sonny Angel Hamburger")
+    """
+    if collectible is not None and collectible.brand:
+        # a secret/chase figure sells well above the regular version of the
+        # same character, so pricing one against the other understates it.
+        # "secret" biases eBay's own ranking toward the right variant; the
+        # relevance filter stays on brand so a differently-worded listing
+        # ("chase", or just the figure name) isn't thrown away entirely.
+        secret = " secret" if collectible.is_secret else ""
+        return f"{collectible.brand} {item.name}{secret}".strip(), collectible.brand
+    if tcg is not None:
+        if tcg.set_code and tcg.number:
+            return f"{item.name} {tcg.set_code}-{tcg.number}".strip(), item.name
+        if set_name and tcg.number:
+            return f"{item.name} {set_name} {tcg.number}".strip(), item.name
+        if tcg.number:
+            return f"{item.name} {tcg.number}".strip(), item.name
+    return item.name, item.name
 
 
-def _price_values(listings: list[dict]) -> list[Decimal]:
+def _price_values(listings: list[dict], must_contain: str | None = None) -> list[Decimal]:
+    """Prices of the listings that actually look like the thing we asked
+    for. eBay's search is fuzzy and happily returns adjacent products, so
+    a title that doesn't even mention the item is dropped rather than
+    averaged into its market price."""
     values = []
+    needle = (must_contain or "").lower().strip()
     for listing in listings:
+        if needle and needle not in (listing.get("title") or "").lower():
+            continue
         raw = listing.get("price")
         if raw is None:
             continue
@@ -84,7 +114,12 @@ def _price_values(listings: list[dict]) -> list[Decimal]:
 
 
 def _targets(session, *, price_all: bool, game: str | None, limit: int):
-    query = select(CatalogItem, TcgCard).join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id, isouter=True)
+    query = (
+        select(CatalogItem, TcgCard, CardSet.name, CollectibleProduct)
+        .join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id, isouter=True)
+        .join(CardSet, CardSet.id == TcgCard.set_id, isouter=True)
+        .join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id, isouter=True)
+    )
     if not price_all:
         owned_ids = select(InventoryItem.catalog_item_id).where(InventoryItem.catalog_item_id.isnot(None)).distinct()
         query = query.where(CatalogItem.id.in_(owned_ids))
@@ -93,12 +128,13 @@ def _targets(session, *, price_all: bool, game: str | None, limit: int):
     return session.execute(query.limit(limit)).all()
 
 
-async def _price_one(adapter, item: CatalogItem, tcg: TcgCard | None, marketplace: str) -> tuple[list[Decimal], str | None]:
-    payload = await adapter.search_market(build_query(item, tcg), limit=20, marketplace=marketplace)
+async def _price_one(adapter, item: CatalogItem, tcg: TcgCard | None, set_name: str | None, collectible: CollectibleProduct | None, marketplace: str) -> tuple[list[Decimal], str | None, int]:
+    query, must_contain = build_query(item, tcg, set_name, collectible)
+    payload = await adapter.search_market(query, limit=20, marketplace=marketplace)
     listings = normalize_market(payload)
-    values = _price_values(listings)
+    values = _price_values(listings, must_contain)
     currency = next((listing.get("currency") for listing in listings if listing.get("currency")), None)
-    return values, currency
+    return values, currency, len(listings)
 
 
 async def run(args) -> int:
@@ -127,22 +163,22 @@ async def run(args) -> int:
             return 0
         print(f"pricing {len(targets)} card(s) against eBay {settings.ebay_env} ({args.marketplace})...\n")
 
-        for index, (item, tcg) in enumerate(targets):
-            query = build_query(item, tcg)
+        for index, (item, tcg, set_name, collectible) in enumerate(targets):
+            query, _ = build_query(item, tcg, set_name, collectible)
             try:
-                values, currency = await _price_one(adapter, item, tcg, args.marketplace)
+                values, currency, seen = await _price_one(adapter, item, tcg, set_name, collectible, args.marketplace)
             except (EbayApiError, OAuthError) as exc:
                 print(f"  fail  {query}: {exc}")
                 failed += 1
                 continue
 
             if not values:
-                print(f"  none  {query}")
+                print(f"  none  {query} ({seen} result(s), none matched the item)")
                 skipped += 1
                 continue
 
             low, median = min(values), Decimal(str(statistics.median(values)))
-            print(f"  ok    {query}: {len(values)} listing(s), low {low}, median {median}")
+            print(f"  ok    {query}: {len(values)}/{seen} relevant, low {low}, median {median}")
             priced += 1
 
             if not args.dry_run:
