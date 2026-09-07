@@ -94,3 +94,31 @@ def test_page_shell_has_no_leftover_dark_theme_literals():
     rendered = page("Title", "<p>body</p>")
     for literal in ["#05070d", "#0d1220", "#0a0f1c", "#5eeaff", "#a78bfa"]:
         assert literal not in rendered, literal
+
+
+def test_navigation_drawer_is_on_every_page(client):
+    """Until this, only /dashboard listed every module -- any other page was
+    two clicks from everywhere else, via the dashboard and back out."""
+    response = client.get("/collectibles")
+    assert "class='sidenav'" in response.text
+    assert "navtoggle" in response.text
+    for path in ["/inventory", "/sales", "/suppliers", "/deal-check", "/market-search", "/export"]:
+        assert f"href='{path}'" in response.text, path
+
+
+def test_drawer_closes_on_escape_and_tracks_aria_state(client):
+    response = client.get("/collectibles")
+    assert "aria-expanded='false'" in response.text
+    assert "Escape" in response.text
+    assert "data-nav-close" in response.text
+
+
+def test_login_page_has_no_drawer(client):
+    # assert on the rendered elements, not the strings -- the stylesheet is
+    # always included, so `.navtoggle{...}` appears on every page whether
+    # or not the button does
+    app.dependency_overrides.clear()
+    response = TestClient(app).get("/login")
+    assert "class='sidenav'" not in response.text
+    assert "<button class='navtoggle'" not in response.text
+    assert "data-nav-open" not in response.text

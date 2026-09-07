@@ -13,6 +13,8 @@ a per-page rewrite. The one hardcoded literal several pages still shared
 (`#0a0f1c` for recessed input/detail backgrounds) is now `var(--surface-sunken)`.
 """
 
+from html import escape
+
 STYLE = """<style>
 :root {
   --bg: #f4f5f8;
@@ -137,11 +139,124 @@ TOPBAR_STYLE = """<style>
 .topbar-nav { display: flex; align-items: center; gap: 18px; font-size: 13.5px; color: var(--text-dim); flex: none; margin-left: auto; }
 .topbar-nav a { color: var(--text-dim); }
 .topbar-nav a:hover { color: var(--accent); text-decoration: none; }
+.navtoggle{display:inline-grid;place-items:center;width:34px;height:34px;flex:none;cursor:pointer;
+  background:transparent;border:1px solid var(--panel-border);border-radius:8px;color:var(--text-dim);padding:0}
+.navtoggle:hover{border-color:var(--accent);color:var(--accent)}
+.navtoggle svg{width:16px;height:16px}
+
+.scrim{position:fixed;inset:0;background:rgba(18,20,28,.38);opacity:0;pointer-events:none;
+  transition:opacity .16s ease;z-index:28}
+body.nav-open .scrim{opacity:1;pointer-events:auto}
+
+.sidenav{position:fixed;top:0;left:0;bottom:0;width:268px;z-index:30;background:var(--panel);
+  border-right:1px solid var(--panel-border);padding:16px 0 26px;overflow-y:auto;
+  transform:translateX(-100%);transition:transform .18s ease;box-shadow:var(--shadow-lift)}
+body.nav-open .sidenav{transform:none}
+.sidenav-head{display:flex;align-items:center;justify-content:space-between;padding:0 16px 14px;
+  border-bottom:1px solid var(--panel-border);margin-bottom:6px}
+.sidenav-brand{font-size:17px;font-weight:800;letter-spacing:-.02em}
+.sidenav-brand .mark{background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.sidenav-close{background:none;border:none;color:var(--text-dim);font-size:21px;line-height:1;
+  cursor:pointer;padding:0 4px}
+.sidenav-close:hover{color:var(--accent)}
+.navgroup{padding:10px 0 2px}
+.navgroup h4{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-faint);
+  margin:0 0 6px;padding:0 16px;font-weight:700}
+.sidenav a{display:block;padding:7px 16px;font-size:13.5px;color:var(--text);text-decoration:none}
+.sidenav a:hover{background:var(--surface-sunken);color:var(--accent);text-decoration:none}
+
 @media (max-width: 680px) {
   .topbar-nav { display: none; }
   .topbar-search { max-width: none; }
 }
 </style>"""
+
+ADMIN_NAV = [
+    ("Card capture & listings", [
+        ("/cards/capture", "Capture new card"),
+        ("/cards/capture/bulk", "Bulk upload"),
+        ("/cards/review", "Review queue"),
+        ("/cards/pricing", "Price review"),
+        ("/listings/review", "Listing review"),
+    ]),
+    ("Bulk scan & catalogue", [
+        ("/inventory", "Inventory"),
+        ("/feed", "Scan feed"),
+        ("/scan-ingest", "Status & logs"),
+        ("/review", "Review queue"),
+        ("/foil-review", "Foil review"),
+        ("/search", "Search catalogue"),
+    ]),
+    ("Buying & selling", [
+        ("/buying-calculator", "Buying calculator"),
+        ("/purchase-lots", "Purchase lots"),
+        ("/potential-stock", "Potential stock"),
+        ("/market-search", "Market search"),
+        ("/deal-check", "Deal check"),
+        ("/sales", "Sales"),
+        ("/whatnot", "Whatnot shows"),
+        ("/marketplaces", "Marketplaces"),
+    ]),
+    ("Business", [
+        ("/customers", "Customers"),
+        ("/suppliers", "Suppliers"),
+        ("/goals", "Goals"),
+        ("/release-calendar", "Release calendar"),
+        ("/sealed-products", "Sealed products"),
+        ("/collectibles", "Collectibles"),
+        ("/export", "Export data"),
+    ]),
+]
+
+
+def _sidenav_html() -> str:
+    """Every module in one drawer. Until now only /dashboard listed them
+    all, so any other page was two clicks from everywhere -- back to the
+    dashboard, then out again."""
+    groups = "".join(
+        f"<div class='navgroup'><h4>{escape(title)}</h4>"
+        + "".join(f"<a href='{href}'>{escape(label)}</a>" for href, label in links)
+        + "</div>"
+        for title, links in ADMIN_NAV
+    )
+    return (
+        "<div class='scrim' data-nav-close></div>"
+        "<aside class='sidenav' aria-label='Main navigation'>"
+        "<div class='sidenav-head'>"
+        "<a class='sidenav-brand' href='/dashboard'><span class='mark'>Ez</span>Bay</a>"
+        "<button class='sidenav-close' data-nav-close aria-label='Close navigation'>&times;</button>"
+        "</div>"
+        f"{groups}"
+        "<div class='navgroup'><h4>Storefront</h4>"
+        "<a href='#' data-shop-link target='_blank' rel='noopener'>NL Vault shop &#8599;</a>"
+        "</div>"
+        "</aside>"
+    )
+
+
+NAV_SCRIPT = """<script>
+(function(){
+  var body = document.body;
+  function set(open){
+    body.classList.toggle('nav-open', open);
+    var t = document.querySelector('.navtoggle');
+    if (t) t.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  document.querySelectorAll('[data-nav-open]').forEach(function(el){
+    el.addEventListener('click', function(){ set(true); });
+  });
+  document.querySelectorAll('[data-nav-close]').forEach(function(el){
+    el.addEventListener('click', function(){ set(false); });
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') set(false); });
+  // the shop is a separate app on its own port -- resolve it from whatever
+  // host this page is being viewed on rather than hardcoding a hostname
+  document.querySelectorAll('[data-shop-link]').forEach(function(el){
+    el.href = location.protocol + '//' + location.hostname + ':8444/';
+  });
+})();
+</script>"""
 
 _TOPBAR_NAV_LINKS = [
     ("/dashboard", "Dashboard"),
@@ -156,6 +271,9 @@ def _topbar_html(search_value: str = "") -> str:
     nav = "".join(f"<a href='{href}'>{label}</a>" for href, label in _TOPBAR_NAV_LINKS)
     return (
         "<header class='topbar'>"
+        "<button class='navtoggle' data-nav-open aria-expanded='false' aria-label='Open navigation'>"
+        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round'>"
+        "<path d='M3 6h18M3 12h18M3 18h18'/></svg></button>"
         "<a class='topbar-brand' href='/dashboard'><span class='mark'>Ez</span>Bay</a>"
         "<form class='topbar-search' method='get' action='/search'>"
         "<div class='autocomplete-wrap'>"
@@ -386,8 +504,8 @@ _PWA_HEAD = (
 
 
 def page(title: str, body: str, head_extra: str = "", show_nav: bool = True, search_value: str = "") -> str:
-    chrome = (_topbar_html(search_value) if show_nav else "")
-    script = (AUTOCOMPLETE_SCRIPT + QUICK_PRICE_SCRIPT if show_nav else "")
+    chrome = (_sidenav_html() + _topbar_html(search_value) if show_nav else "")
+    script = (AUTOCOMPLETE_SCRIPT + QUICK_PRICE_SCRIPT + NAV_SCRIPT if show_nav else "")
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"

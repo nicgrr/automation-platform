@@ -3,6 +3,29 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-08 — Navigation drawer on the admin app too
+
+The shop got a drawer; the admin didn't have one, and it needed it more.
+Only `/dashboard` listed every module, so from any other page reaching a
+different one meant going back to the dashboard and out again. Now every
+authenticated page carries the same slide-out drawer with all four groups
+(card capture, bulk scan, buying & selling, business), matching the
+storefront's interaction: hamburger toggle, scrim or Escape to close,
+`aria-expanded` kept in sync.
+
+- The drawer's link to the storefront is resolved client-side from the
+  host in use (`location.hostname + ':8444'`) rather than hardcoded, so it
+  works over Tailscale and locally without another setting to maintain.
+- `/login` deliberately renders no drawer -- there's nothing to navigate
+  to before signing in.
+- Also added a shop link to the dashboard's Business group, after landing
+  on the admin app and concluding the shop wasn't there.
+- 3 new tests. One of them caught the same false-positive trap as the
+  earlier topbar work: asserting a page lacks "navtoggle" fails even when
+  the button is absent, because the always-included stylesheet defines
+  `.navtoggle`. The assertions check rendered elements instead.
+  Full suite (730) green.
+
 ## 2026-09-08 — Storefront: side navigation and checkout
 
 - **Hideable side navigation.** A slide-out drawer rather than a permanent
