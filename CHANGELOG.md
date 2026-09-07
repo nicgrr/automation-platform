@@ -3,6 +3,24 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Bulk photo capture for collectibles
+
+- `/collectibles/capture/bulk`: select multiple photos at once, mirroring
+  the card pipeline's bulk capture exactly (`capture.py`'s `_process_photo`
+  / `_run_capture_batch` pattern) -- photos save synchronously (fast, disk
+  I/O only), then a background task extracts each one so the browser isn't
+  held open for the AI calls. Reuses the existing generic `capture_batches`
+  table (already shared infrastructure, no schema change) and
+  `/collectibles/capture/bulk/status/{id}` for progress.
+- Refactored the single-photo route's extraction+row-creation logic into
+  `_process_collectible_photo`, now shared by both the single and bulk
+  paths, same as cards' `_process_photo`.
+- 6 new tests (bulk creates one row per photo, one photo's AI failure
+  doesn't abort the rest, status page states, auth/503 gating); full suite
+  (608) green; `ezbay.service` restarted and both new routes smoke-tested
+  (401, correctly gated); production DB confirmed clean
+  (`captured_collectibles` still 0 rows).
+
 ## 2026-09-07 — Supplier products UI (closes a known gap from Phase 2)
 
 - `supplier_products` has existed since the Phase 2 migration with no UI at

@@ -19,18 +19,18 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .audit import record_event
 from .auth import require_dashboard_user
-from .card_recognition import RecognitionError, extract_collectible_details
+from .card_recognition import extract_collectible_details
 from .config import get_settings
-from .database import get_session
+from .database import SessionLocal, get_session
 from .image_processing import auto_orient
-from .models import CapturedCollectible, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
+from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["collectibles"])
@@ -150,32 +150,31 @@ def collectible_capture_page(user: str = Depends(require_dashboard_user)) -> HTM
         + "<label>Photo<input type='file' name='photo' accept='image/*' capture='environment' required></label>"
         + "<button type='submit'>Capture &amp; identify</button>"
         + "</form></div>"
+        + "<p><a href='/collectibles/capture/bulk'>Bulk upload multiple figures instead</a></p>"
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Capture collectible", body))
 
 
-@router.post("/collectibles/capture")
-async def collectible_capture_submit(
-    photo: UploadFile = File(...),
-    user: str = Depends(require_dashboard_user),
-    session: Session = Depends(get_session),
-):
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise HTTPException(status_code=503, detail="collectible recognition is not configured (ANTHROPIC_API_KEY missing)")
-
+def _save_collectible_photo(data: bytes, content_type: str | None, settings) -> Path:
     photo_id = str(uuid.uuid4())
     photo_dir = _collectible_capture_dir(settings) / photo_id
     photo_dir.mkdir(parents=True, exist_ok=True)
-    extension = mimetypes.guess_extension(photo.content_type or "") or ".jpg"
+    extension = mimetypes.guess_extension(content_type or "") or ".jpg"
     photo_path = photo_dir / f"photo{extension}"
-    photo_path.write_bytes(await photo.read())
+    photo_path.write_bytes(data)
     try:
         auto_orient(photo_path)
     except Exception:
         pass
+    return photo_path
 
+
+def _process_collectible_photo(photo_path: Path, settings, session: Session, user: str) -> list[CapturedCollectible]:
+    """Extract collectible details from an already-saved photo and create one
+    CapturedCollectible row per figure found -- or one blank row if the AI
+    call fails or finds nothing, so a photo is never silently dropped. Shared
+    by both the single-photo and bulk capture routes."""
     outcome = "success"
     blank_note = {"note": "no collectible detected in photo"}
     try:
@@ -210,8 +209,128 @@ async def collectible_capture_submit(
             resource_type="captured_collectible", resource_id=record.id, outcome=outcome,
             correlation_id=str(uuid.uuid4()), details={},
         )
+    return records
 
+
+@router.post("/collectibles/capture")
+async def collectible_capture_submit(
+    photo: UploadFile = File(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="collectible recognition is not configured (ANTHROPIC_API_KEY missing)")
+
+    photo_path = _save_collectible_photo(await photo.read(), photo.content_type, settings)
+    records = _process_collectible_photo(photo_path, settings, session, user)
     return RedirectResponse(f"/collectibles/review/{records[0].id}", status_code=303)
+
+
+def _run_collectible_capture_batch(batch_id: str, photo_paths: list[Path], settings, user: str) -> None:
+    """Background task: extract + insert every photo in a batch using its own
+    DB session, since the request-scoped session closes before this runs.
+    One photo's failure is recorded on the batch and the rest still proceed."""
+    with SessionLocal() as session:
+        batch = session.get(CaptureBatch, batch_id)
+        failure_details = dict(batch.failure_details or {})
+        for photo_path in photo_paths:
+            try:
+                records = _process_collectible_photo(photo_path, settings, session, user)
+                batch.cards_created += len(records)
+            except Exception as exc:
+                batch.failed_photos += 1
+                failure_details[str(photo_path)] = str(exc)
+                record_event(session, actor_type="user", actor_id=user, action="collectible.capture", resource_type="captured_collectible", resource_id=None, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc), "path": str(photo_path)})
+            batch.processed_photos += 1
+            batch.failure_details = failure_details
+            session.commit()
+        batch.status = CaptureBatchStatus.DONE
+        batch.finished_at = datetime.now(UTC)
+        session.commit()
+
+
+@router.get("/collectibles/capture/bulk", response_class=HTMLResponse)
+def collectible_capture_bulk_page(user: str = Depends(require_dashboard_user)) -> HTMLResponse:
+    body = (
+        brand_header("Bulk capture collectibles")
+        + "<p class='subtitle'>Select multiple photos at once -- each becomes its own review-queue entry. "
+          "Processing happens in the background, so you can close this page after submitting and check back "
+          "on the status page later.</p>"
+        + "<div class='panel'><form method='post' action='/collectibles/capture/bulk' enctype='multipart/form-data' class='calc-form'>"
+        + "<label>Photos<input type='file' name='photos' accept='image/*' multiple required></label>"
+        + "<button type='submit'>Identify all</button>"
+        + "</form></div>"
+        + _STYLE
+    )
+    return HTMLResponse(page("EzBay — Bulk capture collectibles", body))
+
+
+@router.post("/collectibles/capture/bulk")
+async def collectible_capture_bulk_submit(
+    background_tasks: BackgroundTasks,
+    photos: list[UploadFile] = File(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="collectible recognition is not configured (ANTHROPIC_API_KEY missing)")
+
+    photo_paths: list[Path] = []
+    save_failures: dict[str, str] = {}
+    for photo in photos:
+        if not (photo and photo.filename):
+            continue
+        try:
+            photo_paths.append(_save_collectible_photo(await photo.read(), photo.content_type, settings))
+        except Exception as exc:
+            save_failures[photo.filename or "unnamed"] = str(exc)
+            record_event(session, actor_type="user", actor_id=user, action="collectible.capture", resource_type="captured_collectible", resource_id=None, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc), "filename": photo.filename})
+
+    batch = CaptureBatch(
+        total_photos=len(photo_paths) + len(save_failures),
+        processed_photos=len(save_failures),
+        failed_photos=len(save_failures),
+        failure_details=save_failures,
+        started_by=user,
+    )
+    session.add(batch)
+    session.commit()
+
+    background_tasks.add_task(_run_collectible_capture_batch, batch.id, photo_paths, settings, user)
+    return RedirectResponse(f"/collectibles/capture/bulk/status/{batch.id}", status_code=303)
+
+
+@router.get("/collectibles/capture/bulk/status/{batch_id}", response_class=HTMLResponse)
+def collectible_capture_bulk_status(batch_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+    batch = session.get(CaptureBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="batch not found")
+
+    done = batch.status == CaptureBatchStatus.DONE
+    head_extra = "" if done else "<meta http-equiv='refresh' content='3'>"
+
+    failure_html = ""
+    if batch.failure_details:
+        items = "".join(f"<li>{escape(str(key))}: {escape(str(err))}</li>" for key, err in batch.failure_details.items())
+        failure_html = f"<div class='panel'><h2>{batch.failed_photos} photo(s) failed</h2><ul class='events'>{items}</ul></div>"
+
+    if done:
+        status_line = (
+            f"<p>{batch.cards_created} figure(s) captured from {batch.total_photos} photo(s), queued for review.</p>"
+            + "<p><a class='btn' href='/collectibles/review'>Go to review queue</a></p>"
+        )
+    else:
+        status_line = f"<p>Processing in the background &mdash; {batch.processed_photos} of {batch.total_photos} photo(s) done so far. This page refreshes automatically; feel free to close it and check back later.</p>"
+
+    body = (
+        brand_header("Bulk capture" + (" — done" if done else " — processing"))
+        + f"<div class='panel'><h2>{'Done' if done else 'Processing...'}</h2>{status_line}</div>"
+        + failure_html
+        + _STYLE
+    )
+    return HTMLResponse(page("EzBay — Bulk capture status", body, head_extra=head_extra))
 
 
 @router.get("/collectibles/review", response_class=HTMLResponse)

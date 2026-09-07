@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
@@ -14,22 +14,31 @@ from automation_control.models import CapturedCollectible, CardCaptureStatus, Ca
 
 
 @pytest.fixture
-def session(tmp_path):
-    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 't.db'}", connect_args={"check_same_thread": False})
+def engine(tmp_path):
+    # File-based, not :memory:: bulk capture's background task opens its own
+    # DB session on its own connection (from a different thread), same
+    # reason test_card_capture_routes.py uses a real file.
+    return create_engine(f"sqlite+pysqlite:///{tmp_path / 't.db'}", connect_args={"check_same_thread": False})
+
+
+@pytest.fixture
+def session(engine):
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         yield db
 
 
 @pytest.fixture
-def client(session, tmp_path):
+def client(session, engine, tmp_path):
     original_api_key = app.state.settings.anthropic_api_key
     original_dir = app.state.settings.captured_cards_dir
     app.state.settings.anthropic_api_key = "test-key"
     app.state.settings.captured_cards_dir = str(tmp_path / "captured_cards")
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[require_dashboard_user] = lambda: "testuser"
-    yield TestClient(app)
+    test_session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with patch("automation_control.collectibles.SessionLocal", test_session_factory):
+        yield TestClient(app)
     app.dependency_overrides.clear()
     app.state.settings.anthropic_api_key = original_api_key
     app.state.settings.captured_cards_dir = original_dir
@@ -201,3 +210,84 @@ def test_collectibles_page_shows_pending_review_count(client, session):
     resp = client.get("/collectibles")
     assert resp.status_code == 200
     assert "Review queue (1)" in resp.text
+
+
+def test_bulk_capture_page_requires_auth():
+    app.dependency_overrides.clear()
+    resp = TestClient(app).get("/collectibles/capture/bulk")
+    assert resp.status_code == 401
+
+
+def test_bulk_capture_without_api_key_returns_503(client):
+    app.state.settings.anthropic_api_key = None
+    resp = client.post("/collectibles/capture/bulk", files=[("photos", ("f1.jpg", io.BytesIO(b"one"), "image/jpeg"))])
+    assert resp.status_code == 503
+
+
+def test_bulk_capture_creates_one_row_per_photo(client, session):
+    fake = ExtractedCollectible(brand="Sonny Angel", series="Fruits", character="Peach", variant="", is_secret=False, blind_box_series="", unreadable_fields=[])
+    with patch("automation_control.collectibles.extract_collectible_details", return_value=[fake]):
+        resp = client.post(
+            "/collectibles/capture/bulk",
+            files=[
+                ("photos", ("f1.jpg", io.BytesIO(b"one"), "image/jpeg")),
+                ("photos", ("f2.jpg", io.BytesIO(b"two"), "image/jpeg")),
+                ("photos", ("f3.jpg", io.BytesIO(b"three"), "image/jpeg")),
+            ],
+            follow_redirects=False,
+        )
+
+    # background task runs to completion within the TestClient call, so by
+    # the time we get the redirect, processing has already finished.
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/collectibles/capture/bulk/status/")
+    rows = session.query(CapturedCollectible).all()
+    assert len(rows) == 3
+    assert all(r.status == CardCaptureStatus.PENDING_REVIEW for r in rows)
+
+    session.expire_all()
+    status_resp = client.get(resp.headers["location"])
+    assert status_resp.status_code == 200
+    assert "3 figure(s) captured from 3 photo(s)" in status_resp.text
+    assert "Done" in status_resp.text
+
+
+def test_bulk_capture_one_photo_failure_does_not_abort_the_rest(client, session):
+    fake = ExtractedCollectible(brand="Sonny Angel", series="Fruits", character="Peach", variant="", is_secret=False, blind_box_series="", unreadable_fields=[])
+    with patch("automation_control.collectibles.extract_collectible_details", side_effect=[[fake], RuntimeError("boom"), [fake]]):
+        resp = client.post(
+            "/collectibles/capture/bulk",
+            files=[
+                ("photos", ("ok1.jpg", io.BytesIO(b"one"), "image/jpeg")),
+                ("photos", ("broken.jpg", io.BytesIO(b"two"), "image/jpeg")),
+                ("photos", ("ok2.jpg", io.BytesIO(b"three"), "image/jpeg")),
+            ],
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    # the "broken" photo still gets a blank row -- extract_collectible_details
+    # raising is handled inside _process_collectible_photo, not treated as a
+    # batch-level save failure (that path is only for disk-write errors).
+    assert session.query(CapturedCollectible).count() == 3
+    session.expire_all()
+    status_resp = client.get(resp.headers["location"])
+    assert "3 figure(s) captured from 3 photo(s)" in status_resp.text
+
+
+def test_bulk_capture_status_page_404_for_unknown_batch(client):
+    resp = client.get("/collectibles/capture/bulk/status/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_bulk_capture_status_page_shows_progress_while_running(client, session):
+    from automation_control.models import CaptureBatch, CaptureBatchStatus
+
+    batch = CaptureBatch(id="batch1", total_photos=5, processed_photos=2, cards_created=2, status=CaptureBatchStatus.RUNNING, started_by="testuser")
+    session.add(batch)
+    session.commit()
+
+    resp = client.get("/collectibles/capture/bulk/status/batch1")
+    assert resp.status_code == 200
+    assert "2 of 5" in resp.text
+    assert "refresh" in resp.text.lower()
