@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from automation_control.card_recognition import ExtractedCard, ExtractedCards, RecognitionError, RotationCheck, _image_block, detect_rotation, extract_card_details
+from automation_control.card_recognition import ExtractedCard, ExtractedCards, ExtractedListing, ExtractedListingItem, RecognitionError, RotationCheck, _image_block, detect_rotation, extract_card_details, extract_listing_items
 
 
 def test_image_block_base64_encodes_file(tmp_path):
@@ -182,3 +182,49 @@ def test_detect_rotation_returns_degrees_from_response(tmp_path):
         assert call_kwargs["output_format"] is RotationCheck
         content = call_kwargs["messages"][0]["content"]
         assert [block["type"] for block in content] == ["image", "text"]
+
+
+def test_extract_listing_items_with_text_only_sends_no_image():
+    fake_item = ExtractedListingItem(description="Divine Departure", set_code="OP13", card_number="076", condition="NM", asking_price=185.0, unreadable_fields=[])
+    fake_response = MagicMock(parsed_output=ExtractedListing(items=[fake_item]))
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        mock_client = MockAnthropic.return_value
+        mock_client.messages.parse.return_value = fake_response
+
+        result = extract_listing_items("fake-key", text="One Piece Card Divine Departure OP13-076 NM - $185 ONO")
+
+        assert result == [fake_item]
+        call_kwargs = mock_client.messages.parse.call_args.kwargs
+        assert call_kwargs["output_format"] is ExtractedListing
+        content = call_kwargs["messages"][0]["content"]
+        assert [block["type"] for block in content] == ["text", "text"]
+
+
+def test_extract_listing_items_with_photo_only_sends_an_image(tmp_path):
+    photo = tmp_path / "listing.jpg"
+    photo.write_bytes(b"photo-bytes")
+    fake_response = MagicMock(parsed_output=ExtractedListing(items=[]))
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        mock_client = MockAnthropic.return_value
+        mock_client.messages.parse.return_value = fake_response
+
+        result = extract_listing_items("fake-key", photo_path=photo)
+
+        assert result == []
+        content = mock_client.messages.parse.call_args.kwargs["messages"][0]["content"]
+        assert [block["type"] for block in content] == ["image", "text"]
+
+
+def test_extract_listing_items_with_neither_photo_nor_text_raises():
+    with pytest.raises(RecognitionError):
+        extract_listing_items("fake-key")
+
+
+def test_extract_listing_items_raises_recognition_error_on_unparseable_response():
+    fake_response = MagicMock(parsed_output=None)
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value.messages.parse.return_value = fake_response
+        with pytest.raises(RecognitionError):
+            extract_listing_items("fake-key", text="something")

@@ -176,6 +176,69 @@ def extract_collectible_details(photo_path: Path, api_key: str) -> list[Extracte
     return response.parsed_output.collectibles
 
 
+_LISTING_PROMPT = (
+    "The following is a marketplace listing for one or more trading cards -- "
+    "either a screenshot/photo of the listing text, or the text itself. "
+    "Extract every distinct card being offered as a separate item. For each, "
+    "extract: description (the character/card name and any descriptive title "
+    "text, e.g. \"Divine Departure\" or \"Alternate Art\"), set_code (the "
+    "letter+number prefix before a dash in a set/card code, e.g. \"OP13\" "
+    "from \"OP13-076\", or \"PRB02\" from \"PRB02-001\" -- leave unreadable if "
+    "the listing gives no such code), card_number (the digits after the dash, "
+    "preserving any leading zeros, e.g. \"076\"), condition (e.g. \"NM\", "
+    "\"LP\", or \"unknown\" if not stated), and asking_price (the numeric "
+    "price only -- ignore \"ONO\"/\"OBO\"/\"obo\" wording and currency "
+    "symbols). If a field isn't clearly present for a given item, list its "
+    "name in that item's unreadable_fields rather than guessing a value. If "
+    "no price is stated at all for an item, list asking_price in "
+    "unreadable_fields and use 0 as its value. If nothing resembling a card "
+    "listing is present, return an empty list."
+)
+
+
+class ExtractedListingItem(BaseModel):
+    description: str
+    set_code: str
+    card_number: str
+    condition: str
+    asking_price: float
+    unreadable_fields: list[str]
+
+
+class ExtractedListing(BaseModel):
+    items: list[ExtractedListingItem]
+
+
+def extract_listing_items(api_key: str, photo_path: Path | None = None, text: str | None = None) -> list[ExtractedListingItem]:
+    """Read a marketplace listing (a screenshot/photo of one, pasted text,
+    or both) and extract each card being offered with its asking price --
+    the text-based counterpart to extract_card_details, which reads a photo
+    of the physical card itself rather than a seller's description of it.
+    At least one of photo_path/text must be given. Same contract as the
+    other extract_* functions: an empty list means nothing was found, not
+    an error; RecognitionError means the model's response didn't parse.
+    """
+    if photo_path is None and not (text and text.strip()):
+        raise RecognitionError("extract_listing_items needs a photo, some text, or both")
+
+    content: list[dict] = []
+    if photo_path is not None:
+        content.append(_image_block(photo_path))
+    if text and text.strip():
+        content.append({"type": "text", "text": f"Listing text:\n\n{text.strip()}"})
+    content.append({"type": "text", "text": _LISTING_PROMPT})
+
+    client = Anthropic(api_key=api_key)
+    response = client.messages.parse(
+        model=MODEL, max_tokens=4096,
+        messages=[{"role": "user", "content": content}],
+        output_format=ExtractedListing,
+    )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return a response matching the expected schema for a listing")
+    return response.parsed_output.items
+
+
 def detect_rotation(image_path: Path, api_key: str) -> int:
     """Ask the AI how many degrees clockwise a single already-saved photo
     needs to be rotated to be upright. Used for retroactively fixing photos

@@ -3,6 +3,40 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 22: deal check (read a listing's text, not just a physical card)
+
+Prompted by a real example: a screenshot of a Facebook Marketplace-style
+listing description with ten One Piece cards, each with a set/number code
+and an asking price ("OP13-076 ... $185 ONO"). Every AI recognition path
+built so far reads a *photo of the physical card* (`extract_card_details`)
+or a *photo of a collectible* (`extract_collectible_details`) -- nothing
+read a seller's own description of what they're offering.
+
+- `card_recognition.py`: new `extract_listing_items()` -- takes a photo of
+  a listing, pasted listing text, or both, and extracts every item as
+  `{description, set_code, card_number, condition, asking_price}`. Same
+  contract as the other `extract_*` functions (empty list means nothing
+  found; `RecognitionError` means the response didn't parse).
+- New `automation_control/deal_check.py`: `GET /deal-check` (paste text
+  and/or upload a screenshot) and `POST /deal-check/extract`. Matches each
+  item against `tcg_cards` by `(set_code, card_number)` -- not by name,
+  since a listing's free-text title won't reliably match a stored card
+  name the way an exact code does -- and reuses `buying.py`'s existing
+  traffic-light verdict (GREEN/YELLOW/RED) when a match has real market
+  data. Honest when it doesn't: a matched One Piece card (or any non-Pokémon
+  game) shows "no price data" rather than a fabricated verdict, since
+  `card_prices` has no feed for those games yet -- see DATABASE.md.
+- Caught a real bug via the test suite before it shipped: CSV-imported
+  card numbers keep their source zero-padding ("062"), but the AI-extracted
+  number was being de-padded before matching, so a padded stored number
+  never matched. Fixed by trying both forms.
+- 12 new tests for the endpoint (matched-priced, matched-unpriced,
+  unmatched, missing-code fallback, multi-item, failure handling,
+  photo-only submission) plus 4 for `extract_listing_items` itself
+  (text-only, photo-only, neither-provided, unparseable response). Full
+  suite (672) green; `ezbay.service` restarted; both routes smoke-tested
+  (401, correctly gated); production DB confirmed clean.
+
 ## 2026-09-07 — Photo uploads now offer the library, not just the camera
 
 Three photo inputs (`/cards/capture`'s front/back photos, `/collectibles/capture`'s
