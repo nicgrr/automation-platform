@@ -3,6 +3,30 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — eBay prices now surface in inventory valuation
+
+Spotted while answering "does this reflect on the Pokémon cards I have
+scanned?": the eBay prices were being written but never displayed. The
+inventory and dashboard look prices up by `(card_id, variant)`, while eBay
+rows are deliberately stored with `variant=None` (an eBay listing usually
+doesn't say whether it's a reverse holo), so the lookup never matched them
+and kept showing the older pokemonpricetracker figure.
+
+- New `_latest_ebay_prices()` keyed by card alone rather than
+  (card, variant), using `ebay_active_low` — the conservative figure —
+  rather than the median, which skews high on active listings and would
+  overstate holdings.
+- `/inventory/set/{id}` shows the eBay figure as a separate "eBay low"
+  line beside the variant-accurate price, and falls back to it (clearly
+  badged) when no variant-specific price exists. A real variant price is
+  never overridden.
+- The same fallback applied to set totals and the dashboard's inventory
+  value, so the three can't disagree about what a holding is worth.
+- 4 new tests covering both behaviours plus the two things that must not
+  happen: eBay overriding a variant price, and the median being used for
+  valuation. Full suite (698) green; verified against real production
+  data after restart.
+
 ## 2026-09-07 — eBay switched to production, and real prices are flowing
 
 The production keyset was returning `invalid_client`. Diagnosed it down

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from .auth import require_dashboard_user
 from .charts import CHART_STYLE, bar_list, donut_chart, donut_legend, gauge_chart
 from .database import get_session
-from .inventory_review import _aud, _latest_prices
+from .inventory_review import _aud, _latest_ebay_prices, _latest_prices
 from .models import (
     AuditEvent, CapturedCard, CardCaptureStatus, InventoryItem, Marketplace,
     PendingListing, ListingBuildStatus, PotentialPurchase, PotentialPurchaseStatus,
@@ -57,12 +57,16 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     # -- inventory value + pricing-coverage gauge --
     items = session.scalars(select(InventoryItem)).all()
     prices = _latest_prices(session, {i.card_id for i in items})
+    ebay_prices = _latest_ebay_prices(session, {i.card_id for i in items})
     market_value = 0.0
     priced_count = 0
     game_values: dict[str, float] = {}
     tcg_games = {row[0]: row[1] for row in session.execute(select(TcgCard.catalog_item_id, TcgCard.game)).all()}
     for i in items:
-        price = prices.get((i.card_id, i.variant))
+        # falls back to the variant-agnostic eBay figure exactly like
+        # /inventory does, so the dashboard's total can't disagree with
+        # the page it links to
+        price = prices.get((i.card_id, i.variant)) or ebay_prices.get(i.card_id)
         value = _aud(price, i.quantity) or 0.0
         if price is not None:
             priced_count += 1

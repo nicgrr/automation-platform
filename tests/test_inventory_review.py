@@ -561,3 +561,55 @@ def test_adjust_rejects_unknown_card_and_action(client, session, tmp_path):
                                                   "action": "add"}, follow_redirects=False).status_code == 404
     assert client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
                                                   "action": "explode"}, follow_redirects=False).status_code == 400
+
+
+# --- eBay active-listing prices --------------------------------------------
+
+def _add_ebay_price(session, card_id, price, source="ebay_active_low"):
+    # stored with variant=None on purpose: an eBay search can't reliably
+    # tell a reverse holo from a normal print
+    session.add(CardPrice(card_id=card_id, variant=None, source=source, price=Decimal(str(price)), currency="AUD"))
+    session.commit()
+
+
+def test_ebay_price_shows_alongside_a_variant_specific_price(client, session):
+    _seed(session, card_id="xy11-31", price=Decimal("2.50"), currency="USD")  # -> $5.00 AUD at the pinned rate
+    _add_ebay_price(session, "xy11-31", "9.99")
+
+    resp = client.get(SET_PAGE)
+
+    assert "$5.00" in resp.text          # variant-accurate price still leads
+    assert "eBay low $9.99" in resp.text  # eBay shown as a separate reference
+
+
+def test_ebay_price_fills_in_when_no_variant_price_exists(client, session):
+    _seed(session, card_id="xy11-32", number="32", name="Samurott", price=None)
+    _add_ebay_price(session, "xy11-32", "12.00")
+
+    resp = client.get(SET_PAGE)
+
+    assert "$12.00" in resp.text
+    # and it's labelled, so a variant-agnostic figure is never mistaken
+    # for a variant-specific one
+    assert "price-src" in resp.text
+
+
+def test_variant_specific_price_is_never_overridden_by_ebay(client, session):
+    _seed(session, card_id="xy11-33", number="33", name="Oshawott", price=Decimal("1.00"), currency="USD")
+    _add_ebay_price(session, "xy11-33", "99.00")
+
+    resp = client.get(SET_PAGE)
+
+    assert "$2.00" in resp.text  # the real variant price, not the eBay one
+    assert ">$99.00<" not in resp.text  # eBay figure isn't presented as the price
+
+
+def test_ebay_median_is_not_used_for_valuation(client, session):
+    """Only ebay_active_low feeds valuation -- the median skews high on
+    active listings and would overstate what holdings are worth."""
+    _seed(session, card_id="xy11-34", number="34", name="Mienfoo", price=None)
+    _add_ebay_price(session, "xy11-34", "50.00", source="ebay_active_median")
+
+    resp = client.get(SET_PAGE)
+
+    assert "$50.00" not in resp.text

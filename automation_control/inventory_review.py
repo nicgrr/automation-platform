@@ -105,6 +105,35 @@ def _latest_prices(session: Session, card_ids: set[str]) -> dict[tuple[str, Card
     return latest
 
 
+EBAY_PRICE_SOURCE = "ebay_active_low"
+
+
+def _latest_ebay_prices(session: Session, card_ids: set[str]) -> dict[str, CardPrice]:
+    """Most recent eBay active-listing price per card, keyed by card alone
+    rather than (card, variant) like _latest_prices.
+
+    An eBay search can't reliably tell a reverse holo from a normal print
+    -- listings often don't say -- so these are deliberately stored with
+    variant=None rather than claiming a precision they don't have. That
+    also means they can't be looked up the variant-accurate way, hence
+    this separate helper. `ebay_active_low` (the cheapest active listing)
+    is used rather than the median: it's the more conservative figure to
+    value your own holdings against.
+    """
+    if not card_ids:
+        return {}
+    rows = session.scalars(
+        select(CardPrice)
+        .where(CardPrice.card_id.in_(card_ids), CardPrice.source == EBAY_PRICE_SOURCE)
+        .order_by(CardPrice.fetched_at.desc())
+    )
+    latest: dict[str, CardPrice] = {}
+    for row in rows:
+        if row.card_id not in latest:
+            latest[row.card_id] = row
+    return latest
+
+
 def _aud(price: CardPrice | None, quantity: int = 1) -> float | None:
     if price is None:
         return None
@@ -203,11 +232,16 @@ def inventory_sets(
         .where(CatalogCard.set_id.in_(set_ids))
     ))
     prices = _latest_prices(session, {i.card_id for i in items})
+    ebay_prices = _latest_ebay_prices(session, {i.card_id for i in items})
     set_of = {c.id: c.set_id for c in session.scalars(select(CatalogCard).where(CatalogCard.id.in_({i.card_id for i in items})))}
 
     value_by_set: dict[str, float] = {}
     for item in items:
+        # same fallback as the per-card grid, so set totals and card tiles
+        # can't disagree about what a holding is worth
         line = _aud(prices.get((item.card_id, item.variant)), item.quantity)
+        if line is None:
+            line = _aud(ebay_prices.get(item.card_id), item.quantity)
         if line:
             value_by_set[set_of[item.card_id]] = value_by_set.get(set_of[item.card_id], 0.0) + line
 
@@ -321,6 +355,7 @@ def inventory_set(
         held_by.setdefault((item.card_id, item.variant), []).append(item)
 
     prices = _latest_prices(session, {c.id for c in catalog_cards})
+    ebay_prices = _latest_ebay_prices(session, {c.id for c in catalog_cards})
     printed = card_set.printed_total or len(catalog_cards)
 
     # One row per (card, printing) -- the same card in normal and reverse
@@ -335,9 +370,18 @@ def inventory_set(
             quantity = sum(i.quantity for i in held)
             if owned_only and not quantity:
                 continue
+            # The variant-accurate price wins when there is one; the eBay
+            # figure fills the gap when there isn't, rather than showing
+            # nothing for a card we do have a market signal for. Which one
+            # is being shown is always labelled, so a variant-agnostic
+            # number is never mistaken for a variant-specific one.
+            variant_price = _aud(prices.get((card.id, variant)))
+            ebay_price = _aud(ebay_prices.get(card.id))
             rows.append({
                 "card": card, "variant": variant, "quantity": quantity, "held": held,
-                "price": _aud(prices.get((card.id, variant))),
+                "price": variant_price if variant_price is not None else ebay_price,
+                "from_ebay": variant_price is None and ebay_price is not None,
+                "ebay_price": ebay_price,
             })
 
     if sort == "value_desc":
@@ -381,8 +425,14 @@ def inventory_set(
             f"<div class='card-sub'>{escape(card_set.name)}</div>"
             f"<div class='card-sub'>{escape(card.rarity or 'Unknown')} &bull; {escape(card.number)}/{printed}</div>"
             f"<div class='card-sub'>{escape(variant.value.replace('_', ' ').title())}</div>"
-            f"<div class='card-price'>{_money(row['price'])}</div>"
-            f"<div class='card-qty{'' if quantity else ' zero'}'>Qty: {quantity}</div>"
+            f"<div class='card-price'>{_money(row['price'])}"
+            + ("<span class='price-src'>eBay</span>" if row["from_ebay"] else "")
+            + "</div>"
+            + (
+                f"<div class='card-ebay'>eBay low {_money(row['ebay_price'])}</div>"
+                if row["ebay_price"] is not None and not row["from_ebay"] else ""
+            )
+            + f"<div class='card-qty{'' if quantity else ' zero'}'>Qty: {quantity}</div>"
             + _edit_controls(set_id, card, variant, quantity, sort, owned_only)
             + "</div>"
         )
@@ -622,6 +672,9 @@ a.card-tile:hover{border-color:var(--accent)}
 .card-name{font-weight:650;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card-sub{font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card-price{font-size:15px;font-weight:600;margin-top:6px}
+.price-src{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--accent);background:var(--neutral-bg);padding:1px 6px;border-radius:999px;margin-left:6px;vertical-align:middle}
+.card-ebay{font-size:11px;color:var(--text-dim);margin-top:2px}
 .card-qty{font-size:12px;color:var(--text-dim)}
 .card-qty.zero{color:var(--text-dim);opacity:.75}
 
