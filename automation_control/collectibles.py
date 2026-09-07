@@ -151,13 +151,13 @@ def collectibles_page(
         "<tr>"
         f"<td>{escape(item.name)}</td>"
         f"<td class='muted'>{escape(cp.brand or '—')}</td>"
-        f"<td class='muted'>{escape(cp.series or '—')}</td>"
-        f"<td class='muted'>{escape(cp.variant or '—')}</td>"
+        f"<td class='muted opt'>{escape(cp.series or '—')}</td>"
+        f"<td class='muted opt'>{escape(cp.variant or '—')}</td>"
         f"<td>{pill('secret', 'warn') if cp.is_secret else '—'}</td>"
         f"<td>{owned_by_item.get(item.id, 0)}</td>"
-        f"<td class='num'>{money(low_of(item.id))}</td>"
+        f"<td class='num opt'>{money(low_of(item.id))}</td>"
         f"<td class='num strong'>{money(median_of(item.id))}</td>"
-        f"<td class='num muted'>{f'${cp.retail_price:,.2f}' if cp.retail_price else '&mdash;'}</td>"
+        f"<td class='num muted opt'>{f'${cp.retail_price:,.2f}' if cp.retail_price else '&mdash;'}</td>"
         "</tr>"
         for item, cp in rows
     ) or "<tr><td colspan=9>No collectibles match those filters.</td></tr>"
@@ -182,9 +182,10 @@ def collectibles_page(
     table = (
         f"<p class='subtitle'>{len(rows)} catalogued · {priced_count} with an eBay price.</p>"
         + "<div class='panel'><div class='table-wrap'><table>"
-        "<thead><tr><th>Name</th><th>Brand</th><th>Series</th><th>Variant</th><th></th>"
-        "<th>Owned</th><th class='num'>eBay low</th><th class='num'>eBay median</th>"
-        "<th class='num'>Retail</th></tr></thead>"
+        "<thead><tr><th>Name</th><th class='opt'>Brand</th><th class='opt'>Series</th>"
+        "<th class='opt'>Variant</th><th></th>"
+        "<th>Owned</th><th class='num opt'>eBay low</th><th class='num'>eBay median</th>"
+        "<th class='num opt'>Retail</th></tr></thead>"
         f"<tbody>{table_rows}</tbody></table></div>"
         "<p class='muted' style='margin:10px 0 0;font-size:12.5px'>eBay figures are "
         "<strong>active listing</strong> asking prices, not completed sales &mdash; an upper "
@@ -211,7 +212,8 @@ def collectibles_page(
         + "<p class='subtitle'>Module 12 -- Sonny Angel, Smiski, blind boxes, with real ownership tracking "
           "(quantity owned, not just catalogued).</p>"
         + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
-          f"<a href='/collectibles/review'>Review queue ({pending_count})</a></p></div>"
+          f"<a href='/collectibles/review'>Review queue ({pending_count})</a> &nbsp; "
+          f"<a href='/collectibles/identify'>Identify from a link</a></p></div>"
         + filters + table + form + _COLLECTIBLE_LIST_STYLE + _STYLE
     )
     return HTMLResponse(page("EzBay — Collectibles", body))
@@ -657,6 +659,15 @@ _COLLECTIBLE_LIST_STYLE = """<style>
 .filters .field.checkbox input{width:auto}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 td.num.strong{font-weight:600}
+/* A nine-column table on a phone puts the prices past the right edge,
+   where they may as well not exist -- this is a list you read on mobile.
+   Drop to what the question actually needs: which figure, is it a secret,
+   how many, what's it worth. */
+@media (max-width:760px){
+  .opt{display:none}
+  table{white-space:normal}
+  td:first-child{font-weight:600}
+}
 </style>"""
 
 _REVIEW_STYLE = """<style>

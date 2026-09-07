@@ -16,6 +16,7 @@ from .auth import create_session, require_dashboard_user, verify_password
 from .business_records import router as business_records_router
 from .buying import router as buying_router
 from .capture import router as cards_router
+from .collectible_link import router as collectible_link_router
 from .collectibles import router as collectibles_router
 from .commerce import router as commerce_router
 from .config import Settings, get_settings
@@ -69,6 +70,7 @@ app.include_router(business_records_router)
 app.include_router(sealed_economics_router)
 app.include_router(analytics_router)
 app.include_router(collectibles_router)
+app.include_router(collectible_link_router)
 app.include_router(whatnot_router)
 app.include_router(price_history_router)
 app.include_router(dashboard_router)

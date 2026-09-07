@@ -266,3 +266,60 @@ def detect_rotation(image_path: Path, api_key: str) -> int:
         output_format=RotationCheck,
     )
     return response.parsed_output.rotation_degrees
+
+
+_COLLECTIBLE_LISTING_PROMPT = (
+    "The text below is a marketplace listing (eBay, Facebook Marketplace, a "
+    "shop page) for one or more collectible figures -- Sonny Angel, Smiski or "
+    "similar blind-box vinyl figures. It is raw page text and will contain "
+    "navigation, related items and other noise; identify only the figure the "
+    "listing is actually SELLING. Extract: brand (e.g. \"Sonny Angel\"), "
+    "series (the theme line, e.g. \"Fruit Series\", \"Animal Series 4\", "
+    "\"Hippers Harvest Series\"), character (the specific motif, e.g. "
+    "\"Peach\"), variant, is_secret (true only if the listing says secret, "
+    "chase, or rare -- never inferred from a high price alone), quantity "
+    "(how many figures are included; 1 unless it clearly says otherwise), "
+    "is_sealed (true if it's an unopened blind box rather than a loose "
+    "figure), asking_price (the numeric price only, no currency symbol; 0 if "
+    "no price is stated) and currency (e.g. \"AUD\", \"USD\"). Put the name "
+    "of any field you cannot determine into unreadable_fields rather than "
+    "guessing it. If the text is not a listing for a collectible figure at "
+    "all, return an empty list."
+)
+
+
+class ExtractedCollectibleListing(BaseModel):
+    brand: str
+    series: str
+    character: str
+    variant: str
+    is_secret: bool
+    quantity: int
+    is_sealed: bool
+    asking_price: float
+    currency: str
+    unreadable_fields: list[str]
+
+
+class ExtractedCollectibleListings(BaseModel):
+    listings: list[ExtractedCollectibleListing]
+
+
+def extract_collectible_listing(text: str, api_key: str, max_tokens: int = 2048) -> list[ExtractedCollectibleListing]:
+    """Identify the collectible a marketplace listing is selling.
+
+    Text rather than an image, because the input is a pasted link whose
+    page has been fetched. Same contract as the other extractors: an empty
+    list means "nothing recognizable", which is a normal answer, not an
+    error.
+    """
+    client = Anthropic(api_key=api_key)
+    response = client.messages.parse(
+        model=MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": f"{_COLLECTIBLE_LISTING_PROMPT}\n\n---\n\n{text[:60000]}"}],
+        output_format=ExtractedCollectibleListings,
+    )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return a response matching the expected schema for a collectible listing")
+    return response.parsed_output.listings
