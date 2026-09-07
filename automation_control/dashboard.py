@@ -46,6 +46,10 @@ def _review_queue_size(settings) -> int:
 @router.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
     settings = request.app.state.settings
+    # the storefront is a separate application on its own port; derive
+    # its URL from the host in use so this link works over Tailscale and
+    # locally without another setting to keep in sync
+    storefront_url = f"{request.url.scheme}://{request.url.hostname}:8444/"
 
     # -- pipeline counts, unchanged from before --
     pending_review_count = len(session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW)).all())
@@ -215,6 +219,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
       <a href="/sealed-products">Sealed products</a>
       <a href="/collectibles">Collectibles</a>
       <a href="/export">Export data</a>
+      <a href="{storefront_url}" target="_blank" rel="noopener">NL Vault shop &#8599;</a>
     </div>
   </div>"""
     return HTMLResponse(page("EzBay — Dashboard", body, head_extra=f"<style>{_STYLE}{CHART_STYLE}</style>"))
