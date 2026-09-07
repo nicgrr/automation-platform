@@ -57,6 +57,7 @@ from automation_control.models import CardPrice, CardSet, CatalogItem, Collectib
 
 DEFAULT_LIMIT = 200
 CALL_DELAY_SECONDS = 0.4
+COMMIT_EVERY = 25
 
 
 def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = None, collectible: CollectibleProduct | None = None) -> tuple[str, str]:
@@ -187,6 +188,12 @@ async def run(args) -> int:
                         id=str(uuid.uuid4()), card_id=item.id, variant=None,
                         source=source, price=value, currency=currency or "AUD",
                     ))
+                # Commit as we go rather than once at the end: a full
+                # inventory sweep is ~1,000 calls over ~15 minutes, and
+                # losing all of it to an interruption at card 900 would be
+                # a bad trade for one fewer transaction.
+                if priced % COMMIT_EVERY == 0:
+                    session.commit()
 
             if index < len(targets) - 1:
                 time.sleep(CALL_DELAY_SECONDS)
