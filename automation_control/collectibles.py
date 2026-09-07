@@ -147,7 +147,7 @@ def collectible_capture_page(user: str = Depends(require_dashboard_user)) -> HTM
           "character/variant as a suggestion. Nothing is added to the catalogue until you confirm it on the "
           "review queue.</p>"
         + "<div class='panel'><form method='post' action='/collectibles/capture' enctype='multipart/form-data' class='calc-form'>"
-        + "<label>Photo<input type='file' name='photo' accept='image/*' capture='environment' required></label>"
+        + "<label>Photo<input type='file' name='photo' accept='image/*' required></label>"
         + "<button type='submit'>Capture &amp; identify</button>"
         + "</form></div>"
         + "<p><a href='/collectibles/capture/bulk'>Bulk upload multiple figures instead</a></p>"

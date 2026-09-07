@@ -81,6 +81,15 @@ def test_pill_helper_renders_the_given_kind():
     assert pill("YELLOW", "warn") == "<span class='pill warn'>YELLOW</span>"
 
 
+def test_quick_price_widget_allows_choosing_from_photo_library():
+    from automation_control.ui import quick_price_widget
+
+    # Regression: capture='environment' forces mobile browsers straight
+    # into the camera and hides the "choose from library" option in the
+    # native file picker entirely.
+    assert "capture=" not in quick_price_widget("market_price")
+
+
 def test_page_shell_has_no_leftover_dark_theme_literals():
     rendered = page("Title", "<p>body</p>")
     for literal in ["#05070d", "#0d1220", "#0a0f1c", "#5eeaff", "#a78bfa"]:

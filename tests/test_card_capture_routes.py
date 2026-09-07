@@ -67,6 +67,13 @@ def test_capture_page_requires_auth():
     assert resp.status_code == 401
 
 
+def test_capture_page_allows_choosing_from_photo_library(client):
+    # Regression: capture='environment' forces mobile browsers straight
+    # into the camera, hiding the "choose from library" option entirely.
+    resp = client.get("/cards/capture")
+    assert "capture=" not in resp.text
+
+
 def test_capture_submit_success_creates_reviewed_fields(client, session):
     fake = ExtractedCard(character="Pikachu", set_name="Base Set", card_number="58/102", rarity="Common", language="English", graded="Raw", unreadable_fields=[])
     with patch("automation_control.capture.extract_card_details", return_value=[fake]):

@@ -54,6 +54,13 @@ def test_capture_page_requires_auth():
     assert resp.status_code == 401
 
 
+def test_capture_page_allows_choosing_from_photo_library(client):
+    # Regression: capture='environment' forces mobile browsers straight
+    # into the camera, hiding the "choose from library" option entirely.
+    resp = client.get("/collectibles/capture")
+    assert "capture=" not in resp.text
+
+
 def test_capture_without_api_key_returns_503(client):
     app.state.settings.anthropic_api_key = None
     resp = client.post("/collectibles/capture", files=_upload())

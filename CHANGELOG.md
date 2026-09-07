@@ -3,6 +3,18 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Photo uploads now offer the library, not just the camera
+
+Three photo inputs (`/cards/capture`'s front/back photos, `/collectibles/capture`'s
+photo, and the quick-price widget on buying/purchase-lots/potential-stock/Whatnot)
+had `capture='environment'` set, which forces mobile browsers straight into the
+camera and hides the native "choose from library" option entirely. Removed it
+from all three -- the bulk-upload forms never had it and already worked
+correctly, which is what made this an inconsistency rather than a deliberate
+choice. 3 new regression tests (`capture=` must not appear in any of these
+pages' HTML); full suite (656) green; `ezbay.service` restarted and all three
+routes smoke-tested (401, correctly gated).
+
 ## 2026-09-07 — Module 21: eBay market search, in place of Facebook Marketplace scraping
 
 Asked for "a tool to scan the net or even Facebook Marketplace for deals or

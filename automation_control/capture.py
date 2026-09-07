@@ -169,8 +169,8 @@ def capture_page(user: str = Depends(require_dashboard_user)) -> str:
         brand_header("Capture a card")
         + "<p class='subtitle'>Photograph the front (back optional), then submit for AI identification.</p>"
         + "<div class='panel'><form method='post' action='/cards/capture' enctype='multipart/form-data'>"
-        + "<label>Front photo <input type='file' name='front' accept='image/*' capture='environment' required></label>"
-        + "<label>Back photo (optional) <input type='file' name='back' accept='image/*' capture='environment'></label>"
+        + "<label>Front photo <input type='file' name='front' accept='image/*' required></label>"
+        + "<label>Back photo (optional) <input type='file' name='back' accept='image/*'></label>"
         + "<button>Identify card</button>"
         + "</form></div>"
         + "<p><a href='/cards/capture/bulk'>Bulk upload multiple cards instead</a></p>"

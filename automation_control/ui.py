@@ -360,7 +360,7 @@ def quick_price_widget(price_field: str, name_field: str | None = None, label: s
     name_attr = f" data-name-field='{name_field}'" if name_field else ""
     return (
         f"<div class='quick-price'{name_attr} data-price-field='{price_field}'>"
-        f"<label class='qp-label'>{label}<input type='file' accept='image/*' capture='environment' class='qp-file'></label>"
+        f"<label class='qp-label'>{label}<input type='file' accept='image/*' class='qp-file'></label>"
         "<button type='button' class='qp-btn'>Identify &amp; price</button>"
         "<div class='qp-status'></div>"
         "<div class='qp-results'></div>"
