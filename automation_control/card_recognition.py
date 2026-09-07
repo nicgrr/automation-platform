@@ -136,7 +136,13 @@ _COLLECTIBLE_PROMPT = (
     "identifiable from packaging in the photo). If a field isn't clearly "
     "identifiable, list its name in that figure's unreadable_fields rather "
     "than guessing a value for it. If no collectible figure is clearly "
-    "identifiable in the photo, return an empty list."
+    "identifiable in the photo, return an empty list. "
+    "For each figure, also return its bounding_box: [x_min, y_min, x_max, "
+    "y_max], each a fraction from 0 to 1 of the image's width (x) or height "
+    "(y), drawn tightly around just that one figure including its headpiece "
+    "(not the ones beside it). This is used to crop each figure into its own "
+    "image for review, so favor a slightly generous box over a tight one "
+    "that clips the head."
 )
 
 
@@ -148,13 +154,14 @@ class ExtractedCollectible(BaseModel):
     is_secret: bool
     blind_box_series: str
     unreadable_fields: list[str]
+    bounding_box: list[float] | None = None
 
 
 class ExtractedCollectibles(BaseModel):
     collectibles: list[ExtractedCollectible]
 
 
-def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int = 8192) -> list[ExtractedCollectible]:
+def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int = 16384) -> list[ExtractedCollectible]:
     """The Module 19 counterpart to extract_card_details, for non-TCG
     collectibles (Sonny Angel, Smiski, blind boxes) rather than cards.
     Same model, same single-image-plus-prompt shape, same contract: never
@@ -165,8 +172,10 @@ def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int 
     straight into the catalogue.
     """
     # 2048 was sized for a photo of one figure. A display-cabinet shelf
-    # holds forty-odd, and a truncated response fails the schema parse and
-    # loses the whole batch -- so the ceiling is a parameter now.
+    # holds forty-odd, and a truncated response fails the schema parse
+    # outright -- the whole batch is lost, not partially returned -- so the
+    # ceiling is a parameter with headroom. Bounding boxes cost another
+    # four floats per figure, which is what pushed 42 figures past 8192.
     client = Anthropic(api_key=api_key)
     response = client.messages.parse(
         model=MODEL,

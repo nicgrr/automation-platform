@@ -29,7 +29,7 @@ from .auth import require_dashboard_user
 from .card_recognition import extract_collectible_details
 from .config import get_settings
 from .database import SessionLocal, get_session
-from .image_processing import auto_orient
+from .image_processing import auto_orient, crop_card
 from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .ui import brand_header, page, pill
 
@@ -170,6 +170,25 @@ def _save_collectible_photo(data: bytes, content_type: str | None, settings) -> 
     return photo_path
 
 
+def _figure_image(photo_path: Path, extracted, index: int) -> Path:
+    """Crop one figure out of a shared photo for its review page.
+
+    A cabinet shelf holds forty figures. Without this, all forty review
+    pages show the same wide shot and there is no way to tell which
+    detected name belongs to which figure -- the same problem, and the
+    same fix, as _card_front_image in capture.py. Falls back to the
+    uncropped photo rather than failing a capture over a cosmetic step.
+    """
+    if not getattr(extracted, "bounding_box", None):
+        return photo_path
+    cropped = photo_path.parent / f"figure{index}_{photo_path.name}"
+    try:
+        crop_card(photo_path, cropped, extracted.bounding_box)
+    except Exception:
+        return photo_path
+    return cropped
+
+
 def _process_collectible_photo(photo_path: Path, settings, session: Session, user: str) -> list[CapturedCollectible]:
     """Extract collectible details from an already-saved photo and create one
     CapturedCollectible row per figure found -- or one blank row if the AI
@@ -188,10 +207,11 @@ def _process_collectible_photo(photo_path: Path, settings, session: Session, use
 
     records: list[CapturedCollectible] = []
     if extracted_list:
-        for extracted in extracted_list:
+        for index, extracted in enumerate(extracted_list):
             values = {field: (None if field in extracted.unreadable_fields else getattr(extracted, field)) for field in CAPTURE_FIELDS}
             records.append(CapturedCollectible(
-                id=str(uuid.uuid4()), image_path=str(photo_path), ai_raw_response=extracted.model_dump(),
+                id=str(uuid.uuid4()), image_path=str(_figure_image(photo_path, extracted, index)),
+                ai_raw_response=extracted.model_dump(),
                 is_secret=extracted.is_secret if "is_secret" not in extracted.unreadable_fields else False,
                 status=CardCaptureStatus.PENDING_REVIEW, **values,
             ))
