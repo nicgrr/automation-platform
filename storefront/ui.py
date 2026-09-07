@@ -129,6 +129,44 @@ label.field input,label.field select,label.field textarea{
 label.field input:focus,label.field select:focus,label.field textarea:focus{
   outline:none;border-color:var(--brass);box-shadow:0 0 0 3px rgba(179,133,47,.15)}
 
+/* ---- side navigation drawer ---- */
+.navtoggle{
+  display:inline-grid;place-items:center;width:36px;height:36px;flex:none;cursor:pointer;
+  background:transparent;border:1px solid #333c46;border-radius:9px;color:var(--bone);
+}
+.navtoggle:hover{border-color:var(--brass);color:var(--brass-lit)}
+.navtoggle svg{width:17px;height:17px}
+
+.scrim{
+  position:fixed;inset:0;background:rgba(10,13,16,.5);opacity:0;pointer-events:none;
+  transition:opacity .18s ease;z-index:28;
+}
+body.nav-open .scrim{opacity:1;pointer-events:auto}
+
+.sidenav{
+  position:fixed;top:0;left:0;bottom:0;width:272px;z-index:30;background:var(--ink);
+  color:var(--bone);padding:18px 0 26px;overflow-y:auto;
+  transform:translateX(-100%);transition:transform .2s ease;
+  border-right:1px solid #262d35;
+}
+body.nav-open .sidenav{transform:none}
+.sidenav-head{display:flex;align-items:center;justify-content:space-between;padding:0 18px 16px}
+.sidenav-close{background:none;border:none;color:var(--bone);font-size:22px;line-height:1;cursor:pointer;padding:0 4px}
+.sidenav-close:hover{color:var(--brass-lit)}
+.navgroup{padding:14px 0 4px}
+.navgroup h4{
+  font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#7f8894;
+  margin:0 0 8px;padding:0 18px;font-weight:700;
+}
+.sidenav a{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 18px;font-size:14px;color:#d8d2c7;
+}
+.sidenav a:hover{background:#1c222a;color:var(--brass-lit)}
+.sidenav a .n{font-size:11.5px;color:#7f8894;font-variant-numeric:tabular-nums}
+.sidenav a:hover .n{color:inherit}
+.sidenav hr{border:none;border-top:1px solid #262d35;margin:12px 18px}
+
 .filters{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:22px}
 .filters .field{margin-bottom:0;flex:1 1 150px;min-width:120px}
 .filters .btn{flex:none}
@@ -150,11 +188,53 @@ FONTS = (
 )
 
 
+NAV_SCRIPT = """<script>
+(function(){
+  var body = document.body;
+  function open(){ body.classList.add('nav-open'); document.querySelector('.navtoggle').setAttribute('aria-expanded','true'); }
+  function close(){ body.classList.remove('nav-open'); document.querySelector('.navtoggle').setAttribute('aria-expanded','false'); }
+  document.querySelectorAll('[data-nav-open]').forEach(function(el){ el.addEventListener('click', open); });
+  document.querySelectorAll('[data-nav-close]').forEach(function(el){ el.addEventListener('click', close); });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
+})();
+</script>"""
+
+
+def sidenav(links: str = "") -> str:
+    """The slide-out navigation. Hidden by default and summoned by the
+    toggle, rather than a permanent column: on a phone a fixed sidebar
+    would eat half the screen, and on desktop the product grid is the
+    thing people came for."""
+    return (
+        "<div class='scrim' data-nav-close></div>"
+        "<aside class='sidenav' aria-label='Shop navigation'>"
+        "<div class='sidenav-head'>"
+        f"{logo_lockup(30)}"
+        "<button class='sidenav-close' data-nav-close aria-label='Close navigation'>&times;</button>"
+        "</div>"
+        "<div class='navgroup'><h4>Shop</h4>"
+        "<a href='/'>Home</a>"
+        "<a href='/browse'>Browse everything</a>"
+        "<a href='/bulk'>Bulk Master</a>"
+        "</div>"
+        f"{links}"
+        "<hr>"
+        "<div class='navgroup'><h4>Info</h4>"
+        "<a href='/shipping'>Shipping &amp; returns</a>"
+        "<a href='/cart'>Your cart</a>"
+        "</div>"
+        "</aside>"
+    )
+
+
 def header(cart_count: int = 0, query: str = "") -> str:
     safe_query = query.replace("'", "&#39;").replace('"', "&quot;")
     badge = f"<span class='cart-pill'>Cart {cart_count}</span>" if cart_count else "<span class='cart-pill'>Cart</span>"
     return (
         "<header class='topbar'>"
+        "<button class='navtoggle' data-nav-open aria-expanded='false' aria-label='Open navigation'>"
+        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round'>"
+        "<path d='M3 6h18M3 12h18M3 18h18'/></svg></button>"
         f"<a href='/'>{logo_lockup()}</a>"
         "<form class='shop-search' method='get' action='/browse'>"
         f"<input name='q' value='{safe_query}' placeholder='Search the vault…' autocomplete='off'>"
@@ -167,18 +247,20 @@ def header(cart_count: int = 0, query: str = "") -> str:
     )
 
 
-def page(title: str, body: str, *, cart_count: int = 0, query: str = "") -> str:
+def page(title: str, body: str, *, cart_count: int = 0, query: str = "", nav_links: str = "") -> str:
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{title}</title>"
         f"<meta name='theme-color' content='{BRASS}'>"
         f"{FONTS}{STYLE}</head><body>"
+        f"{sidenav(nav_links)}"
         f"{header(cart_count, query)}"
         f"<main>{body}</main>"
         "<footer><div class='inner'>"
         "<span>NL Vault — trading cards &amp; collectibles, shipped from Australia.</span>"
         "<span><a href='/shipping'>Shipping &amp; returns</a></span>"
         "</div></footer>"
+        f"{NAV_SCRIPT}"
         "</body></html>"
     )

@@ -3,6 +3,34 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-08 — Storefront: side navigation and checkout
+
+- **Hideable side navigation.** A slide-out drawer rather than a permanent
+  column: on a phone a fixed sidebar eats half the screen, and on desktop
+  the product grid is what people came for. Toggle in the header, closes
+  on scrim click or Escape, `aria-expanded` kept in sync. Its "Bulk by
+  set" section is built from live stock, so the shop never advertises a
+  category that lands on an empty page.
+- **Checkout**, via Stripe Checkout (the hosted page) so no card details
+  ever touch this server -- the shopper pays on Stripe and returns with a
+  session id to reconcile. Same gating as the eBay integration: with no
+  `STRIPE_SECRET_KEY` set, the button says payments aren't live and the
+  order is still written, rather than half-failing at the till.
+- **Stock is decremented only on confirmed payment**, never at add-to-cart,
+  so an abandoned basket can't quietly take things off sale. Selling the
+  last one flips the listing to SOLD_OUT. Amounts sent to Stripe are
+  recomputed in cents from the order row, never from anything the browser
+  supplied.
+- Extracted `storefront/common.py`: `app.py` registers checkout's routes
+  while checkout needs app's cart and shipping maths, which is a cycle if
+  the helpers live in either. Caught by the import failing outright, not
+  at runtime.
+- 12 new checkout tests (including that stock survives an unpaid order,
+  that Stripe line items are built in cents, and that a bulk lot can be
+  bought); full suite (727) green. Verified live end to end: cart → form →
+  order NLV-… written as PENDING_PAYMENT, then removed from the production
+  tables afterwards.
+
 ## 2026-09-07 — NL Vault storefront (Module 24)
 
 The public shop, plus the "Bulk Master" section.

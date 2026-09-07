@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     ebay_runame: str | None = None
     listing_pipeline_output_dir: str = "listing_pipeline_data/output"
     listing_pipeline_config_path: str = "listing_pipeline_data/config.toml"
+    # Stripe Checkout for the NL Vault storefront. Absent by default: the
+    # shop builds and runs without it, and simply tells shoppers payments
+    # aren't live rather than half-failing at the till.
+    stripe_secret_key: str | None = None
+    stripe_publishable_key: str | None = None
     anthropic_api_key: str | None = None
     captured_cards_dir: str = "captured_cards"
     pokemontcg_api_key: str | None = None

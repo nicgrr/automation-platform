@@ -98,6 +98,14 @@ def test_bulk_master_lists_lots(client, session):
     assert "$105.47" in body
 
 
+def _grid_titles(html: str) -> list[str]:
+    """Titles from the product grid only. The nav drawer also lists set
+    names on every page, so asserting against the whole document would
+    pass or fail for the wrong reasons."""
+    import re
+    return re.findall(r"<div class='card-title'>(.*?)</div>", html)
+
+
 def test_bulk_filters_narrow_results(client, session):
     _lot(session, cards=185, price="105.47")
     session.add(BulkLot(set_id=None, title="Tiny lot (6 cards)", card_count=6,
@@ -105,9 +113,11 @@ def test_bulk_filters_narrow_results(client, session):
                         status=ShopListingStatus.ACTIVE))
     session.commit()
 
-    assert "Tiny lot" in client.get("/bulk").text
-    assert "Tiny lot" not in client.get("/bulk?min_cards=50").text     # too few cards
-    assert "Scarlet" not in client.get("/bulk?max_price=20").text       # too dear
+    assert any("Tiny lot" in t for t in _grid_titles(client.get("/bulk").text))
+    # too few cards
+    assert not any("Tiny lot" in t for t in _grid_titles(client.get("/bulk?min_cards=50").text))
+    # too dear
+    assert not any("Scarlet" in t for t in _grid_titles(client.get("/bulk?max_price=20").text))
 
 
 def test_bulk_detail_shows_the_saving_against_market(client, session):
