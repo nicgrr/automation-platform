@@ -94,11 +94,28 @@ button { background: linear-gradient(120deg, var(--accent), var(--accent-2)); bo
 </style>"""
 
 
+# Installable-to-home-screen basics (Module 18) -- no service worker by
+# design: this tool shows live inventory/pricing, and a caching layer
+# risks showing stale numbers on exactly the data a phone check exists to
+# get right. iOS (the only device this has actually been used from all
+# session) reads apple-mobile-web-app-* and apple-touch-icon directly, no
+# service worker required for "Add to Home Screen"; the manifest covers
+# Android/desktop installability the same way.
+_PWA_HEAD = (
+    "<link rel='manifest' href='/static/manifest.json'>"
+    "<meta name='theme-color' content='#0891b2'>"
+    "<meta name='apple-mobile-web-app-capable' content='yes'>"
+    "<meta name='apple-mobile-web-app-status-bar-style' content='black-translucent'>"
+    "<meta name='apple-mobile-web-app-title' content='EzBay'>"
+    "<link rel='apple-touch-icon' href='/static/icons/apple-touch-icon.png'>"
+)
+
+
 def page(title: str, body: str, head_extra: str = "") -> str:
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{title}</title>{STYLE}{head_extra}</head><body><main>{body}</main></body></html>"
+        f"<title>{title}</title>{STYLE}{_PWA_HEAD}{head_extra}</head><body><main>{body}</main></body></html>"
     )
 
 

@@ -6,6 +6,7 @@ from html import escape
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from .adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_inventory, normalize_market
@@ -43,6 +44,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="EzBay Private Control Plane", version="0.2.0", lifespan=lifespan)
+# PWA manifest + icons (Module 18) -- unauthenticated on purpose, matching
+# any app icon/manifest: no inventory or business data lives under here,
+# just the install-to-home-screen assets.
+app.mount("/static", StaticFiles(directory="static"), name="static")
 app.state.settings = get_settings()
 app.include_router(cards_router)
 app.include_router(pricing_router)

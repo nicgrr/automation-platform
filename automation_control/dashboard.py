@@ -169,6 +169,12 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     body = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EzBay — Dashboard</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#0891b2">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="EzBay">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 <style>{_STYLE}{CHART_STYLE}</style>
 </head><body>
 <header class="topbar">

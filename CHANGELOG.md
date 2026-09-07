@@ -3,6 +3,27 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 18: installable to the home screen (PWA basics)
+
+- Generated a brand-matching icon (cyan-to-violet gradient, "Ez" mark,
+  same colors used throughout the dark theme) at 192px/512px/180px via
+  Pillow, and a `static/manifest.json`.
+- Mounted `/static` (unauthenticated by design -- no inventory or business
+  data lives there, just install-to-home-screen assets) and added
+  `apple-mobile-web-app-*`/`apple-touch-icon`/`theme-color`/manifest tags
+  to both `ui.py`'s shared dark-theme `page()` and the dashboard's own
+  light-theme shell.
+- **Deliberately no service worker / offline caching**: this tool shows
+  live inventory and pricing, and a caching layer risks showing stale
+  numbers on exactly the data a phone check exists to get right. iOS
+  (the only device this has actually been used from all session) needs
+  no service worker for "Add to Home Screen" -- it reads the
+  `apple-mobile-web-app-*` tags directly; the manifest covers
+  Android/desktop installability the same way.
+- 5 new tests (manifest validity, icons served as PNG, no-login-required,
+  both page shells include the tags); full suite (580) green; live
+  service restarted, manifest/icons/dashboard all confirmed responding.
+
 ## 2026-09-07 — Search autocomplete
 
 - `GET /search/suggest`: a small JSON endpoint (max 8 results, 2-character
