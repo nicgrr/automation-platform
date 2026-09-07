@@ -3,6 +3,23 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 12 (Sonny Angel/Smiski) + Module 7 (Whatnot shows)
+
+- `/collectibles`: catalogue for Sonny Angel/Smiski/blind boxes, using
+  `collectible_products` (previously empty). Inventory *ownership* tracking
+  is a deliberate known limitation -- see DATABASE.md for why
+  (`inventory_items.card_id` is NOT NULL against `catalog_cards`
+  specifically; relaxing it needs a reviewed migration with scan-ingest
+  stopped, not a workaround here).
+- `/whatnot`: real show tracking (`whatnot_shows`, `whatnot_show_items`) --
+  queue items, settle outcomes. Marking an item SOLD automatically creates a
+  Sale/SaleItem using the active Whatnot MarketplaceFeeRule, so a show's
+  numbers flow straight into `/sales` and `/analytics`. Verified: $60 sale
+  at 8%+3% correctly computes a $6.60 fee.
+- 7 new tests (careful this time to always override `get_session` with an
+  isolated fixture, per the previous incident); full suite (552) green;
+  live service restarted; production DB confirmed clean.
+
 ## 2026-09-07 — Module 11 (sealed case economics) + Modules 13/16 (analytics)
 
 - `/sealed-products`: list/create sealed products (booster boxes, cases,

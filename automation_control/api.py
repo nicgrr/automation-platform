@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 
 from .adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_inventory, normalize_market
 from .analytics import router as analytics_router
+from .collectibles import router as collectibles_router
 from .business_records import router as business_records_router
 from .buying import router as buying_router
 from .commerce import router as commerce_router
 from .sealed_economics import router as sealed_economics_router
+from .whatnot import router as whatnot_router
 from .audit import record_event
 from .auth import create_session, require_dashboard_user, verify_password
 from .capture import router as cards_router
@@ -56,6 +58,8 @@ app.include_router(commerce_router)
 app.include_router(business_records_router)
 app.include_router(sealed_economics_router)
 app.include_router(analytics_router)
+app.include_router(collectibles_router)
+app.include_router(whatnot_router)
 
 
 def correlation_id() -> str:
@@ -171,7 +175,9 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
           "<a href='/marketplaces'>Marketplaces</a> &nbsp; "
           "<a href='/goals'>Goals</a> &nbsp; "
           "<a href='/release-calendar'>Release calendar</a> &nbsp; "
-          "<a href='/sealed-products'>Sealed products</a>"
+          "<a href='/sealed-products'>Sealed products</a> &nbsp; "
+          "<a href='/collectibles'>Collectibles</a> &nbsp; "
+          "<a href='/whatnot'>Whatnot shows</a>"
           "</p></div>"
         + f"<div class='panel'><h2>Recent audit events</h2><ul class='events'>{event_html}</ul></div>"
     )

@@ -150,6 +150,13 @@ class GoalKind(str, enum.Enum):
     CUMULATIVE = "cumulative"
 
 
+class WhatnotShowItemOutcome(str, enum.Enum):
+    PENDING = "pending"
+    SOLD = "sold"
+    UNSOLD = "unsold"
+    GIVEAWAY = "giveaway"
+
+
 class ScanSessionStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
@@ -791,6 +798,43 @@ class ReleaseCalendarEntry(Base):
     wholesale_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     retail_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class WhatnotShow(Base):
+    """One Whatnot stream -- Module 7's actual show tracking, distinct from
+    MarketplaceFeeRule which just holds Whatnot's fee structure. Rollup
+    numbers (revenue, profit, sell-through) are computed from
+    WhatnotShowItem at read time rather than stored here, so they're never
+    stale relative to the items."""
+
+    __tablename__ = "whatnot_shows"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(256))
+    show_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    viewer_count: Mapped[int | None] = mapped_column(Integer)
+    follower_count: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WhatnotShowItem(Base):
+    """One item queued for (or sold in) a show. `sale_id` is set the moment
+    an item is marked SOLD -- see whatnot.py's mark_outcome, which creates
+    the Sale/SaleItem automatically using the active Whatnot fee rule so a
+    sold item shows up in /sales and /analytics without re-entering it."""
+
+    __tablename__ = "whatnot_show_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    whatnot_show_id: Mapped[str] = mapped_column(ForeignKey("whatnot_shows.id"), index=True)
+    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    description: Mapped[str] = mapped_column(String(256))
+    starting_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    final_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    outcome: Mapped[WhatnotShowItemOutcome] = mapped_column(Enum(WhatnotShowItemOutcome), default=WhatnotShowItemOutcome.PENDING, index=True)
+    sale_id: Mapped[str | None] = mapped_column(ForeignKey("sales.id"))
+
+    whatnot_show: Mapped[WhatnotShow] = relationship()
 
 
 class ScanSession(Base):

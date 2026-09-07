@@ -139,6 +139,33 @@ whole case, sell as boxes, sell as packs, open and sell singles) from
 `units_per_display`/`displays_per_case` -- verified against a hand-calculated
 example (12 boxes × 24 packs/box = 288 packs/case).
 
+### Module 12 — Sonny Angel / Smiski (done, 2026-09-07)
+Uses `collectible_products` (added in the Module 1 migration, previously
+empty). `/collectibles` lists/creates them (brand, series, character,
+variant, secret flag, retail price). **Known limitation, deliberate**:
+`inventory_items.card_id` is a NOT NULL foreign key into `catalog_cards`
+specifically (a leftover from before the generic catalogue existed) --
+actually tracking "I own 3 of this Sonny Angel" needs that column relaxed,
+which means rebuilding `inventory_items` while `scan-ingest.service` (which
+writes to it continuously) is stopped. That's a real, separate, reviewed
+migration for a maintenance window, not something to shortcut with a fake
+`catalog_cards` row. Catalogue-only for now, same boundary as Module 11's
+sealed products.
+
+### Module 7 (continued) — Whatnot show tracking (done, 2026-09-07)
+```
+whatnot_shows                id, title, show_date, viewer_count, follower_count
+whatnot_show_items           whatnot_show_id FK, inventory_item_id FK,
+                             description, starting_price, final_price,
+                             outcome (pending|sold|unsold|giveaway), sale_id FK
+```
+`/whatnot` lists shows with live revenue/sell-through rollups; `/whatnot/{id}`
+queues items and settles outcomes. Marking an item SOLD automatically
+creates a real `Sale`/`SaleItem` using whichever `MarketplaceFeeRule` is
+currently active for Whatnot -- so a show's numbers flow straight into
+`/sales` and `/analytics` without re-entering anything. Verified: a $60 sale
+against an 8%+3% rule correctly computes a $6.60 fee.
+
 ### Modules 13, 16 — analytics & the business dashboard (done, 2026-09-07)
 No new tables -- `/analytics` computes everything from what already exists:
 inventory market value (reuses `inventory_review`'s latest-price/AUD-conversion
