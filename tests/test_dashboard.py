@@ -76,7 +76,7 @@ def test_quick_links_to_every_module_are_present(client):
     response = client.get("/dashboard")
     for path in ["/purchase-lots", "/potential-stock", "/sales", "/customers", "/suppliers",
                  "/goals", "/release-calendar", "/sealed-products", "/collectibles", "/whatnot",
-                 "/search", "/inventory", "/feed", "/export"]:
+                 "/search", "/inventory", "/feed", "/export", "/market-search"]:
         assert f'href="{path}"' in response.text, path
 
 

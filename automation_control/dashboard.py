@@ -196,6 +196,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
       <a href="/buying-calculator">Buying calculator</a>
       <a href="/purchase-lots">Purchase lots</a>
       <a href="/potential-stock">Potential stock</a>
+      <a href="/market-search">Market search</a>
       <a href="/sales">Sales</a>
       <a href="/whatnot">Whatnot shows</a>
       <a href="/marketplaces">Marketplaces</a>

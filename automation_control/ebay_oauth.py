@@ -9,8 +9,10 @@ from urllib.parse import urlsplit
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from .config import Settings
 from .models import EbayCredential, OAuthState
 
 INVENTORY_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly"
@@ -174,3 +176,28 @@ async def valid_user_access_token(session: Session, cipher: TokenCipher, oauth: 
     payload.setdefault("refresh_token", cipher.decrypt(record.encrypted_refresh_token))
     updated = store_user_tokens(session, cipher, payload, now=now)
     return cipher.decrypt(updated.encrypted_access_token)
+
+
+def configured(settings: Settings) -> bool:
+    """Whether real eBay OAuth credentials (matching whichever environment
+    is configured) are present -- moved here from api.py so any module
+    that needs to gate on this (the JSON API routes, and market_search.py's
+    HTML page) can import it without api.py needing to import them back,
+    which would be circular."""
+    validate_client_id = valid_production_client_id if settings.ebay_env == "production" else valid_sandbox_client_id
+    validate_runame = valid_production_runame if settings.ebay_env == "production" else valid_sandbox_runame
+    return bool(
+        validate_client_id(settings.ebay_client_id)
+        and validate_runame(settings.ebay_runame)
+        and settings.ebay_client_secret
+        and not settings.ebay_client_secret.startswith("REPLACE_WITH_")
+        and settings.ebay_token_encryption_key
+        and not settings.ebay_token_encryption_key.startswith("REPLACE_WITH_")
+        and settings.app_public_base_url
+    )
+
+
+def ebay_services(settings: Settings) -> tuple[TokenCipher, EbayOAuthClient]:
+    if not configured(settings):
+        raise HTTPException(status_code=503, detail=f"eBay {settings.ebay_env.title()} OAuth is not configured")
+    return TokenCipher(settings.ebay_token_encryption_key), EbayOAuthClient(settings.ebay_client_id, settings.ebay_client_secret, environment=settings.ebay_env)

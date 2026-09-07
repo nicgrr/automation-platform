@@ -3,6 +3,43 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 21: eBay market search, in place of Facebook Marketplace scraping
+
+Asked for "a tool to scan the net or even Facebook Marketplace for deals or
+collections." Flagged this before building: Facebook has no public API for
+this, scraping Marketplace violates its Terms of Service, and doing it for
+real would mean this app holding the operator's personal Facebook login
+session -- a real account-ban risk with no safe mitigation, categorically
+different from "build it more carefully." Agreed alternative: extend the
+eBay integration (already partially built tonight, read-only) into a real
+search page instead.
+
+- `GET /market-search`: search a term, see what eBay has listed (via the
+  existing `EbaySandboxReadAdapter.search_market` / Browse API, unchanged
+  from the read-only, no-mutation-methods adapter built earlier), shown
+  next to this app's own last-known price for any matching card in
+  `card_prices` -- so "is this actually a deal" has a second number to
+  compare against. Runs on an application access token
+  (`EbayOAuthClient.application_token()`), not the operator's own eBay
+  login, since public listing search doesn't need seller authorization the
+  way creating a listing would.
+- Honest about environment: while `ebay_env` stays `"sandbox"` (its
+  default, and the only mode `start-control-plane.sh` will actually start
+  in), results are eBay's fake test catalogue, not real listings -- the
+  page says so plainly rather than presenting sandbox data as real deals.
+  Meaningful real-world results are gated behind the same deliberate
+  production-credentials decision as everything else eBay-related tonight.
+- Moved `configured()`/`ebay_services()` from `api.py` into `ebay_oauth.py`
+  (a pure relocation, no behavior change) so this new page can import them
+  without a circular import back into `api.py`.
+- 6 new tests (login gate, blank query, unconfigured message, a real
+  search with results, the catalogue cross-reference, failure handling).
+  Caught a real bug before it shipped: `normalize_market()`'s price field
+  is a string straight from eBay's JSON, and the results-table formatting
+  assumed it was already numeric -- would have crashed on the first real
+  search with a result. Full suite (653) green; `ezbay.service` restarted;
+  both routes smoke-tested (401, correctly gated).
+
 ## 2026-09-07 — AI photo recognition wired into buying, purchase lots, potential stock, Whatnot
 
 Asked for "input something in there (AI recognition of items) and able to

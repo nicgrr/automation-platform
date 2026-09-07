@@ -22,10 +22,11 @@ from .config import Settings, get_settings
 from .dashboard import router as dashboard_router
 from .data_export import router as data_export_router
 from .database import Base, engine, get_session
-from .ebay_oauth import EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_client_id, valid_sandbox_runame, valid_user_access_token
+from .ebay_oauth import OAuthError, authorization_url, configured, consume_oauth_state, ebay_services, new_oauth_state, store_user_tokens, valid_user_access_token
 from .foil_review import router as foil_review_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
+from .market_search import router as market_search_router
 from .models import Approval, EbayCredential, EbayListing, JobRun
 from .price_history import router as price_history_router
 from .price_review import router as pricing_router
@@ -71,30 +72,13 @@ app.include_router(price_history_router)
 app.include_router(dashboard_router)
 app.include_router(data_export_router)
 app.include_router(quick_price_router)
+app.include_router(market_search_router)
 
 
 def correlation_id() -> str:
     return str(uuid.uuid4())
 
 
-def configured(settings: Settings) -> bool:
-    validate_client_id = valid_production_client_id if settings.ebay_env == "production" else valid_sandbox_client_id
-    validate_runame = valid_production_runame if settings.ebay_env == "production" else valid_sandbox_runame
-    return bool(
-        validate_client_id(settings.ebay_client_id)
-        and validate_runame(settings.ebay_runame)
-        and settings.ebay_client_secret
-        and not settings.ebay_client_secret.startswith("REPLACE_WITH_")
-        and settings.ebay_token_encryption_key
-        and not settings.ebay_token_encryption_key.startswith("REPLACE_WITH_")
-        and settings.app_public_base_url
-    )
-
-
-def ebay_services(settings: Settings):
-    if not configured(settings):
-        raise HTTPException(status_code=503, detail=f"eBay {settings.ebay_env.title()} OAuth is not configured")
-    return TokenCipher(settings.ebay_token_encryption_key), EbayOAuthClient(settings.ebay_client_id, settings.ebay_client_secret, environment=settings.ebay_env)
 
 
 @app.get("/health", response_model=HealthResponse)
