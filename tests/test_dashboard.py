@@ -80,6 +80,13 @@ def test_quick_links_to_every_module_are_present(client):
         assert f'href="{path}"' in response.text, path
 
 
+def test_topbar_search_has_autocomplete_wiring(client):
+    response = client.get("/dashboard")
+    assert "global-search-input" in response.text
+    assert "global-search-results" in response.text
+    assert "/search/suggest" in response.text
+
+
 def test_dashboard_requires_login():
     app.dependency_overrides.clear()
     client = TestClient(app)

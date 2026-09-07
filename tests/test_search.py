@@ -80,3 +80,50 @@ def test_search_requires_login():
     client = TestClient(app)
     response = client.get("/search?q=anything", follow_redirects=False)
     assert response.status_code in (302, 303, 401)
+
+
+def test_search_page_includes_the_autocomplete_wiring(client):
+    response = client.get("/search")
+    assert "global-search-input" in response.text
+    assert "global-search-results" in response.text
+    assert "/search/suggest" in response.text
+
+
+def test_suggest_returns_json_results_with_owned_counts(client, session):
+    _add_card(session, "sv1-4", "Charmander")
+    session.add(InventoryItem(card_id="sv1-4", catalog_item_id="sv1-4", quantity=5))
+    session.commit()
+
+    response = client.get("/search/suggest?q=char")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"][0]["name"] == "Charmander"
+    assert data["results"][0]["owned"] == 5
+    assert "pokemon" in data["results"][0]["detail"]
+
+
+def test_suggest_requires_a_minimum_query_length(client, session):
+    _add_card(session, "sv1-5", "Pikachu")
+    session.commit()
+
+    response = client.get("/search/suggest?q=p")
+
+    assert response.json() == {"results": []}
+
+
+def test_suggest_caps_results_below_the_full_search_page(client, session):
+    for i in range(15):
+        _add_card(session, f"bulk-{i}", f"Bulk Common {i}", number=str(i))
+    session.commit()
+
+    response = client.get("/search/suggest?q=bulk")
+
+    assert len(response.json()["results"]) == 8  # SUGGEST_LIMIT
+
+
+def test_suggest_requires_login():
+    app.dependency_overrides.clear()
+    client = TestClient(app)
+    response = client.get("/search/suggest?q=anything", follow_redirects=False)
+    assert response.status_code in (302, 303, 401)

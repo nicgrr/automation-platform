@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
 from .charts import CHART_STYLE, bar_list, donut_chart, donut_legend, gauge_chart
+from .search import AUTOCOMPLETE_SCRIPT
 from .database import get_session
 from .inventory_review import _aud, _latest_prices
 from .models import (
@@ -172,7 +173,12 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
 </head><body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">Ez</span>Bay</div>
-  <form class="topsearch" method="get" action="/search"><input name="q" placeholder="Search cards, sets, characters…" autocomplete="off"></form>
+  <form class="topsearch" method="get" action="/search">
+    <div class="autocomplete-wrap">
+      <input id="global-search-input" name="q" placeholder="Search cards, sets, characters…" autocomplete="off">
+      <div id="global-search-results" class="autocomplete-dropdown" hidden></div>
+    </div>
+  </form>
   <nav class="topnav">
     <a href="/analytics">Analytics</a>
     <a href="/inventory">Inventory</a>
@@ -225,6 +231,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     </div>
   </div>
 </main>
+{AUTOCOMPLETE_SCRIPT}
 </body></html>"""
     return HTMLResponse(body)
 
@@ -241,8 +248,17 @@ a:hover{text-decoration:underline}
 .brand{font-size:19px;font-weight:800;letter-spacing:-.02em}
 .brand-mark{background:linear-gradient(120deg,#0891b2,#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent}
 .topsearch{flex:1;max-width:420px}
-.topsearch input{width:100%;padding:9px 14px;border-radius:999px;border:1px solid #e5e7ee;background:#f4f5f8;font-size:13.5px}
-.topsearch input:focus{outline:none;border-color:#0891b2;background:#fff}
+.autocomplete-wrap{position:relative;width:100%}
+.autocomplete-wrap input{width:100%;padding:9px 14px;border-radius:999px;border:1px solid #e5e7ee;background:#f4f5f8;font-size:13.5px}
+.autocomplete-wrap input:focus{outline:none;border-color:#0891b2;background:#fff}
+
+.autocomplete-dropdown{position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:30;
+  background:#fff;border:1px solid #e5e7ee;border-radius:12px;box-shadow:0 12px 28px rgba(16,24,40,.12);overflow:hidden}
+.ac-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;font-size:13.5px}
+.ac-item.active,.ac-item:hover{background:#f4f5f8}
+.ac-name{font-weight:650;flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#12141c}
+.ac-detail{color:#6b7280;font-size:12px;flex:1}
+.ac-owned{font-size:11px;color:#059669;background:#ecfdf5;padding:2px 8px;border-radius:999px}
 .topnav{display:flex;align-items:center;gap:18px;font-size:13.5px;color:#4b5563;margin-left:auto}
 .status-pill{background:#ecfdf5;color:#059669;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:650}
 

@@ -3,6 +3,23 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Search autocomplete
+
+- `GET /search/suggest`: a small JSON endpoint (max 8 results, 2-character
+  minimum) reusing the same catalogue query as the full `/search` page.
+- Wired a vanilla-JS (no framework) debounced autocomplete dropdown onto
+  both the dedicated `/search` page and the dashboard's top-bar search --
+  arrow-key navigation, Enter to jump to a result's price-history page,
+  Escape/click-outside to close. Results are rendered via `textContent`,
+  never `innerHTML` with interpolated data, regardless of where a card
+  name originated (import or otherwise).
+- Refactored the full-page search query into a shared `_matching_items`
+  helper so the suggest endpoint and the results page can't drift apart.
+- 5 new tests for the suggest endpoint, 2 more confirming both pages
+  actually include the autocomplete wiring; full suite (575) green; live
+  service restarted, all three routes confirmed responding (401, correctly
+  gated).
+
 ## 2026-09-07 — Dashboard redesign: light theme, real charts
 
 - Rebuilt `/dashboard` from scratch per an explicit visual reference (a
