@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -539,10 +540,15 @@ def collectible_review_list(user: str = Depends(require_dashboard_user), session
 
 
 @router.get("/collectibles/review/{capture_id}", response_class=HTMLResponse)
-def collectible_review_form(capture_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+def collectible_review_form(capture_id: str, filled: str = Query(""), problem: str = Query(""),
+                            user: str = Depends(require_dashboard_user),
+                            session: Session = Depends(get_session)) -> HTMLResponse:
     capture = session.get(CapturedCollectible, capture_id)
     if capture is None:
         raise HTTPException(status_code=404, detail="capture not found")
+
+    fill_note = problem or (f"Filled from the link: {filled}." if filled else "")
+    fill_kind = "bad" if problem else "ok"
 
     def field(name: str, label: str, value: str | None, autofocus: bool = False) -> str:
         safe_value = escape(value or "")
@@ -574,6 +580,11 @@ def collectible_review_form(capture_id: str, user: str = Depends(require_dashboa
         + "<div class='panel review-one'>"
         + f"<a class='revshot' href='/collectibles/capture/image/{escape(capture_id)}' target='_blank' rel='noopener'>"
           f"<img src='/collectibles/capture/image/{escape(capture_id)}' alt='Captured figure'></a>"
+        + (f"<p class='linkfill-note {escape(fill_kind)}'>{escape(fill_note)}</p>" if fill_note else "")
+        + f"<form method='post' action='/collectibles/review/{escape(capture_id)}/from-link' class='linkfill'>"
+          "<label>Fill from a product or listing link"
+          f"<input name='url' type='url' placeholder='https://... the shop page for this figure' required></label>"
+          "<button type='submit' class='ghost'>Fill fields</button></form>"
         + f"<form method='post' action='/collectibles/review/{escape(capture_id)}' class='calc-form'>"
         + field("brand", "Brand", capture.brand)
         + field("series", "Series", capture.series)
@@ -591,6 +602,88 @@ def collectible_review_form(capture_id: str, user: str = Depends(require_dashboa
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Review capture", body))
+
+
+@router.post("/collectibles/review/{capture_id}/from-link")
+def collectible_review_from_link(
+    capture_id: str,
+    url: str = Form(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    """Fill a pending capture's fields from a shop or listing page.
+
+    Reviewing a shelf photo, the AI often knows it's a Sonny Angel and
+    nothing else -- the series name simply isn't visible on the figure.
+    The product page is where that lives, so pasting its link beats typing
+    the fields by hand.
+
+    Writes only to the pending row, never the catalogue: the figure still
+    has to be confirmed, and this just means confirming something already
+    filled in. Fields the extractor wasn't sure about are left alone
+    rather than blanked, so a link that only names the series can't wipe a
+    character the photo already got right.
+    """
+    from .card_recognition import RecognitionError, extract_collectible_listing
+    from .collectible_link import _strip_html
+    from .link_fetch import FetchFailed, UnsafeUrl, fetch_text
+
+    capture = session.get(CapturedCollectible, capture_id)
+    if capture is None:
+        raise HTTPException(status_code=404, detail="capture not found")
+
+    def back(**params) -> RedirectResponse:
+        query = urlencode(params) if params else ""
+        return RedirectResponse(
+            f"/collectibles/review/{capture_id}" + (f"?{query}" if query else ""), status_code=303
+        )
+
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        return back(problem="No Anthropic API key is configured, so the link can't be read.")
+    try:
+        text = _strip_html(fetch_text(url))
+    except (UnsafeUrl, FetchFailed) as exc:
+        return back(problem=str(exc))
+
+    try:
+        found = extract_collectible_listing(text, api_key=settings.anthropic_api_key)
+    except RecognitionError:
+        return back(problem="That page was fetched but couldn't be read as a product listing.")
+    except Exception:
+        return back(problem="Reading that link failed -- it may be a login wall or a captcha.")
+    if not found:
+        return back(problem="That page doesn't look like a listing for a collectible figure.")
+
+    extracted = found[0]
+    unread = set(extracted.unreadable_fields or [])
+    applied = []
+    for attribute in ("brand", "series", "character", "variant"):
+        if attribute in unread:
+            continue
+        value = (getattr(extracted, attribute) or "").strip()
+        if value:
+            setattr(capture, attribute, value)
+            applied.append(attribute)
+    # A listing has no separate blind-box field -- for a sealed box the
+    # series IS the box line, which is the only case where it's known.
+    if extracted.is_sealed and (extracted.series or "").strip() and "series" not in unread:
+        capture.blind_box_series = extracted.series.strip()
+        applied.append("blind_box_series")
+    if "is_secret" not in unread:
+        capture.is_secret = bool(extracted.is_secret)
+        applied.append("is_secret")
+
+    session.commit()
+    record_event(
+        session, actor_type="user", actor_id=user, action="collectible.fill_from_link",
+        resource_type="captured_collectible", resource_id=capture_id,
+        outcome="success" if applied else "no_change",
+        correlation_id=str(uuid.uuid4()), details={"fields": applied},
+    )
+    if not applied:
+        return back(problem="Nothing on that page was clear enough to fill in.")
+    return back(filled=", ".join(applied))
 
 
 @router.post("/collectibles/review/{capture_id}")
@@ -679,6 +772,12 @@ _REVIEW_STYLE = """<style>
 .revshot img{width:100%;display:block}
 .revactions{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
 .revactions .danger{color:var(--danger);border-color:var(--danger)}
+.linkfill{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:0 0 16px}
+.linkfill label{display:flex;flex-direction:column;gap:5px;flex:1;min-width:220px;
+  font-size:13px;color:var(--text-dim)}
+.linkfill-note{margin:0 0 12px;padding:10px 13px;border-radius:8px;font-size:13.5px}
+.linkfill-note.ok{background:var(--success-bg);color:var(--success)}
+.linkfill-note.bad{background:var(--warning-bg);color:var(--warning)}
 @media (max-width:720px){.review-one{grid-template-columns:1fr}
   .revshot{max-width:260px;margin:0 auto}}
 @media (prefers-reduced-motion:reduce){.revbar span{transition:none}}

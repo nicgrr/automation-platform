@@ -535,3 +535,136 @@ def test_the_newest_ebay_price_wins(client, session):
     body = client.get("/collectibles").text
     assert "$250.00" in body
     assert "$100.00" not in body
+
+
+# --- filling a pending capture from a product link --------------------------
+
+def _wire_link(monkeypatch, extracted, html="<h1>Sonny Angel</h1>"):
+    from automation_control.config import get_settings
+
+    monkeypatch.setattr("automation_control.link_fetch.fetch_text", lambda url, **k: html)
+    monkeypatch.setattr("automation_control.card_recognition.extract_collectible_listing",
+                        lambda text, api_key, **k: extracted)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr("automation_control.collectibles.get_settings", lambda: settings)
+
+
+def _listing(**kw):
+    from automation_control.card_recognition import ExtractedCollectibleListing
+
+    values = dict(brand="Sonny Angel", series="Summer Vacation Series", character="",
+                  variant="Single Box", is_secret=False, quantity=1, is_sealed=True,
+                  asking_price=29.95, currency="AUD", unreadable_fields=["character"])
+    values.update(kw)
+    return ExtractedCollectibleListing(**values)
+
+
+def test_the_review_form_offers_to_fill_from_a_link(client, session):
+    capture = _pending_capture(session, character=None)
+    body = client.get(f"/collectibles/review/{capture.id}").text
+    assert "Fill from a product or listing link" in body
+    assert f"/collectibles/review/{capture.id}/from-link" in body
+
+
+def test_a_link_fills_the_blank_fields(client, session, monkeypatch):
+    from automation_control.models import CapturedCollectible
+
+    capture = _pending_capture(session, character=None, series=None)
+    _wire_link(monkeypatch, [_listing()])
+
+    resp = client.post(f"/collectibles/review/{capture.id}/from-link",
+                       data={"url": "https://example.com/p/1"}, follow_redirects=False)
+    assert resp.status_code == 303
+
+    session.expire_all()
+    filled = session.get(CapturedCollectible, capture.id)
+    assert filled.series == "Summer Vacation Series"
+    assert filled.variant == "Single Box"
+
+
+def test_a_sealed_listing_sets_the_blind_box_series(client, session, monkeypatch):
+    """A listing has no separate blind-box field; for a sealed box the
+    series is the box line, which is the only case where it's known."""
+    from automation_control.models import CapturedCollectible
+
+    capture = _pending_capture(session, character=None)
+    _wire_link(monkeypatch, [_listing(is_sealed=True, series="Summer Vacation Series")])
+    client.post(f"/collectibles/review/{capture.id}/from-link",
+                data={"url": "https://example.com/p/1"}, follow_redirects=False)
+
+    session.expire_all()
+    assert session.get(CapturedCollectible, capture.id).blind_box_series == "Summer Vacation Series"
+
+
+def test_a_loose_figure_listing_does_not_set_a_blind_box_series(client, session, monkeypatch):
+    from automation_control.models import CapturedCollectible
+
+    capture = _pending_capture(session, character=None)
+    _wire_link(monkeypatch, [_listing(is_sealed=False)])
+    client.post(f"/collectibles/review/{capture.id}/from-link",
+                data={"url": "https://example.com/p/1"}, follow_redirects=False)
+
+    session.expire_all()
+    assert session.get(CapturedCollectible, capture.id).blind_box_series is None
+
+
+def test_a_field_the_link_was_unsure_about_is_left_alone(client, session, monkeypatch):
+    """A link that only names the series must not wipe a character the
+    photo already got right."""
+    from automation_control.models import CapturedCollectible
+
+    capture = _pending_capture(session, character="Peach")
+    _wire_link(monkeypatch, [_listing(character="", unreadable_fields=["character"])])
+    client.post(f"/collectibles/review/{capture.id}/from-link",
+                data={"url": "https://example.com/p/1"}, follow_redirects=False)
+
+    session.expire_all()
+    assert session.get(CapturedCollectible, capture.id).character == "Peach"
+
+
+def test_filling_from_a_link_never_touches_the_catalogue(client, session, monkeypatch):
+    from sqlalchemy import func, select
+
+    from automation_control.models import CatalogItem
+
+    capture = _pending_capture(session, character=None)
+    before = session.scalar(select(func.count()).select_from(CatalogItem))
+    _wire_link(monkeypatch, [_listing()])
+    client.post(f"/collectibles/review/{capture.id}/from-link",
+                data={"url": "https://example.com/p/1"}, follow_redirects=False)
+    assert session.scalar(select(func.count()).select_from(CatalogItem)) == before
+
+
+def test_the_capture_stays_pending_after_a_fill(client, session, monkeypatch):
+    from automation_control.models import CapturedCollectible, CardCaptureStatus
+
+    capture = _pending_capture(session, character=None)
+    _wire_link(monkeypatch, [_listing()])
+    client.post(f"/collectibles/review/{capture.id}/from-link",
+                data={"url": "https://example.com/p/1"}, follow_redirects=False)
+
+    session.expire_all()
+    assert session.get(CapturedCollectible, capture.id).status == CardCaptureStatus.PENDING_REVIEW
+
+
+def test_an_unsafe_link_is_reported_on_the_form(client, session, monkeypatch):
+    capture = _pending_capture(session, character=None)
+
+    def refuse(url, **k):
+        from automation_control.link_fetch import UnsafeUrl
+        raise UnsafeUrl("that link points somewhere internal, so it wasn't fetched")
+
+    monkeypatch.setattr("automation_control.link_fetch.fetch_text", refuse)
+    resp = client.post(f"/collectibles/review/{capture.id}/from-link",
+                       data={"url": "http://127.0.0.1:8080/"}, follow_redirects=True)
+    assert "somewhere internal" in resp.text
+
+
+def test_a_page_with_nothing_usable_says_so(client, session, monkeypatch):
+    capture = _pending_capture(session, character=None)
+    _wire_link(monkeypatch, [])
+    resp = client.post(f"/collectibles/review/{capture.id}/from-link",
+                       data={"url": "https://example.com/p/1"}, follow_redirects=True)
+    # the apostrophe is HTML-escaped in the rendered note, as it should be
+    assert "look like a listing" in resp.text
