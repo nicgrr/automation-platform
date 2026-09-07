@@ -28,6 +28,7 @@ from .foil_review import router as foil_review_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
 from .models import Approval, AuditEvent, CapturedCard, CardCaptureStatus, EbayCredential, EbayListing, InventoryItem, JobRun, ListingBuildStatus, PendingListing, PricingStatus, TcgCard
+from .price_history import router as price_history_router
 from .price_review import router as pricing_router
 from .review_queue import router as review_router
 from .scan_feed import router as scan_feed_router
@@ -60,6 +61,7 @@ app.include_router(sealed_economics_router)
 app.include_router(analytics_router)
 app.include_router(collectibles_router)
 app.include_router(whatnot_router)
+app.include_router(price_history_router)
 
 
 def correlation_id() -> str:

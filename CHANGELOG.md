@@ -3,6 +3,15 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 5: price history page
+
+- `/prices/{catalog_item_id}`: the pricing engine (`card_prices`,
+  `PriceSource`) has been writing real data all session with nowhere to
+  view it. Shows current/7-day-avg/30-day-avg/change/high/low/source per
+  variant, plus a hand-drawn inline SVG sparkline. Linked from `/search`.
+  No new tables. 4 new tests; full suite (556) green; live service
+  restarted.
+
 ## 2026-09-07 — Module 12 (Sonny Angel/Smiski) + Module 7 (Whatnot shows)
 
 - `/collectibles`: catalogue for Sonny Angel/Smiski/blind boxes, using

@@ -71,7 +71,7 @@ def search_page(
                 owned_badge = pill(f"own {qty}", "ok") if qty else pill("not owned", "neutral")
                 rows.append(
                     "<tr>"
-                    f"<td>{escape(item.name)}</td>"
+                    f"<td><a href='/prices/{escape(item.id)}'>{escape(item.name)}</a></td>"
                     f"<td class='muted'>{detail}{rarity}</td>"
                     f"<td>{owned_badge}</td>"
                     "</tr>"

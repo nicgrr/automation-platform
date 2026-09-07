@@ -139,6 +139,13 @@ whole case, sell as boxes, sell as packs, open and sell singles) from
 `units_per_display`/`displays_per_case` -- verified against a hand-calculated
 example (12 boxes × 24 packs/box = 288 packs/case).
 
+### Module 5 — price history (done, 2026-09-07)
+No new tables -- `card_prices` already existed and had been writing real
+data all session. `/prices/{catalog_item_id}` was the missing page to
+actually see it: per variant, current price, 7-day average, 30-day average,
+change %, high, low, last updated, source, plus a hand-drawn inline SVG
+sparkline (no charting library). Linked from `/search` results.
+
 ### Module 12 — Sonny Angel / Smiski (done, 2026-09-07)
 Uses `collectible_products` (added in the Module 1 migration, previously
 empty). `/collectibles` lists/creates them (brand, series, character,
