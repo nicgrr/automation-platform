@@ -70,20 +70,37 @@ def _money(value: Decimal | float | None) -> str:
     return "—" if value is None else f"${Decimal(str(value)):,.2f}"
 
 
-def _art(item: CatalogItem | None, listing: ShopListing) -> str:
+def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None = None) -> str:
+    """The seller's own scan wins over publisher reference art.
+
+    A shopper buying an ungraded single is assessing condition, and studio
+    art of a pristine card can't show them a whitened edge. The reference
+    image stays as the fallback for anything not photographed, but it's
+    labelled so the two are never confused for each other.
+    """
+    from .photos import has_own_photo
+
+    if session is not None and has_own_photo(session, listing.id):
+        return (
+            f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>"
+            "<span class='art-tag own'>Actual card</span>"
+        )
     url = listing.image_url or (item.image_url if item else None)
     if not url:
         return "<span class='noart'>no image</span>"
-    return f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>"
+    return (
+        f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>"
+        "<span class='art-tag stock'>Stock image</span>"
+    )
 
 
-def _line_art(line: dict) -> str:
+def _line_art(line: dict, session: Session | None = None) -> str:
     if line["is_lot"]:
         lot = line["listing"]
         if lot.image_url:
             return f"<img src='{escape(lot.image_url)}' alt=''>"
         return f"<span class='bulk-count small'>{lot.card_count}</span>"
-    return _art(line["item"], line["listing"])
+    return _art(line["item"], line["listing"], session)
 
 
 def nav_links(session: Session) -> str:

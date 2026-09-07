@@ -153,6 +153,16 @@ body.nav-open .sidenav{transform:none}
 .sidenav-head{display:flex;align-items:center;justify-content:space-between;padding:0 18px 16px}
 .sidenav-close{background:none;border:none;color:var(--bone);font-size:22px;line-height:1;cursor:pointer;padding:0 4px}
 .sidenav-close:hover{color:var(--brass-lit)}
+.card-art,.detail-art,.line-art{position:relative}
+.art-tag{
+  position:absolute;left:8px;bottom:8px;z-index:1;
+  font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+  padding:3px 7px;border-radius:99px;pointer-events:none;
+}
+.art-tag.own{background:var(--teal);color:#eefaf8}
+.art-tag.stock{background:rgba(20,24,29,.62);color:var(--bone)}
+.detail-art .art-tag{left:12px;bottom:12px;font-size:11.5px;padding:4px 9px}
+.line-art .art-tag{display:none}
 .dept-grid{
   display:grid;gap:16px;margin:22px 0 34px;
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));

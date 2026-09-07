@@ -398,10 +398,20 @@ def inventory_set(
     tiles = []
     for row in rows:
         card, variant, quantity, held = row["card"], row["variant"], row["quantity"], row["held"]
-        face = (
-            f"<img src='/inventory/card-thumb/{escape(card.id)}' alt='' loading='lazy' decoding='async'>"
-            if card.local_image_path else "<span class='no-art'>no image</span>"
-        )
+        # Your own scan is the face when you own the card, reference art
+        # only when you don't. The set page's job is "what do I have and
+        # what condition is it in", and a publisher's studio render answers
+        # neither -- it looks identical for a mint copy and a battered one.
+        own_scan = held[0] if (held and held[0].scan_image_path) else None
+        if own_scan is not None:
+            face = (
+                f"<img src='/inventory/thumb/{escape(own_scan.id)}' alt='' loading='lazy' decoding='async'>"
+                "<span class='face-tag'>Your scan</span>"
+            )
+        elif card.local_image_path:
+            face = f"<img src='/inventory/card-thumb/{escape(card.id)}' alt='' loading='lazy' decoding='async'>"
+        else:
+            face = "<span class='no-art'>no image</span>"
         # An owned card's face links to your own scan; an unowned one has
         # nothing to show, so it stays inert rather than a dead link. The
         # tile itself is never a link -- it holds the edit controls, and
@@ -667,6 +677,9 @@ a.card-tile:hover{border-color:var(--accent)}
   aspect-ratio:245/342;display:grid;place-items:center;margin-bottom:9px}
 .card-face img{width:100%;height:100%;object-fit:contain;display:block}
 .no-art{color:var(--text-dim);font-size:12px}
+.face-tag{position:absolute;left:6px;bottom:6px;background:rgba(20,24,29,.7);color:#fff;
+  font-size:9.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  padding:2px 6px;border-radius:999px;pointer-events:none}
 .qty-badge{position:absolute;top:6px;right:6px;background:var(--accent);color:#fff;
   font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px}
 .card-name{font-weight:650;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

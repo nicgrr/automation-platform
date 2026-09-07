@@ -613,3 +613,43 @@ def test_ebay_median_is_not_used_for_valuation(client, session):
     resp = client.get(SET_PAGE)
 
     assert "$50.00" not in resp.text
+
+
+# --- card faces show your own scan -----------------------------------------
+
+def test_owned_card_tile_shows_your_scan_not_reference_art(client, session):
+    """The set page's job is "what do I have and what condition is it in".
+    A publisher's studio render answers neither -- it looks identical for a
+    mint copy and a battered one."""
+    item = _seed(session)
+    item.scan_image_path = "scan_ingest_data/media/cards/xy11-31.jpg"
+    card = session.get(CatalogCard, "xy11-31")
+    card.local_image_path = "cache/xy11-31.png"
+    session.commit()
+
+    body = client.get("/inventory/set/xy11").text
+    assert f"/inventory/thumb/{item.id}" in body
+    assert "Your scan" in body
+    assert "/inventory/card-thumb/xy11-31" not in body
+
+
+def test_unowned_card_tile_still_uses_reference_art(client, session):
+    _seed(session, quantity=0)
+    card = session.get(CatalogCard, "xy11-31")
+    card.local_image_path = "cache/xy11-31.png"
+    session.commit()
+
+    body = client.get("/inventory/set/xy11").text
+    assert "/inventory/card-thumb/xy11-31" in body
+    assert "Your scan" not in body
+
+
+def test_owned_card_without_a_scan_falls_back_to_reference_art(client, session):
+    _seed(session)  # no scan_image_path
+    card = session.get(CatalogCard, "xy11-31")
+    card.local_image_path = "cache/xy11-31.png"
+    session.commit()
+
+    body = client.get("/inventory/set/xy11").text
+    assert "/inventory/card-thumb/xy11-31" in body
+    assert "Your scan" not in body

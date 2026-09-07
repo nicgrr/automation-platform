@@ -25,6 +25,7 @@ from automation_control.models import (
 )
 
 from . import departments
+from .photos import router as photo_router
 from .brand import logo_mark
 from .common import (
     CART_COOKIE, MAX_PER_LINE, _art, _line_art, _money, cart_count, cart_lines,
@@ -52,11 +53,11 @@ def _active_listings(session: Session, query: str = "", limit: int = 60,
     return session.execute(stmt.order_by(ShopListing.price.desc()).limit(limit)).all()
 
 
-def _card(listing: ShopListing, item: CatalogItem | None) -> str:
+def _card(listing: ShopListing, item: CatalogItem | None, session: Session | None = None) -> str:
     low_stock = "<span class='tag low'>Last one</span>" if listing.quantity == 1 else ""
     return (
         f"<a class='card' href='/item/{escape(listing.id)}'>"
-        f"<div class='card-art'>{_art(item, listing)}</div>"
+        f"<div class='card-art'>{_art(item, listing, session)}</div>"
         "<div class='card-body'>"
         f"<div class='card-title'>{escape(listing.title)}</div>"
         f"<div class='card-sub'>{escape(listing.condition or 'Ungraded')}</div>"
@@ -97,7 +98,7 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
     rows = _active_listings(session, limit=8)
     latest = (
         "<h2 class='section-head'>Fresh in the vault</h2>"
-        f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
+        f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
     ) if rows else ""
 
     body = (
@@ -136,7 +137,7 @@ def department_page(slug: str, request: Request, q: str = Query(""),
             )
 
     if rows:
-        content = f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
+        content = f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
         sub = f"{len(rows)} item(s)"
     else:
         content = (
@@ -164,7 +165,7 @@ def browse(request: Request, q: str = Query(""), dept: str = Query(""),
     scope = department.name if department else "the vault"
     heading = f"Results for “{escape(query)}”" if query else f"Everything in {scope}"
     if rows:
-        content = f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
+        content = f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
         sub = f"{len(rows)} item(s)"
     else:
         content = (
@@ -197,7 +198,7 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
 
     body = (
         "<div class='detail'>"
-        f"<div class='detail-art'>{_art(item, listing)}</div>"
+        f"<div class='detail-art'>{_art(item, listing, session)}</div>"
         "<div>"
         f"<h1>{escape(listing.title)}</h1>"
         f"<div class='detail-price'>{_money(listing.price)} <span class='muted' style='font-size:15px'>{escape(listing.currency)}</span></div>"
@@ -258,7 +259,7 @@ def cart_view(request: Request, zone: str = Query("au"), session: Session = Depe
 
     rows = "".join(
         "<div class='line'>"
-        f"<div class='line-art'>{_line_art(line)}</div>"
+        f"<div class='line-art'>{_line_art(line, session)}</div>"
         "<div class='line-main'>"
         f"<div class='line-title'>{escape(line['listing'].title)}</div>"
         f"<div class='muted'>{_money(line['listing'].price)} × {line['quantity']}</div>"
@@ -438,6 +439,7 @@ def shipping_info(request: Request, session: Session = Depends(get_session)) -> 
 def create_app() -> FastAPI:
     app = FastAPI(title="NL Vault", docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(router)
+    app.include_router(photo_router)
     from .checkout import router as checkout_router
     app.include_router(checkout_router)
     return app
