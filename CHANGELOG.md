@@ -3,6 +3,42 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Module 23: eBay active-listing prices
+
+Asked to add eBay prices. Checked what's actually possible first: eBay has
+no freely-available sold-comp API any more. The Finding API's
+`findCompletedItems` was deprecated Jan 2024 and decommissioned Feb 2025,
+and Marketplace Insights (the only official sold-data source, 90 days) is
+Limited Release requiring business-partner approval a single-operator
+seller won't generally get. The Browse API is free and works, but returns
+*currently listed* items only.
+
+- New `scripts/import_ebay_prices.py`: one Browse search per card, writes
+  two source-tagged `card_prices` rows -- `ebay_active_low` and
+  `ebay_active_median`. Named "active" deliberately: asking prices skew
+  optimistic and must not be mistakable for sold comps anywhere
+  downstream.
+- Defaults to pricing only cards actually owned (`inventory_items`) rather
+  than the whole 20k+ catalogue, because eBay's default application-token
+  quota is ~5,000 Browse calls/day and this makes one call per card.
+  `--all`, `--game`, `--limit`, and `--marketplace` are available;
+  `--limit` defaults to 200 and `--all` warns past 1,000.
+- Reuses the existing read-only `EbaySandboxReadAdapter` and application
+  token (not a user OAuth token) -- no new eBay capability, no listing
+  writes, and none of the three production guardrails touched.
+- Verified end-to-end against the live eBay **sandbox** API: authenticated,
+  made real Browse calls, handled zero-result responses without writing a
+  fabricated price. Sandbox returns eBay's fake catalogue, so real numbers
+  need production credentials -- the script says so on every run while
+  `EBAY_ENV=sandbox`.
+- Found and documented a real usability gap while testing: `Settings` has
+  `env_file=None`, so scripts don't pick up `.env.local` (only
+  `start-control-plane.sh` sources it for the service). The script exits
+  with a clear message rather than a confusing auth error, and its
+  docstring shows the `set -a; . ./.env.local; set +a` line needed first.
+- 9 new tests, all mocked -- no real API calls in the suite. Full suite
+  (690) green.
+
 ## 2026-09-07 — Fixed deal-check's results table on phone screens
 
 Same class of bug as the topbar search box earlier tonight: `.dc-row`'s
