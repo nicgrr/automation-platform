@@ -28,7 +28,7 @@ from .models import (
     BuyThresholdConfig, PotentialPurchase, PotentialPurchaseStatus,
     PurchaseLot, PurchaseLotItem, PurchaseLotStatus,
 )
-from .ui import brand_header, page, pill
+from .ui import brand_header, page, pill, quick_price_widget
 
 router = APIRouter(tags=["buying"])
 
@@ -125,6 +125,7 @@ def buying_calculator(
     body = (
         brand_header("Buying calculator")
         + "<p class='subtitle'>\"Is this worth buying?\" -- Module 6.</p>"
+        + quick_price_widget("market_price", label="Identify a card to fill in market value")
         + "<form method='get' action='/buying-calculator' class='calc-form panel'>"
         + field("market_price", "Market value", market_price)
         + field("seller_price", "Seller asking price", seller_price)
@@ -241,6 +242,7 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
         + "</div></div>"
         + "<div class='panel'><h2>Items</h2><div class='table-wrap'><table>"
         + f"<thead><tr><th>Item</th><th>Qty</th><th>Market ea.</th><th>Total</th></tr></thead><tbody>{item_rows}</tbody></table></div>"
+        + quick_price_widget("market_value", "description")
         + "<form method='post' action='" + f"/purchase-lots/{lot_id}/items" + "' class='calc-form' style='margin-top:14px'>"
         + "<label>Description<input name='description' required></label>"
         + "<label>Market value (each)<input name='market_value' type='number' step='0.01' required></label>"
@@ -317,7 +319,8 @@ def potential_stock_page(user: str = Depends(require_dashboard_user), session: S
 
     form = (
         "<div class='panel'><h2>Add to watchlist</h2>"
-        "<form method='post' action='/potential-stock' class='calc-form'>"
+        + quick_price_widget("market_value", "description")
+        + "<form method='post' action='/potential-stock' class='calc-form'>"
         "<label>Description<input name='description' required></label>"
         "<label>Seller<input name='seller'></label>"
         "<label>Source<input name='source' placeholder='Facebook Marketplace'></label>"

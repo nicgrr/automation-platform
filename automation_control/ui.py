@@ -271,6 +271,103 @@ AUTOCOMPLETE_SCRIPT = """<script>
 </script>"""
 
 
+# Shared "identify from a photo" widget -- buying calculator, purchase
+# lots, potential stock, and Whatnot's item queue (2026-09-07) all embed
+# one of these next to their own form. Each instance declares which of
+# that page's own form fields to fill via data attributes, so this is one
+# script wired generically rather than four bespoke ones; the confirm step
+# the user actually wants ("select and see the value before it's used") is
+# the click on a candidate row -- nothing is filled without that click, and
+# the page's own submit button still has to be pressed after for anything
+# to be saved.
+QUICK_PRICE_STYLE = """<style>
+.quick-price{background:var(--surface-sunken);border:1px dashed var(--panel-border);border-radius:10px;
+  padding:12px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px}
+.qp-label{font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:5px}
+.qp-btn{align-self:flex-start;background:transparent;border:1px solid var(--panel-border);color:var(--text-dim);
+  padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+.qp-btn:hover{border-color:var(--accent);color:var(--accent)}
+.qp-status{font-size:12px;color:var(--text-dim)}
+.qp-results{display:flex;flex-direction:column;gap:6px}
+.qp-candidate{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--panel);
+  border:1px solid var(--panel-border);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px}
+.qp-candidate:hover{border-color:var(--accent)}
+.qp-candidate .qp-price{font-weight:700;color:var(--success);flex:none}
+.qp-candidate.qp-unmatched .qp-price{color:var(--text-faint);font-weight:600}
+</style>"""
+
+QUICK_PRICE_SCRIPT = """<script>
+(function() {
+  document.querySelectorAll('.quick-price').forEach(function(widget) {
+    var fileInput = widget.querySelector('.qp-file');
+    var btn = widget.querySelector('.qp-btn');
+    var status = widget.querySelector('.qp-status');
+    var results = widget.querySelector('.qp-results');
+    var nameField = widget.dataset.nameField;
+    var priceField = widget.dataset.priceField;
+
+    btn.addEventListener('click', function() {
+      if (!fileInput.files.length) { status.textContent = 'Choose a photo first.'; return; }
+      status.textContent = 'Identifying…';
+      results.innerHTML = '';
+      var data = new FormData();
+      data.append('photo', fileInput.files[0]);
+      fetch('/quick-price/identify', { method: 'POST', body: data })
+        .then(function(r) {
+          if (!r.ok) throw new Error('request failed');
+          return r.json();
+        })
+        .then(function(payload) {
+          var items = payload.results || [];
+          if (!items.length) { status.textContent = 'No cards recognized in that photo.'; return; }
+          status.textContent = items.length + ' card(s) found -- select one:';
+          items.forEach(function(item) {
+            var row = document.createElement('div');
+            row.className = 'qp-candidate' + (item.matched ? '' : ' qp-unmatched');
+
+            var name = document.createElement('span');
+            name.textContent = item.character + (item.set_name ? ' (' + item.set_name + ')' : '');
+            row.appendChild(name);
+
+            var price = document.createElement('span');
+            price.className = 'qp-price';
+            price.textContent = item.market_value != null ? '$' + item.market_value.toFixed(2) : 'no price data';
+            row.appendChild(price);
+
+            row.addEventListener('click', function() {
+              if (nameField) {
+                var nameInput = document.querySelector('[name="' + nameField + '"]');
+                if (nameInput) nameInput.value = item.character;
+              }
+              if (priceField && item.market_value != null) {
+                var priceInput = document.querySelector('[name="' + priceField + '"]');
+                if (priceInput) priceInput.value = item.market_value.toFixed(2);
+              }
+              status.textContent = 'Filled from ' + item.character + '. Review and submit the form below.';
+              results.innerHTML = '';
+            });
+            results.appendChild(row);
+          });
+        })
+        .catch(function() { status.textContent = 'Identification failed -- try again or enter manually.'; });
+    });
+  });
+})();
+</script>"""
+
+
+def quick_price_widget(price_field: str, name_field: str | None = None, label: str = "Identify from a photo (optional)") -> str:
+    name_attr = f" data-name-field='{name_field}'" if name_field else ""
+    return (
+        f"<div class='quick-price'{name_attr} data-price-field='{price_field}'>"
+        f"<label class='qp-label'>{label}<input type='file' accept='image/*' capture='environment' class='qp-file'></label>"
+        "<button type='button' class='qp-btn'>Identify &amp; price</button>"
+        "<div class='qp-status'></div>"
+        "<div class='qp-results'></div>"
+        "</div>"
+    )
+
+
 # Installable-to-home-screen basics (Module 18) -- no service worker by
 # design: this tool shows live inventory/pricing, and a caching layer
 # risks showing stale numbers on exactly the data a phone check exists to
@@ -290,11 +387,11 @@ _PWA_HEAD = (
 
 def page(title: str, body: str, head_extra: str = "", show_nav: bool = True, search_value: str = "") -> str:
     chrome = (_topbar_html(search_value) if show_nav else "")
-    script = (AUTOCOMPLETE_SCRIPT if show_nav else "")
+    script = (AUTOCOMPLETE_SCRIPT + QUICK_PRICE_SCRIPT if show_nav else "")
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{title}</title>{STYLE}{TOPBAR_STYLE}{_PWA_HEAD}{head_extra}</head>"
+        f"<title>{title}</title>{STYLE}{TOPBAR_STYLE}{QUICK_PRICE_STYLE}{_PWA_HEAD}{head_extra}</head>"
         f"<body>{chrome}<main>{body}</main>{script}</body></html>"
     )
 

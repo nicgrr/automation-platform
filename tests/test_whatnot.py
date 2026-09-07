@@ -44,6 +44,13 @@ def test_create_show_and_queue_an_item(client):
     assert "$50.00" in detail.text
 
 
+def test_show_detail_has_quick_price_widget_wired_to_description_and_starting_price(client):
+    show_url = _create_show(client)
+    detail = client.get(show_url)
+    assert "data-name-field='description'" in detail.text
+    assert "data-price-field='starting_price'" in detail.text
+
+
 def test_marking_an_item_sold_creates_a_real_sale_using_the_active_fee_rule(client, session):
     show_url = _create_show(client)
     show_id = show_url.rsplit("/", 1)[-1]

@@ -26,7 +26,7 @@ from .database import get_session
 from .models import (
     InventoryItem, Marketplace, Sale, SaleItem, WhatnotShow, WhatnotShowItem, WhatnotShowItemOutcome,
 )
-from .ui import brand_header, page, pill
+from .ui import brand_header, page, pill, quick_price_widget
 
 router = APIRouter(prefix="/whatnot", tags=["whatnot"])
 
@@ -132,7 +132,8 @@ def show_detail(show_id: str, user: str = Depends(require_dashboard_user), sessi
         "<div class='panel'><h2>Items</h2><div class='table-wrap'><table>"
         "<thead><tr><th>Item</th><th>Starting</th><th>Final</th><th>Outcome</th><th>Settle</th></tr></thead>"
         f"<tbody>{''.join(item_rows) or '<tr><td colspan=5>No items queued yet.</td></tr>'}</tbody></table></div>"
-        "<form method='post' action='" + f"/whatnot/{show_id}/items" + "' class='calc-form' style='margin-top:14px'>"
+        + quick_price_widget("starting_price", "description", label="Identify a card to fill in a starting price")
+        + "<form method='post' action='" + f"/whatnot/{show_id}/items" + "' class='calc-form' style='margin-top:14px'>"
         "<label>Description<input name='description' required></label>"
         "<label>Starting price<input name='starting_price' type='number' step='0.01'></label>"
         "<button type='submit'>Add to queue</button></form></div>"

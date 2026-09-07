@@ -106,3 +106,26 @@ def test_buying_pages_require_login():
     for url in ["/buying-calculator", "/purchase-lots", "/potential-stock"]:
         response = client.get(url, follow_redirects=False)
         assert response.status_code in (302, 303, 401), url
+
+
+def test_buying_calculator_has_quick_price_widget_wired_to_market_price(client):
+    response = client.get("/buying-calculator")
+    assert "class='quick-price'" in response.text
+    assert "data-price-field='market_price'" in response.text
+
+
+def test_potential_stock_has_quick_price_widget_wired_to_description_and_market_value(client):
+    response = client.get("/potential-stock")
+    assert "data-name-field='description'" in response.text
+    assert "data-price-field='market_value'" in response.text
+
+
+def test_purchase_lot_detail_has_quick_price_widget(client):
+    create = client.post(
+        "/purchase-lots",
+        data={"source": "FB Marketplace Collection", "seller": "Jane", "asking_price": "1000", "target_buy_pct": "55"},
+        follow_redirects=False,
+    )
+    detail = client.get(create.headers["location"])
+    assert "data-name-field='description'" in detail.text
+    assert "data-price-field='market_value'" in detail.text

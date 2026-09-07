@@ -3,6 +3,41 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — AI photo recognition wired into buying, purchase lots, potential stock, Whatnot
+
+Asked for "input something in there (AI recognition of items) and able to
+select and confirm the items and see market value" across the buying
+calculator, potential stock, and purchase lots, plus connecting Whatnot to
+the same flow.
+
+- New `automation_control/quick_price.py`: `POST /quick-price/identify`
+  takes one photo, reuses the existing `extract_card_details()` (same AI
+  vision call the card-capture pipeline already uses), matches each
+  detected card against the reference catalogue (`CatalogCard.number` +
+  fuzzy name, narrowed by set name when read), and returns each match's
+  latest AUD market price from `card_prices`. Deliberately stateless and
+  read-only -- no `CapturedCard` row, nothing written to inventory, the
+  photo lives in a temp dir for the duration of the request only. Scoped
+  to TCG cards for now; collectibles have no live market-price feed yet
+  to look up against.
+- New shared widget in `ui.py` (`quick_price_widget()` /
+  `QUICK_PRICE_STYLE` / `QUICK_PRICE_SCRIPT`, present on every page like
+  the search autocomplete): upload a photo, get back a list of identified
+  cards with their market value, click one to fill the page's own
+  form fields -- the click is the "select and confirm" step; the page's
+  own submit button still has to be pressed for anything to actually
+  save. One generic script wired via `data-name-field`/`data-price-field`
+  attributes instead of four bespoke ones.
+- Wired into `/buying-calculator` (fills `market_price`), `/purchase-lots/{id}`'s
+  add-item form (fills `description`+`market_value`), `/potential-stock`'s
+  add-to-watchlist form (same), and `/whatnot/{id}`'s add-to-queue form
+  (fills `description`+`starting_price`).
+- 13 new tests (8 for the identify endpoint itself -- matched/unmatched/
+  multi-card/unreadable-field-fallback/failure-handling, 5 confirming the
+  widget is wired to the right field names on each page); full suite (647)
+  green; `ezbay.service` restarted; all four pages plus the new endpoint
+  smoke-tested (401, correctly gated).
+
 ## 2026-09-07 — Unified the whole app onto one light theme, fixed a live mobile bug
 
 Only `/dashboard` had the polished light theme (charts, topbar, autocomplete);

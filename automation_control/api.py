@@ -29,6 +29,7 @@ from .listings_review import router as listings_router
 from .models import Approval, EbayCredential, EbayListing, JobRun
 from .price_history import router as price_history_router
 from .price_review import router as pricing_router
+from .quick_price import router as quick_price_router
 from .review_queue import router as review_router
 from .scan_feed import router as scan_feed_router
 from .scan_ingest_status import router as scan_ingest_status_router
@@ -69,6 +70,7 @@ app.include_router(whatnot_router)
 app.include_router(price_history_router)
 app.include_router(dashboard_router)
 app.include_router(data_export_router)
+app.include_router(quick_price_router)
 
 
 def correlation_id() -> str:
