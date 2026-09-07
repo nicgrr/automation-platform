@@ -142,7 +142,7 @@ async def deal_check_extract(
 
 
 _STYLE = """<style>
-#deal-check-results{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+#deal-check-results{margin-top:14px;display:flex;flex-direction:column;gap:8px;max-width:100%;overflow-x:auto}
 .dc-row{display:grid;grid-template-columns:1fr 100px 90px 90px 70px;gap:10px;align-items:center;
   background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:8px;padding:10px 12px;font-size:13px}
 .dc-row .dc-desc{font-weight:600}
@@ -150,6 +150,18 @@ _STYLE = """<style>
 .dc-head{display:grid;grid-template-columns:1fr 100px 90px 90px 70px;gap:10px;font-size:11px;text-transform:uppercase;
   letter-spacing:.06em;color:var(--text-faint);padding:0 12px}
 .muted{color:var(--text-dim);font-size:13px}
+
+/* Narrow phone screens: the 5-column grid has no room to breathe (this is
+   exactly the bug that broke the topbar search box earlier -- fixed
+   columns plus a flexible one don't shrink below their content on their
+   own), so stack each result into a small card of label:value lines
+   instead of trying to force a table into ~360px. */
+@media (max-width: 640px) {
+  .dc-head { display: none; }
+  .dc-row { grid-template-columns: 1fr; gap: 4px; }
+  .dc-row > [data-label] { display: flex; justify-content: space-between; gap: 10px; }
+  .dc-row > [data-label]::before { content: attr(data-label); color: var(--text-faint); font-weight: 600; flex: none; }
+}
 </style>"""
 
 _SCRIPT = """<script>
@@ -212,18 +224,22 @@ _SCRIPT = """<script>
 
           var code = document.createElement('span');
           code.className = 'dc-code';
+          code.setAttribute('data-label', 'Set/No.');
           code.textContent = (item.set_code || '?') + '-' + (item.card_number || '?');
           row.appendChild(code);
 
           var asking = document.createElement('span');
+          asking.setAttribute('data-label', 'Asking');
           asking.textContent = item.asking_price != null ? '$' + item.asking_price.toFixed(2) : '—';
           row.appendChild(asking);
 
           var market = document.createElement('span');
+          market.setAttribute('data-label', 'Market');
           market.textContent = item.market_value != null ? '$' + item.market_value.toFixed(2) : 'no data';
           row.appendChild(market);
 
           var verdict = document.createElement('span');
+          verdict.setAttribute('data-label', 'Verdict');
           var pillEl = document.createElement('span');
           pillEl.className = 'pill ' + item.verdict_kind;
           pillEl.textContent = KIND_LABEL[item.verdict_kind] || item.verdict;

@@ -3,6 +3,17 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Fixed deal-check's results table on phone screens
+
+Same class of bug as the topbar search box earlier tonight: `.dc-row`'s
+5-column grid (`1fr 100px 90px 90px 70px`) had no mobile breakpoint, so on
+a narrow phone the fixed-width columns forced the whole row wider than the
+viewport -- visible in a real screenshot from testing `/deal-check` live.
+Added a `@media (max-width: 640px)` breakpoint that stacks each result
+into a small card of label:value lines (via `data-label` attributes +
+`::before`) instead of trying to force a table into ~360px. 1 new
+regression test; full suite (681) green; `ezbay.service` restarted.
+
 ## 2026-09-07 — One Piece pricing, for free, in place of a $49/month API
 
 Asked to look into a "price charting API" and report the cost. Researched

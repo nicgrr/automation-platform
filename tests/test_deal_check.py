@@ -157,3 +157,12 @@ def test_page_renders_the_form(client):
     assert "deal-check-form" in resp.text
     assert "name='text'" in resp.text
     assert "name='photo'" in resp.text
+
+
+def test_page_results_table_is_responsive_on_narrow_screens(client):
+    # Regression: the results grid had fixed pixel columns with no mobile
+    # breakpoint at all -- the same class of bug that broke the topbar
+    # search box (see ui.py) -- causing horizontal overflow on a phone.
+    resp = client.get("/deal-check")
+    assert "@media (max-width: 640px)" in resp.text
+    assert "data-label" in resp.text
