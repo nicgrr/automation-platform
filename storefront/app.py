@@ -24,7 +24,7 @@ from automation_control.models import (
     BulkLot, CardSet, CatalogItem, ShippingRate, ShippingZone, ShopListing, ShopListingStatus,
 )
 
-from . import departments
+from . import departments, discounts
 from .photos import router as photo_router
 from .brand import logo_mark
 from .common import (
@@ -254,7 +254,10 @@ def cart_view(request: Request, zone: str = Query("au"), session: Session = Depe
         return shell(session, "Cart — NL Vault", body, request=request)
 
     selected_zone = ShippingZone.INTERNATIONAL if zone == "international" else ShippingZone.AU
-    items_total = sum((line["line_total"] for line in lines), Decimal("0"))
+    raw_items_total = sum((line["line_total"] for line in lines), Decimal("0"))
+    groups, near_misses = discounts.evaluate(session, lines)
+    discount_total = discounts.total_discount(groups)
+    items_total = raw_items_total - discount_total
     ship_cost, ship_label = shipping_for(session, selected_zone, items_total)
 
     rows = "".join(
@@ -272,8 +275,29 @@ def cart_view(request: Request, zone: str = Query("au"), session: Session = Depe
         for line in lines
     )
 
+    discount_block = ""
+    if groups or near_misses:
+        earned = "".join(
+            f"<li><span>{escape(g.label)} &mdash; {g.quantity} cards, {g.discount_pct:.0f}% off</span>"
+            f"<span>&minus;{_money(g.discount_amount)}</span></li>"
+            for g in groups
+        )
+        nudges = "".join(
+            f"<li class='nudge'><span>Add {n.needed} more from {escape(n.label)} for {n.next_pct:.0f}% off</span></li>"
+            for n in near_misses
+        )
+        discount_block = (
+            "<div class='panel discountpanel'><h2>Set discounts</h2>"
+            f"<ul class='discountlist'>{earned}{nudges}</ul></div>"
+        )
+
     au_selected = " selected" if selected_zone == ShippingZone.AU else ""
     intl_selected = " selected" if selected_zone == ShippingZone.INTERNATIONAL else ""
+
+    discount_line = (
+        f"<div class='discount-row'><span>Set discount</span><span>&minus;{_money(discount_total)}</span></div>"
+        if discount_total > 0 else ""
+    )
 
     body = (
         "<div class='page-head'><h1>Your cart</h1></div>"
@@ -285,12 +309,14 @@ def cart_view(request: Request, zone: str = Query("au"), session: Session = Depe
         f"<option value='international'{intl_selected}>International</option>"
         "</select></label></form>"
         "<div class='totals'>"
-        f"<div><span>Items</span><span>{_money(items_total)}</span></div>"
+        f"<div><span>Items</span><span>{_money(raw_items_total)}</span></div>"
+        f"{discount_line}"
         f"<div><span>{escape(ship_label)}</span><span>{_money(ship_cost)}</span></div>"
         f"<div class='grand'><span>Total</span><span>{_money(items_total + ship_cost)}</span></div>"
         "</div>"
         f"<div style='margin-top:20px'><a class='btn brass' href='/checkout?zone={selected_zone.value}'>Checkout</a></div>"
         "</div>"
+        + discount_block
     )
     return shell(session, "Cart — NL Vault", body, request=request)
 

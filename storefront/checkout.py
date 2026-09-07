@@ -31,12 +31,14 @@ from automation_control.models import (
     BulkLot, ShippingZone, ShopListing, ShopListingStatus, ShopOrder, ShopOrderItem, ShopOrderStatus,
 )
 
+from . import discounts
 from .common import CART_COOKIE, cart_lines, nav_links, read_cart, shipping_for
 from .ui import page
 
 router = APIRouter()
 
 STRIPE_API = "https://api.stripe.com/v1/checkout/sessions"
+STRIPE_COUPONS_API = "https://api.stripe.com/v1/coupons"
 REFERENCE_ALPHABET = string.ascii_uppercase + string.digits
 
 
@@ -71,7 +73,10 @@ def checkout_form(
         return RedirectResponse("/cart", status_code=303)
 
     selected = ShippingZone.INTERNATIONAL if zone == "international" else ShippingZone.AU
-    items_total = sum((line["line_total"] for line in lines), Decimal("0"))
+    raw_items_total = sum((line["line_total"] for line in lines), Decimal("0"))
+    groups, _near_misses = discounts.evaluate(session, lines)
+    discount_total = discounts.total_discount(groups)
+    items_total = raw_items_total - discount_total
     ship_cost, ship_label = shipping_for(session, selected, items_total)
 
     summary = "".join(
@@ -79,6 +84,11 @@ def checkout_form(
         f"<span>{_money(line['line_total'])}</span></div>"
         for line in lines
     )
+    for group in groups:
+        summary += (
+            f"<div><span>Set discount &mdash; {escape(group.label)} "
+            f"({group.discount_pct:.0f}%)</span><span>&minus;{_money(group.discount_amount)}</span></div>"
+        )
 
     live = stripe_secret() is not None
     pay_button = (
@@ -108,8 +118,10 @@ def checkout_form(
         "<div class='panel'><h2>Your order</h2>"
         f"<div class='totals' style='border-top:none;margin-top:0'>{summary}</div>"
         "<div class='totals'>"
-        f"<div><span>Items</span><span>{_money(items_total)}</span></div>"
-        f"<div><span>{escape(ship_label)}</span><span>{_money(ship_cost)}</span></div>"
+        f"<div><span>Items</span><span>{_money(raw_items_total)}</span></div>"
+        + (f"<div class='discount-row'><span>Set discount</span><span>&minus;{_money(discount_total)}</span></div>"
+           if discount_total > 0 else "")
+        + f"<div><span>{escape(ship_label)}</span><span>{_money(ship_cost)}</span></div>"
         f"<div class='grand'><span>Total</span><span>{_money(items_total + ship_cost)}</span></div>"
         "</div></div>"
         "</div>"
@@ -120,7 +132,28 @@ def checkout_form(
     ))
 
 
-async def create_stripe_session(order: ShopOrder, lines: list[dict], ship_cost: Decimal, base_url: str) -> str | None:
+async def _create_discount_coupon(secret: str, currency: str, amount: Decimal, client: httpx.AsyncClient) -> str | None:
+    """A single one-time Stripe Coupon covering the whole order's set
+    discount. Line items keep the listed price -- Stripe Checkout doesn't
+    accept a negative unit_amount, and this way the hosted page shows the
+    discount as its own line rather than baking it silently into a price."""
+    if amount <= 0:
+        return None
+    response = await client.post(STRIPE_COUPONS_API, data={
+        "amount_off": str(int((amount * 100).to_integral_value())),
+        "currency": currency.lower(),
+        "duration": "once",
+        "name": "Bulk set discount",
+    }, auth=(secret, ""))
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail="payment provider rejected the discount")
+    return response.json().get("id")
+
+
+async def create_stripe_session(
+    order: ShopOrder, lines: list[dict], ship_cost: Decimal, base_url: str,
+    discount_total: Decimal = Decimal("0"),
+) -> str | None:
     """Hand the basket to Stripe and get back a URL to send the shopper to.
     Amounts are sent in cents, recomputed from the order we just wrote --
     never from anything the browser supplied."""
@@ -153,6 +186,9 @@ async def create_stripe_session(order: ShopOrder, lines: list[dict], ship_cost: 
         ]
 
     async with httpx.AsyncClient(timeout=20.0) as client:
+        coupon_id = await _create_discount_coupon(secret, order.currency, discount_total, client)
+        if coupon_id:
+            data.append(("discounts[0][coupon]", coupon_id))
         response = await client.post(STRIPE_API, data=data, auth=(secret, ""))
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="payment provider rejected the request")
@@ -172,7 +208,10 @@ async def checkout_submit(
         return RedirectResponse("/cart", status_code=303)
 
     selected = ShippingZone.INTERNATIONAL if zone == "international" else ShippingZone.AU
-    items_total = sum((line["line_total"] for line in lines), Decimal("0"))
+    raw_items_total = sum((line["line_total"] for line in lines), Decimal("0"))
+    groups, _near_misses = discounts.evaluate(session, lines)
+    discount_total = discounts.total_discount(groups)
+    items_total = raw_items_total - discount_total
     ship_cost, _ = shipping_for(session, selected, items_total)
 
     order = ShopOrder(
@@ -192,10 +231,20 @@ async def checkout_submit(
             unit_price=Decimal(str(line["listing"].price)),
             quantity=line["quantity"],
         ))
+    # Recorded as its own negative line rather than folded into the listed
+    # prices above, so an order still shows exactly what was charged and
+    # why -- "10% off 5 Base Set cards" reads directly off the order,
+    # rather than requiring the discount to be reverse-engineered later.
+    for group in groups:
+        session.add(ShopOrderItem(
+            order_id=order.id, listing_id=None,
+            title=f"Set discount — {group.label} ({group.quantity} items, {group.discount_pct:.0f}% off)",
+            unit_price=-group.discount_amount, quantity=1,
+        ))
     session.commit()
 
     base_url = str(request.base_url).rstrip("/")
-    pay_url = await create_stripe_session(order, lines, ship_cost, base_url)
+    pay_url = await create_stripe_session(order, lines, ship_cost, base_url, discount_total)
     if pay_url:
         order.stripe_session_id = pay_url.rsplit("/", 1)[-1]
         session.commit()
@@ -252,6 +301,8 @@ def _decrement_stock(session: Session, order: ShopOrder) -> None:
     imprecise, but a lot is a one-off product and this is only ever a
     convenience for the operator, not an accounting record."""
     for item in session.query(ShopOrderItem).filter_by(order_id=order.id).all():
+        if item.unit_price < 0:
+            continue  # a set-discount line, not a real stock line
         if item.listing_id:
             listing = session.get(ShopListing, item.listing_id)
             if listing is not None:

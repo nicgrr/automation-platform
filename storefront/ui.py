@@ -115,6 +115,13 @@ h2{font-family:Fraunces,Georgia,serif;font-weight:700;font-size:22px;margin:0 0 
 .totals{margin-top:18px;border-top:2px solid var(--ink);padding-top:14px}
 .totals div{display:flex;justify-content:space-between;padding:5px 0;font-size:14.5px}
 .totals .grand{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:22px;padding-top:10px}
+.totals .discount-row span:last-child{color:var(--teal)}
+.discountpanel{margin-top:18px}
+.discountlist{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:9px}
+.discountlist li{display:flex;justify-content:space-between;gap:14px;font-size:14px}
+.discountlist li span:last-child{color:var(--teal);font-weight:600;white-space:nowrap}
+.discountlist li.nudge{color:var(--muted);font-style:italic}
+.discountlist li.nudge span{color:inherit;font-weight:400}
 
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
 .empty .mark{opacity:.25;margin:0 auto 16px}

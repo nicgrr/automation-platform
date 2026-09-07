@@ -1174,3 +1174,24 @@ class ShopCostConfig(Base):
     target_margin_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("25.00"))
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SetDiscountTier(Base):
+    """A quantity threshold that earns a discount when a cart holds that
+    many items from the same TCG set or collectible series -- "buy more
+    of one set, pay less per card". Rows rather than a code constant, same
+    reasoning as ShippingRate: the numbers should be tunable without a
+    redeploy, and there's no reason the right threshold for a slow set is
+    the right one for a hot one.
+
+    Bulk lots never participate: a lot already IS a whole set in one
+    line, so discounting it against itself has no meaning.
+    """
+
+    __tablename__ = "set_discount_tiers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    min_quantity: Mapped[int] = mapped_column(Integer)
+    discount_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    label: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
