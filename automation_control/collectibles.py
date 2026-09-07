@@ -441,9 +441,9 @@ def collectible_capture_image(capture_id: str, user: str = Depends(require_dashb
 _STYLE = """<style>
 .calc-form{display:flex;flex-direction:column;gap:12px;max-width:420px}
 .calc-form label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--text-dim)}
-.calc-form input{background:#0a0f1c;border:1px solid var(--panel-border);border-radius:8px;
+.calc-form input{background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:8px;
   padding:10px 12px;color:var(--text);font-size:14px}
 .calc-form button{background:linear-gradient(120deg,var(--accent),var(--accent-2));border:none;padding:11px;
-  border-radius:8px;color:#04101a;font-weight:700;cursor:pointer;margin-top:4px}
+  border-radius:8px;color:#fff;font-weight:700;cursor:pointer;margin-top:4px}
 .muted{color:var(--text-dim);font-size:13px}
 </style>"""

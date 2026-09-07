@@ -266,12 +266,12 @@ def foil_review_image(item_id: str, user: str = Depends(require_dashboard_user),
 _STYLE = """<style>
 .toolbar{display:flex;gap:10px;align-items:center;margin:14px 0 22px;flex-wrap:wrap}
 .chip{display:inline-flex;align-items:center;padding:10px 16px;border-radius:999px;font-size:14px;
-  border:1px solid var(--panel-border);color:var(--text-dim);background:#0a0f1c;cursor:pointer}
+  border:1px solid var(--panel-border);color:var(--text-dim);background:var(--surface-sunken);cursor:pointer}
 .chip:hover{border-color:var(--accent);color:var(--accent)}
 
 .foil-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:16px;
   padding:20px;display:flex;flex-direction:column;gap:10px;max-width:480px;margin:0 auto}
-.foil-face{display:block;border-radius:12px;overflow:hidden;background:#0a0f1c;
+.foil-face{display:block;border-radius:12px;overflow:hidden;background:var(--surface-sunken);
   aspect-ratio:5/7;max-height:56vh;margin:0 auto}
 .foil-face img{width:100%;height:100%;object-fit:contain;display:block}
 .foil-name{font-size:17px;font-weight:650;text-align:center}
@@ -286,5 +286,5 @@ _STYLE = """<style>
 .variant-btn:hover{border-color:var(--accent);color:var(--accent)}
 .variant-btn.current{border-color:var(--accent-2)}
 .variant-btn .tag{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
-  color:var(--text-dim);background:#0a0f1c;padding:2px 7px;border-radius:999px}
+  color:var(--text-dim);background:var(--surface-sunken);padding:2px 7px;border-radius:999px}
 </style>"""

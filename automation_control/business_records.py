@@ -254,19 +254,19 @@ def create_release_entry(
 _STYLE = """<style>
 .calc-form{display:flex;flex-direction:column;gap:12px;max-width:420px}
 .calc-form label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--text-dim)}
-.calc-form input,.calc-form select{background:#0a0f1c;border:1px solid var(--panel-border);border-radius:8px;
+.calc-form input,.calc-form select{background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:8px;
   padding:10px 12px;color:var(--text);font-size:14px}
 .calc-form button{background:linear-gradient(120deg,var(--accent),var(--accent-2));border:none;padding:11px;
-  border-radius:8px;color:#04101a;font-weight:700;cursor:pointer;margin-top:4px}
+  border-radius:8px;color:#fff;font-weight:700;cursor:pointer;margin-top:4px}
 .goal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-bottom:20px}
 .goal-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px}
-.goal-card.achieved{border-color:rgba(52,211,153,.4)}
+.goal-card.achieved{border-color:var(--success)}
 .goal-label{font-weight:650;margin-bottom:10px}
-.goal-bar{height:8px;border-radius:999px;background:#0a0f1c;overflow:hidden;margin-bottom:8px}
+.goal-bar{height:8px;border-radius:999px;background:var(--surface-sunken);overflow:hidden;margin-bottom:8px}
 .goal-fill{height:100%;background:linear-gradient(120deg,var(--accent),var(--accent-2))}
 .goal-value{font-size:13px;color:var(--text-dim);margin-bottom:10px}
 .goal-form{display:flex;gap:8px}
-.goal-form input{flex:1;background:#0a0f1c;border:1px solid var(--panel-border);border-radius:8px;padding:8px;color:var(--text)}
-.goal-form button{padding:8px 14px;border-radius:8px;border:none;background:var(--accent-2);color:#04101a;font-weight:700;cursor:pointer}
+.goal-form input{flex:1;background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:8px;padding:8px;color:var(--text)}
+.goal-form button{padding:8px 14px;border-radius:8px;border:none;background:var(--accent-2);color:#fff;font-weight:700;cursor:pointer}
 .muted{color:var(--text-dim);font-size:13px}
 </style>"""

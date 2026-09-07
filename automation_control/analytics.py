@@ -156,8 +156,8 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
 
 _STYLE = """<style>
 .age-row{display:flex;gap:14px}
-.age-bucket{flex:1;text-align:center;background:#0a0f1c;border:1px solid var(--panel-border);border-radius:10px;padding:14px}
-.age-bucket.dead{border-color:rgba(248,113,113,.4)}
+.age-bucket{flex:1;text-align:center;background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:10px;padding:14px}
+.age-bucket.dead{border-color:var(--danger)}
 .age-count{font-size:22px;font-weight:700}
 .age-label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
 .muted{color:var(--text-dim)}

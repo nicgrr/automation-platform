@@ -203,22 +203,22 @@ def feed_crop(stem: str, index: int, user: str = Depends(require_dashboard_user)
 _STYLE = """<style>
 .ready{border-radius:14px;padding:16px 18px;margin:0 0 18px;border:1px solid var(--panel-border);
   background:var(--panel)}
-.ready.ok{border-color:rgba(52,211,153,.35)}
+.ready.ok{border-color:var(--success)}
 .ready.warn{border-color:rgba(212,165,39,.35)}
-.ready.crit{border-color:rgba(248,113,113,.35)}
+.ready.crit{border-color:var(--danger)}
 .ready-head{font-size:16px}
 .ready-detail{font-size:13px;color:var(--text-dim);margin-top:7px}
 
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px}
 .chip{display:inline-flex;align-items:center;padding:9px 15px;border-radius:999px;font-size:13.5px;
-  border:1px solid var(--panel-border);color:var(--text-dim);text-decoration:none;background:#0a0f1c}
+  border:1px solid var(--panel-border);color:var(--text-dim);text-decoration:none;background:var(--surface-sunken)}
 .chip:hover{border-color:var(--accent);color:var(--accent)}
 
 .sheets{display:flex;flex-direction:column;gap:14px}
 .sheet{display:flex;gap:14px;background:var(--panel);border:1px solid var(--panel-border);
   border-radius:14px;padding:12px;min-width:0}
 .sheet>*{min-width:0}
-.sheet-img{flex:0 0 132px;display:block;border-radius:9px;overflow:hidden;background:#0a0f1c}
+.sheet-img{flex:0 0 132px;display:block;border-radius:9px;overflow:hidden;background:var(--surface-sunken)}
 .sheet-img img{width:100%;display:block}
 .sheet-img.missing{display:grid;place-items:center;color:var(--text-dim);font-size:11px;
   height:120px;text-align:center;padding:6px}
@@ -232,7 +232,7 @@ _STYLE = """<style>
 .card-list li.card-warn{color:var(--accent)}
 .card-list li.card-bad{color:var(--danger)}
 .crops{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-.crops .crop{width:52px;border-radius:5px;display:block;background:#0a0f1c}
+.crops .crop{width:52px;border-radius:5px;display:block;background:var(--surface-sunken)}
 
 @media (max-width:560px){
   .sheet{flex-direction:column}

@@ -110,7 +110,7 @@ def login_page() -> str:
         + "<label>Password <input type=password name=password autocomplete=current-password required></label>"
         + "<button>Sign in</button></form></div>"
     )
-    return page("EzBay Login", body)
+    return page("EzBay Login", body, show_nav=False)
 
 
 @app.post("/login")

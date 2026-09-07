@@ -212,15 +212,15 @@ def mark_outcome(
 _STYLE = """<style>
 .calc-form{display:flex;flex-direction:column;gap:12px;max-width:420px}
 .calc-form label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--text-dim)}
-.calc-form input{background:#0a0f1c;border:1px solid var(--panel-border);border-radius:8px;
+.calc-form input{background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:8px;
   padding:10px 12px;color:var(--text);font-size:14px}
 .calc-form button{background:linear-gradient(120deg,var(--accent),var(--accent-2));border:none;padding:11px;
-  border-radius:8px;color:#04101a;font-weight:700;cursor:pointer;margin-top:4px}
+  border-radius:8px;color:#fff;font-weight:700;cursor:pointer;margin-top:4px}
 .calc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px}
 .calc-grid .label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);margin-bottom:4px}
 .calc-grid .value{font-size:20px;font-weight:650}
 .outcome-form{display:flex;gap:6px;align-items:center}
-.outcome-form input{width:90px;background:#0a0f1c;border:1px solid var(--panel-border);border-radius:6px;
+.outcome-form input{width:90px;background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:6px;
   padding:6px;color:var(--text);font-size:12px}
 .outcome-btn{padding:6px 10px;border-radius:6px;border:1px solid var(--panel-border);background:none;
   color:var(--text-dim);font-size:11px;cursor:pointer}

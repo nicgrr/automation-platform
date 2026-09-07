@@ -436,7 +436,7 @@ def review_image(name: str, user: str = Depends(require_dashboard_user)):
 _STYLE = """<style>
 .toolbar{display:flex;gap:10px;align-items:center;margin:0 0 18px;flex-wrap:wrap}
 .chip{display:inline-flex;align-items:center;padding:10px 16px;border-radius:999px;font-size:14px;
-  border:1px solid var(--panel-border);color:var(--text-dim);text-decoration:none;background:#0a0f1c}
+  border:1px solid var(--panel-border);color:var(--text-dim);text-decoration:none;background:var(--surface-sunken)}
 .chip:hover{border-color:var(--accent);color:var(--accent)}
 .muted{color:var(--text-dim);font-size:13px}
 
@@ -445,7 +445,7 @@ _STYLE = """<style>
   padding:16px;display:flex;flex-direction:column;gap:8px;min-width:0}
 .review-card>*{min-width:0;max-width:100%}
 
-.review-face{display:block;border-radius:12px;overflow:hidden;background:#0a0f1c;
+.review-face{display:block;border-radius:12px;overflow:hidden;background:var(--surface-sunken);
   aspect-ratio:5/7;max-height:62vh;margin:0 auto}
 .review-face img{width:100%;height:100%;object-fit:contain;display:block}
 
@@ -457,7 +457,7 @@ _STYLE = """<style>
 
 .picks{display:flex;flex-direction:column;gap:7px;margin-top:8px}
 .pick{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;
-  width:100%;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
+  width:100%;min-width:0;background:var(--surface-sunken);border:1px solid var(--panel-border);
   border-radius:11px;padding:11px 13px;cursor:pointer;color:var(--text)}
 .pick:hover{border-color:var(--accent)}
 .pick-name{font-size:15px;font-weight:650;overflow:hidden;text-overflow:ellipsis;
@@ -470,15 +470,15 @@ _STYLE = """<style>
    buttons don't fit on one line, and overflow hid the Discard button. */
 .printing{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;
   color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
-.printing select{flex:1 1 auto;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
+.printing select{flex:1 1 auto;min-width:0;background:var(--surface-sunken);border:1px solid var(--panel-border);
   border-radius:10px;padding:10px;color:var(--text);font-size:14px;text-transform:none;letter-spacing:normal}
 .manual{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;min-width:0}
-.manual input{flex:1 1 140px;min-width:0;background:#0a0f1c;border:1px solid var(--panel-border);
+.manual input{flex:1 1 140px;min-width:0;background:var(--surface-sunken);border:1px solid var(--panel-border);
   border-radius:10px;padding:12px;color:var(--text);font-size:15px}
 .manual button{flex:0 0 auto;padding:12px 18px;border-radius:10px;font-size:15px;cursor:pointer;
   border:none;background:linear-gradient(120deg,var(--accent),var(--accent-2));
-  color:#04101a;font-weight:700}
+  color:#fff;font-weight:700}
 .manual button.ghost{background:none;border:1px solid var(--panel-border);
   color:var(--text-dim);font-weight:600}
-.manual button.ghost:hover{border-color:var(--status-critical,#f87171);color:var(--status-critical,#f87171)}
+.manual button.ghost:hover{border-color:var(--danger);color:var(--danger)}
 </style>"""

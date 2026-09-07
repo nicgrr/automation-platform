@@ -1,10 +1,11 @@
 """The business dashboard -- rebuilt light-themed and chart-driven per an
 explicit reference (a Salesforce executive dashboard): organized widget
 cards instead of a stat grid, real donut/gauge/bar charts instead of plain
-numbers. Deliberately its own self-contained HTML shell rather than
-ui.py's shared dark `page()`/`STYLE` -- every other page in this app keeps
-the dark "trading desk" look; only this one page's palette changed, by
-explicit choice, not a global theme switch.
+numbers. Originally its own fully self-contained HTML shell, back when it
+was the one light-themed exception to the rest of the dark app; now that
+the whole app shares one light theme (2026-09-07), it uses ui.py's shared
+`page()` shell like every other route, keeping only its own widget-grid
+markup and styling as page-specific `_STYLE`.
 """
 
 from datetime import UTC, datetime
@@ -18,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
 from .charts import CHART_STYLE, bar_list, donut_chart, donut_legend, gauge_chart
-from .search import AUTOCOMPLETE_SCRIPT
 from .database import get_session
 from .inventory_review import _aud, _latest_prices
 from .models import (
@@ -26,6 +26,7 @@ from .models import (
     PendingListing, ListingBuildStatus, PotentialPurchase, PotentialPurchaseStatus,
     PricingStatus, Sale, TcgCard,
 )
+from .ui import page
 
 router = APIRouter(tags=["dashboard"])
 
@@ -166,34 +167,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
 
     grid = "".join([gauge_widget, sales_widget, buys_widget, market_value_widget, channel_widget, ageing_widget, ops_widget])
 
-    body = f"""<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EzBay — Dashboard</title>
-<link rel="manifest" href="/static/manifest.json">
-<meta name="theme-color" content="#0891b2">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="EzBay">
-<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
-<style>{_STYLE}{CHART_STYLE}</style>
-</head><body>
-<header class="topbar">
-  <div class="brand"><span class="brand-mark">Ez</span>Bay</div>
-  <form class="topsearch" method="get" action="/search">
-    <div class="autocomplete-wrap">
-      <input id="global-search-input" name="q" placeholder="Search cards, sets, characters…" autocomplete="off">
-      <div id="global-search-results" class="autocomplete-dropdown" hidden></div>
-    </div>
-  </form>
-  <nav class="topnav">
-    <a href="/analytics">Analytics</a>
-    <a href="/inventory">Inventory</a>
-    <a href="/feed">Scan feed</a>
-    <span class="status-pill">Platform OK</span>
-  </nav>
-</header>
-<main class="dash-main">
-  <div class="dash-title">
+    body = f"""<div class="dash-title">
     <h1>Sales Executive Dashboard</h1>
     <p>A live view of inventory, sales, and purchasing &middot; as of {now:%Y-%m-%d %H:%M} UTC</p>
   </div>
@@ -236,42 +210,13 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
       <a href="/collectibles">Collectibles</a>
       <a href="/export">Export data</a>
     </div>
-  </div>
-</main>
-{AUTOCOMPLETE_SCRIPT}
-</body></html>"""
-    return HTMLResponse(body)
+  </div>"""
+    return HTMLResponse(page("EzBay — Dashboard", body, head_extra=f"<style>{_STYLE}{CHART_STYLE}</style>"))
 
 
 _STYLE = """
-*{box-sizing:border-box}
-body{margin:0;background:#f4f5f8;color:#12141c;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
-  -webkit-font-smoothing:antialiased}
-a{color:#0891b2;text-decoration:none}
-a:hover{text-decoration:underline}
-
-.topbar{display:flex;align-items:center;gap:20px;background:#fff;border-bottom:1px solid #e5e7ee;
-  padding:12px 24px;position:sticky;top:0;z-index:10}
-.brand{font-size:19px;font-weight:800;letter-spacing:-.02em}
-.brand-mark{background:linear-gradient(120deg,#0891b2,#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent}
-.topsearch{flex:1;max-width:420px}
-.autocomplete-wrap{position:relative;width:100%}
-.autocomplete-wrap input{width:100%;padding:9px 14px;border-radius:999px;border:1px solid #e5e7ee;background:#f4f5f8;font-size:13.5px}
-.autocomplete-wrap input:focus{outline:none;border-color:#0891b2;background:#fff}
-
-.autocomplete-dropdown{position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:30;
-  background:#fff;border:1px solid #e5e7ee;border-radius:12px;box-shadow:0 12px 28px rgba(16,24,40,.12);overflow:hidden}
-.ac-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;font-size:13.5px}
-.ac-item.active,.ac-item:hover{background:#f4f5f8}
-.ac-name{font-weight:650;flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#12141c}
-.ac-detail{color:#6b7280;font-size:12px;flex:1}
-.ac-owned{font-size:11px;color:#059669;background:#ecfdf5;padding:2px 8px;border-radius:999px}
-.topnav{display:flex;align-items:center;gap:18px;font-size:13.5px;color:#4b5563;margin-left:auto}
-.status-pill{background:#ecfdf5;color:#059669;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:650}
-
-.dash-main{max-width:1240px;margin:0 auto;padding:28px 24px 60px}
-.dash-title h1{font-size:24px;margin:0 0 4px;letter-spacing:-.01em}
-.dash-title p{margin:0 0 24px;color:#6b7280;font-size:13.5px}
+.dash-title h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em;font-weight:800}
+.dash-title p{margin:0 0 24px;color:var(--text-dim);font-size:13.5px}
 
 .widget-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
 @media (max-width:980px){.widget-grid{grid-template-columns:repeat(2,1fr)}}

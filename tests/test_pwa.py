@@ -47,16 +47,14 @@ def test_static_assets_do_not_require_login():
     assert response.status_code == 200
 
 
-def test_dark_theme_pages_include_pwa_tags(client):
-    response = client.get("/search")
-    assert "rel='manifest'" in response.text
-    assert "/static/manifest.json" in response.text
-    assert "apple-touch-icon" in response.text
-    assert "apple-mobile-web-app-capable" in response.text
-
-
-def test_dashboard_includes_pwa_tags(client):
-    response = client.get("/dashboard")
-    assert 'rel="manifest"' in response.text
-    assert "/static/manifest.json" in response.text
-    assert "apple-touch-icon" in response.text
+def test_pages_include_pwa_tags(client):
+    # Every page shares one shell (ui.py's page()) since the light-theme
+    # unification, so a single quote-agnostic check covers all of them --
+    # asserting a specific quote character here would just be pinning an
+    # implementation detail of the shell, not the actual requirement.
+    for path in ["/search", "/dashboard"]:
+        response = client.get(path)
+        assert "manifest.json" in response.text, path
+        assert "rel='manifest'" in response.text or 'rel="manifest"' in response.text, path
+        assert "apple-touch-icon" in response.text, path
+        assert "apple-mobile-web-app-capable" in response.text, path

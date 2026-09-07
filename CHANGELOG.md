@@ -3,6 +3,64 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — Unified the whole app onto one light theme, fixed a live mobile bug
+
+Only `/dashboard` had the polished light theme (charts, topbar, autocomplete);
+every other page still had the earlier dark "trading desk" look. Asked to make
+the whole app look good and consistent, chose (with the user) to unify
+everything onto the dashboard's light design system rather than polish the
+dark theme in place.
+
+- **Root cause found and fixed**: a screenshot from a phone showed the
+  dashboard's topbar search box rendered as a sliver a few pixels wide.
+  `.topsearch{flex:1}` had no `min-width:0`, and the nav links had no mobile
+  breakpoint at all -- on a narrow viewport, flex items don't shrink below
+  their own content size by default, so the nav links and brand claimed their
+  full width first and squeezed the only flexible item (the search box) down
+  to nothing. Fixed at the source: the shared topbar now sets `min-width: 0`
+  on the search box and hides the nav links below 680px, so the search box
+  gets the space instead.
+- `ui.py`'s shared `STYLE` is now a light palette (the dashboard's own
+  tokens: `#f4f5f8` background, white panels, `#0891b2`/`#7c3aed`
+  cyan-to-violet accent) instead of the dark navy/neon-cyan one. Every
+  component that referenced these as CSS custom properties (`.panel`,
+  `.stat-card`, `.pill`, tables, forms, buttons) re-themed automatically;
+  the neon glow effects (button/card box-shadows, focus rings tuned for a
+  dark background) were replaced with the calmer flat-shadow look the
+  dashboard already used.
+- Added `.pill.warn` (amber) -- `buying.py`'s traffic-light verdict has
+  returned `"warn"` for a YELLOW result since Phase 2, but `ui.py` only ever
+  styled `.ok`/`.bad`/`.neutral`, so a YELLOW verdict silently rendered with
+  no color at all. Caught by a new regression test, not by inspection.
+- **Consolidated the topbar**: it was duplicated almost verbatim inside
+  `dashboard.py`'s bespoke shell and nowhere else -- exactly the kind of
+  duplication that let the mobile bug above go unnoticed on every other page
+  (which had no topbar at all until now). It's now one shared component in
+  `ui.py` (`_topbar_html`/`TOPBAR_STYLE`), present on every page via `page()`,
+  with a `show_nav=False` escape hatch for the login page.
+  `dashboard.py` was refactored to call the shared `page()` shell instead of
+  hand-rolling its own `<!doctype html>`, keeping only its widget-grid
+  markup and chart styling as page-specific.
+- `/search`'s own dedicated search box (with the same fixed id as the
+  topbar's) is gone -- it would have been a duplicate-id bug the moment the
+  topbar became universal. The persistent topbar box now doubles as the
+  page's input, pre-filled with the current query (`page(..., search_value=...)`).
+  `AUTOCOMPLETE_SCRIPT` moved from `search.py` into `ui.py` since every page
+  needs it now, not just `/search` and `/dashboard`.
+- `brand_header()` dropped the large gradient "EzBay" wordmark (redundant
+  now that the topbar always shows the brand) in favor of a plain page-title
+  `<h1>`, matching the dashboard's own heading style.
+- Every page-specific `_STYLE` block's hardcoded `#0a0f1c` (recessed
+  input/detail background) became `var(--surface-sunken)`; hardcoded
+  semantic-color literals (`#f87171`, `rgba(52,211,153,...)`, etc.) became
+  their matching `var(--danger)`/`var(--success)` tokens, so a future
+  palette change doesn't require re-auditing every module again.
+- 8 new tests (`tests/test_ui.py`) plus fixes to `test_pwa.py` (merged two
+  theme-specific PWA tests into one quote-agnostic check, since every page
+  now shares one shell). Full suite (635) green; `ezbay.service` restarted;
+  smoke-tested `/login` (200) and a dozen other routes (401, correctly
+  gated, no crashes); production DB confirmed untouched (995 rows).
+
 ## 2026-09-07 — eBay production-mode plumbing (deliberately not enabled)
 
 Asked to build a "real eBay listing flow." Investigation found the existing
