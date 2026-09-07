@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ from .card_recognition import extract_collectible_details
 from .config import get_settings
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card
-from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
+from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["collectibles"])
@@ -52,16 +52,101 @@ def _dec(value: str, default: str = "0") -> Decimal:
         return Decimal(default)
 
 
+COLLECTIBLE_SORTS = {
+    "name": "Name (A-Z)",
+    "ebay_desc": "eBay price (high to low)",
+    "ebay_asc": "eBay price (low to high)",
+    "owned_desc": "Most owned",
+    "secret_first": "Secrets first",
+    "brand": "Brand",
+    "series": "Series",
+}
+
+EBAY_LOW = "ebay_active_low"
+EBAY_MEDIAN = "ebay_active_median"
+
+
+def _ebay_prices(session: Session, item_ids: set[str]) -> dict[str, dict[str, CardPrice]]:
+    """Latest eBay low/median per catalogue item.
+
+    Same shape and caveat as the inventory view's: these are *active
+    listing* asking prices, not sold comps -- eBay retired the sold API in
+    Feb 2025 -- so they're an upper bound on what something moves for.
+    """
+    if not item_ids:
+        return {}
+    rows = session.scalars(
+        select(CardPrice)
+        .where(CardPrice.card_id.in_(item_ids), CardPrice.source.in_([EBAY_LOW, EBAY_MEDIAN]))
+        .order_by(CardPrice.fetched_at.desc())
+    )
+    latest: dict[str, dict[str, CardPrice]] = {}
+    for row in rows:
+        bucket = latest.setdefault(row.card_id, {})
+        if row.source not in bucket:  # ordered newest-first, so first wins
+            bucket[row.source] = row
+    return latest
+
+
 @router.get("/collectibles", response_class=HTMLResponse)
-def collectibles_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    rows = session.execute(
-        select(CatalogItem, CollectibleProduct).join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id)
-        .order_by(CatalogItem.name)
-    ).all()
+def collectibles_page(
+    sort: str = Query("name"),
+    brand: str = Query(""),
+    secret_only: str = Query(""),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    sort_key = sort if sort in COLLECTIBLE_SORTS else "name"
+
+    stmt = (
+        select(CatalogItem, CollectibleProduct)
+        .join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id)
+    )
+    if brand.strip():
+        stmt = stmt.where(CollectibleProduct.brand.ilike(f"%{brand.strip()}%"))
+    if secret_only:
+        stmt = stmt.where(CollectibleProduct.is_secret.is_(True))
+    rows = session.execute(stmt).all()
+
     owned_by_item = dict(session.execute(
         select(InventoryItem.catalog_item_id, func.sum(InventoryItem.quantity))
         .where(InventoryItem.catalog_item_id.isnot(None)).group_by(InventoryItem.catalog_item_id)
     ).all())
+    prices = _ebay_prices(session, {item.id for item, _ in rows})
+
+    def low_of(item_id: str) -> float | None:
+        row = prices.get(item_id, {}).get(EBAY_LOW)
+        return float(row.price) if row else None
+
+    def median_of(item_id: str) -> float | None:
+        row = prices.get(item_id, {}).get(EBAY_MEDIAN)
+        return float(row.price) if row else None
+
+    # Sorted in Python rather than SQL: the eBay figure is assembled from
+    # the price history above, so it isn't a column to ORDER BY. Unpriced
+    # items sort last in both directions rather than counting as zero,
+    # which would put every unpriced figure at the top of "low to high".
+    def price_key(pair, reverse: bool):
+        value = median_of(pair[0].id)
+        missing = 1  # always last
+        if value is None:
+            return (missing, 0.0)
+        return (0, -value if reverse else value)
+
+    orders = {
+        "name": lambda r: sorted(r, key=lambda p: p[0].name.lower()),
+        "brand": lambda r: sorted(r, key=lambda p: ((p[1].brand or "~").lower(), p[0].name.lower())),
+        "series": lambda r: sorted(r, key=lambda p: ((p[1].series or "~").lower(), p[0].name.lower())),
+        "owned_desc": lambda r: sorted(r, key=lambda p: (-(owned_by_item.get(p[0].id) or 0), p[0].name.lower())),
+        "secret_first": lambda r: sorted(r, key=lambda p: (not p[1].is_secret, p[0].name.lower())),
+        "ebay_desc": lambda r: sorted(r, key=lambda p: price_key(p, reverse=True)),
+        "ebay_asc": lambda r: sorted(r, key=lambda p: price_key(p, reverse=False)),
+    }
+    rows = orders[sort_key](rows)
+
+    def money(value: float | None) -> str:
+        return "&mdash;" if value is None else f"${value:,.2f}"
+
     table_rows = "".join(
         "<tr>"
         f"<td>{escape(item.name)}</td>"
@@ -70,14 +155,40 @@ def collectibles_page(user: str = Depends(require_dashboard_user), session: Sess
         f"<td class='muted'>{escape(cp.variant or '—')}</td>"
         f"<td>{pill('secret', 'warn') if cp.is_secret else '—'}</td>"
         f"<td>{owned_by_item.get(item.id, 0)}</td>"
-        f"<td>{f'${cp.retail_price:,.2f}' if cp.retail_price else '—'}</td>"
+        f"<td class='num'>{money(low_of(item.id))}</td>"
+        f"<td class='num strong'>{money(median_of(item.id))}</td>"
+        f"<td class='num muted'>{f'${cp.retail_price:,.2f}' if cp.retail_price else '&mdash;'}</td>"
         "</tr>"
         for item, cp in rows
-    ) or "<tr><td colspan=7>No collectibles catalogued yet.</td></tr>"
+    ) or "<tr><td colspan=9>No collectibles match those filters.</td></tr>"
+
+    priced_count = sum(1 for item, _ in rows if median_of(item.id) is not None)
+    filters = (
+        "<form class='panel filters' method='get' action='/collectibles'>"
+        f"<label class='field'>Brand<input name='brand' value='{escape(brand)}' placeholder='Sonny Angel…'></label>"
+        f"<label class='field'>Sort<select name='sort'>"
+        + "".join(
+            f"<option value='{escape(k)}'{' selected' if k == sort_key else ''}>{escape(v)}</option>"
+            for k, v in COLLECTIBLE_SORTS.items()
+        )
+        + "</select></label>"
+        f"<label class='field checkbox'><input type='checkbox' name='secret_only' value='1'"
+        f"{' checked' if secret_only else ''}> Secrets only</label>"
+        "<button type='submit'>Apply</button>"
+        "<a class='btn ghost' href='/collectibles'>Reset</a>"
+        "</form>"
+    )
+
     table = (
-        "<div class='panel'><div class='table-wrap'><table>"
-        "<thead><tr><th>Name</th><th>Brand</th><th>Series</th><th>Variant</th><th></th><th>Owned</th><th>Retail</th></tr></thead>"
-        f"<tbody>{table_rows}</tbody></table></div></div>"
+        f"<p class='subtitle'>{len(rows)} catalogued · {priced_count} with an eBay price.</p>"
+        + "<div class='panel'><div class='table-wrap'><table>"
+        "<thead><tr><th>Name</th><th>Brand</th><th>Series</th><th>Variant</th><th></th>"
+        "<th>Owned</th><th class='num'>eBay low</th><th class='num'>eBay median</th>"
+        "<th class='num'>Retail</th></tr></thead>"
+        f"<tbody>{table_rows}</tbody></table></div>"
+        "<p class='muted' style='margin:10px 0 0;font-size:12.5px'>eBay figures are "
+        "<strong>active listing</strong> asking prices, not completed sales &mdash; an upper "
+        "bound, not a valuation.</p></div>"
     )
 
     form = (
@@ -101,7 +212,7 @@ def collectibles_page(user: str = Depends(require_dashboard_user), session: Sess
           "(quantity owned, not just catalogued).</p>"
         + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
           f"<a href='/collectibles/review'>Review queue ({pending_count})</a></p></div>"
-        + table + form + _STYLE
+        + filters + table + form + _COLLECTIBLE_LIST_STYLE + _STYLE
     )
     return HTMLResponse(page("EzBay — Collectibles", body))
 
@@ -538,6 +649,15 @@ def collectible_capture_image(capture_id: str, user: str = Depends(require_dashb
         raise HTTPException(status_code=404, detail="capture not found")
     return FileResponse(capture.image_path)
 
+
+_COLLECTIBLE_LIST_STYLE = """<style>
+.filters{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+.filters .field{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--text-dim)}
+.filters .field.checkbox{flex-direction:row;align-items:center;gap:7px}
+.filters .field.checkbox input{width:auto}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.num.strong{font-weight:600}
+</style>"""
 
 _REVIEW_STYLE = """<style>
 .revbar{height:5px;border-radius:99px;background:var(--surface-sunken);overflow:hidden;margin:0 0 18px}

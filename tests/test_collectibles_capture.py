@@ -405,3 +405,133 @@ def test_cursor_starts_in_the_field_the_ai_left_blank(client, session):
     assert "autofocus" in client.get(f"/collectibles/review/{blank.id}").text
     # a figure the AI already named doesn't steal focus into a filled field
     assert "autofocus" not in client.get(f"/collectibles/review/{named.id}").text
+
+
+# --- catalogue list: sorting and eBay prices --------------------------------
+
+def _collectible(session, name, *, brand="Sonny Angel", series=None, secret=False,
+                 low=None, median=None, owned=0):
+    import uuid as _uuid
+    from decimal import Decimal
+
+    from automation_control.models import (
+        CardPrice, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem,
+    )
+
+    item_id = str(_uuid.uuid4())
+    session.add(CatalogItem(id=item_id, item_type=CatalogItemType.COLLECTIBLE, name=name))
+    session.add(CollectibleProduct(catalog_item_id=item_id, brand=brand, series=series,
+                                   is_secret=secret))
+    for source, value in (("ebay_active_low", low), ("ebay_active_median", median)):
+        if value is not None:
+            session.add(CardPrice(card_id=item_id, variant=None, source=source,
+                                  price=Decimal(str(value)), currency="AUD"))
+    if owned:
+        session.add(InventoryItem(catalog_item_id=item_id, card_id=None, quantity=owned))
+    session.commit()
+    return item_id
+
+
+def _row_order(body: str, names: list[str]) -> list[str]:
+    seen = [(body.index(n), n) for n in names if n in body]
+    return [n for _, n in sorted(seen)]
+
+
+def test_list_shows_ebay_low_and_median(client, session):
+    _collectible(session, "Fruit Secret", low=60.60, median=421.09)
+    body = client.get("/collectibles").text
+    assert "$60.60" in body and "$421.09" in body
+    assert "eBay low" in body and "eBay median" in body
+
+
+def test_list_labels_ebay_figures_as_asking_prices(client, session):
+    """These are active listings, not sold comps -- the page must not let
+    them read as a valuation."""
+    _collectible(session, "Fruit Secret", median=421.09)
+    body = client.get("/collectibles").text
+    assert "active listing" in body.lower()
+    assert "not completed sales" in body.lower()
+
+
+def test_sort_by_ebay_price_descending(client, session):
+    _collectible(session, "Cheap One", median=20.00)
+    _collectible(session, "Dear One", median=400.00)
+    _collectible(session, "Middle One", median=90.00)
+    body = client.get("/collectibles?sort=ebay_desc").text
+    assert _row_order(body, ["Dear One", "Middle One", "Cheap One"]) == [
+        "Dear One", "Middle One", "Cheap One"]
+
+
+def test_sort_by_ebay_price_ascending(client, session):
+    _collectible(session, "Cheap One", median=20.00)
+    _collectible(session, "Dear One", median=400.00)
+    body = client.get("/collectibles?sort=ebay_asc").text
+    assert _row_order(body, ["Cheap One", "Dear One"]) == ["Cheap One", "Dear One"]
+
+
+def test_unpriced_items_sort_last_not_as_zero(client, session):
+    """Treating "no price" as $0 would put every unpriced figure at the top
+    of "low to high", burying the ones you can actually act on."""
+    _collectible(session, "Unpriced One")
+    _collectible(session, "Cheap One", median=20.00)
+    body = client.get("/collectibles?sort=ebay_asc").text
+    assert _row_order(body, ["Cheap One", "Unpriced One"]) == ["Cheap One", "Unpriced One"]
+
+
+def test_sort_by_most_owned(client, session):
+    _collectible(session, "One Copy", owned=1)
+    _collectible(session, "Five Copies", owned=5)
+    body = client.get("/collectibles?sort=owned_desc").text
+    assert _row_order(body, ["Five Copies", "One Copy"]) == ["Five Copies", "One Copy"]
+
+
+def test_secrets_first_sort(client, session):
+    _collectible(session, "Regular Figure", secret=False)
+    _collectible(session, "Secret Figure", secret=True)
+    body = client.get("/collectibles?sort=secret_first").text
+    assert _row_order(body, ["Secret Figure", "Regular Figure"]) == [
+        "Secret Figure", "Regular Figure"]
+
+
+def test_filter_by_brand(client, session):
+    _collectible(session, "Angel Figure", brand="Sonny Angel")
+    _collectible(session, "Smiski Figure", brand="Smiski")
+    body = client.get("/collectibles?brand=Smiski").text
+    assert "Smiski Figure" in body
+    assert "Angel Figure" not in body
+
+
+def test_filter_to_secrets_only(client, session):
+    _collectible(session, "Regular Figure", secret=False)
+    _collectible(session, "Secret Figure", secret=True)
+    body = client.get("/collectibles?secret_only=1").text
+    assert "Secret Figure" in body
+    assert "Regular Figure" not in body
+
+
+def test_an_unknown_sort_falls_back_to_name(client, session):
+    _collectible(session, "Alpha")
+    _collectible(session, "Beta")
+    body = client.get("/collectibles?sort=nonsense").text
+    assert _row_order(body, ["Alpha", "Beta"]) == ["Alpha", "Beta"]
+
+
+def test_the_newest_ebay_price_wins(client, session):
+    """card_prices is append-only, so a re-priced item has several rows."""
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal
+
+    from sqlalchemy import select
+
+    from automation_control.models import CardPrice
+
+    item_id = _collectible(session, "Repriced", median=100.00)
+    old = session.scalars(select(CardPrice).where(CardPrice.card_id == item_id)).first()
+    old.fetched_at = datetime.now(UTC) - timedelta(days=2)
+    session.add(CardPrice(card_id=item_id, variant=None, source="ebay_active_median",
+                          price=Decimal("250.00"), currency="AUD"))
+    session.commit()
+
+    body = client.get("/collectibles").text
+    assert "$250.00" in body
+    assert "$100.00" not in body
