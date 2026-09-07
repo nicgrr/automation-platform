@@ -89,24 +89,47 @@ def _line_art(line: dict) -> str:
 def nav_links(session: Session) -> str:
     """Drawer categories built from what's actually in stock, so the shop
     never advertises a section that would land on an empty page."""
+    from . import departments
+
+    groups = []
+    stocked = departments.in_stock(session)
+    if stocked:
+        rows = "".join(
+            f"<a href='/shop/{escape(d.slug)}'>{escape(d.name)}<span class='n'>{n}</span></a>"
+            for d, n in stocked
+        )
+        groups.append(f"<div class='navgroup'><h4>Departments</h4>{rows}</div>")
+
     sets = session.execute(
         select(CardSet.name, BulkLot.id, BulkLot.card_count)
         .join(BulkLot, BulkLot.set_id == CardSet.id)
         .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
         .order_by(BulkLot.card_count.desc()).limit(8)
     ).all()
-    if not sets:
-        return ""
-    rows = "".join(
-        f"<a href='/bulk/{escape(lot_id)}'>{escape(name)}<span class='n'>{count}</span></a>"
-        for name, lot_id, count in sets
+    if sets:
+        set_rows = "".join(
+            f"<a href='/bulk/{escape(lot_id)}'>{escape(name)}<span class='n'>{count}</span></a>"
+            for name, lot_id, count in sets
+        )
+        groups.append(f"<div class='navgroup'><h4>Bulk by set</h4>{set_rows}</div>")
+
+    return "".join(groups)
+
+
+def dept_links(session: Session) -> str:
+    """Department links for the header -- stocked departments only."""
+    from . import departments
+
+    return "".join(
+        f"<a href='/shop/{escape(d.slug)}' class='hide-sm'>{escape(d.name)}</a>"
+        for d, _ in departments.in_stock(session)
     )
-    return f"<div class='navgroup'><h4>Bulk by set</h4>{rows}</div>"
 
 
 def shell(session: Session, title: str, body: str, *, request: Request, query: str = "") -> HTMLResponse:
     return HTMLResponse(page(
-        title, body, cart_count=cart_count(request), query=query, nav_links=nav_links(session),
+        title, body, cart_count=cart_count(request), query=query,
+        nav_links=nav_links(session), dept_links=dept_links(session),
     ))
 
 

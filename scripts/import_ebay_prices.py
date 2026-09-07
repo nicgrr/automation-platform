@@ -38,6 +38,7 @@ source it first, or the script will correctly refuse to run:
     .venv/bin/python -m scripts.import_ebay_prices --limit 50
     .venv/bin/python -m scripts.import_ebay_prices --game one_piece
     .venv/bin/python -m scripts.import_ebay_prices --all --limit 500
+    .venv/bin/python -m scripts.import_ebay_prices --brand "Sonny Angel"
 """
 
 import argparse
@@ -53,7 +54,9 @@ from automation_control.adapters.ebay import EbayApiError, EbaySandboxReadAdapte
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import OAuthError, configured, ebay_services
-from automation_control.models import CardPrice, CardSet, CatalogItem, CollectibleProduct, InventoryItem, TcgCard
+from automation_control.models import (
+    CardPrice, CardSet, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem, TcgCard,
+)
 
 DEFAULT_LIMIT = 200
 CALL_DELAY_SECONDS = 0.4
@@ -80,7 +83,11 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
         # "secret" biases eBay's own ranking toward the right variant; the
         # relevance filter stays on brand so a differently-worded listing
         # ("chase", or just the figure name) isn't thrown away entirely.
-        secret = " secret" if collectible.is_secret else ""
+        # ...but only add the word if the name doesn't already carry it.
+        # A seeded row is called "Animal Series 4 secret", and querying
+        # "Sonny Angel Animal Series 4 secret secret" is both sloppy and
+        # worse for eBay's relevance ranking.
+        secret = " secret" if collectible.is_secret and "secret" not in item.name.lower() else ""
         return f"{collectible.brand} {item.name}{secret}".strip(), collectible.brand
     if tcg is not None:
         if tcg.set_code and tcg.number:
@@ -114,14 +121,23 @@ def _price_values(listings: list[dict], must_contain: str | None = None) -> list
     return values
 
 
-def _targets(session, *, price_all: bool, game: str | None, limit: int):
+def _targets(session, *, price_all: bool, game: str | None, limit: int,
+             collectibles: bool = False, brand: str | None = None):
     query = (
         select(CatalogItem, TcgCard, CardSet.name, CollectibleProduct)
         .join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id, isouter=True)
         .join(CardSet, CardSet.id == TcgCard.set_id, isouter=True)
         .join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id, isouter=True)
     )
-    if not price_all:
+    # Collectibles are targeted by *catalogue* rather than by ownership.
+    # The default (owned only) is right for 22k TCG rows, but a seeded
+    # Sonny Angel series isn't owned yet and is exactly what you want a
+    # market price for -- that's how you decide whether to buy it.
+    if collectibles or brand:
+        query = query.where(CatalogItem.item_type == CatalogItemType.COLLECTIBLE)
+        if brand:
+            query = query.where(CollectibleProduct.brand.ilike(brand))
+    elif not price_all:
         owned_ids = select(InventoryItem.catalog_item_id).where(InventoryItem.catalog_item_id.isnot(None)).distinct()
         query = query.where(CatalogItem.id.in_(owned_ids))
     if game:
@@ -158,7 +174,8 @@ async def run(args) -> int:
 
     priced = skipped = failed = 0
     with SessionLocal() as session:
-        targets = _targets(session, price_all=args.all, game=args.game, limit=args.limit)
+        targets = _targets(session, price_all=args.all, game=args.game, limit=args.limit,
+                           collectibles=args.collectibles, brand=args.brand)
         if not targets:
             print("no matching cards to price.")
             return 0
@@ -213,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="query eBay and report, write nothing")
     parser.add_argument("--all", action="store_true", help="price the whole catalogue, not just what you own")
     parser.add_argument("--game", help="only price this game, e.g. one_piece or pokemon")
+    parser.add_argument("--collectibles", action="store_true",
+                        help="price every collectible in the catalogue, owned or not")
+    parser.add_argument("--brand", help="only price this collectible brand, e.g. 'Sonny Angel'")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"max cards to price this run (default {DEFAULT_LIMIT})")
     parser.add_argument("--marketplace", default="EBAY_AU", help="eBay marketplace id (default EBAY_AU)")
     args = parser.parse_args(argv)

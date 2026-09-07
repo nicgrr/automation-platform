@@ -93,6 +93,7 @@ class CatalogItemType(str, enum.Enum):
     COLLECTIBLE = "collectible"
     GRADED_CARD = "graded_card"
     ACCESSORY = "accessory"
+    APPAREL = "apparel"
     OTHER = "other"
 
 

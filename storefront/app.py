@@ -16,7 +16,7 @@ from html import escape
 
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from automation_control.database import get_session
@@ -24,6 +24,7 @@ from automation_control.models import (
     BulkLot, CardSet, CatalogItem, ShippingRate, ShippingZone, ShopListing, ShopListingStatus,
 )
 
+from . import departments
 from .brand import logo_mark
 from .common import (
     CART_COOKIE, MAX_PER_LINE, _art, _line_art, _money, cart_count, cart_lines,
@@ -34,7 +35,8 @@ router = APIRouter()
 
 # --- browsing ---------------------------------------------------------------
 
-def _active_listings(session: Session, query: str = "", limit: int = 60):
+def _active_listings(session: Session, query: str = "", limit: int = 60,
+                     department: departments.Department | None = None):
     stmt = (
         select(ShopListing, CatalogItem)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
@@ -42,6 +44,11 @@ def _active_listings(session: Session, query: str = "", limit: int = 60):
     )
     if query:
         stmt = stmt.where(ShopListing.title.ilike(f"%{query}%"))
+    if department is not None:
+        # an inner-join condition expressed as a filter: a listing with no
+        # catalogue row has no department and drops out, rather than being
+        # silently filed under the wrong one
+        stmt = stmt.where(departments.listing_filter(department))
     return session.execute(stmt.order_by(ShopListing.price.desc()).limit(limit)).all()
 
 
@@ -60,33 +67,102 @@ def _card(listing: ShopListing, item: CatalogItem | None) -> str:
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
-    rows = _active_listings(session, limit=12)
-    if rows:
-        grid = f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
-        body = (
-            "<div class='page-head'><h1>The vault is open</h1>"
-            "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p></div>"
-            + grid
-            + "<p style='margin-top:26px'><a class='btn ghost' href='/browse'>Browse everything</a></p>"
-        )
-    else:
-        body = (
-            "<div class='page-head'><h1>The vault is open</h1>"
-            "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p></div>"
+    stocked = departments.in_stock(session)
+    intro = (
+        "<div class='page-head'><h1>The vault is open</h1>"
+        "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p></div>"
+    )
+
+    if not stocked:
+        return shell(session, "NL Vault", intro + (
             "<div class='panel empty'>"
             f"<div class='mark'>{logo_mark(64)}</div>"
             "<h2>Nothing listed yet</h2>"
             "<p class='muted'>Stock is added from the vault as it's catalogued. Check back shortly.</p>"
             "</div>"
+        ), request=request)
+
+    cards = []
+    for department, count in stocked:
+        span = departments.price_range(session, department)
+        range_note = f"{_money(span[0])} – {_money(span[1])}" if span else ""
+        cards.append(
+            f"<a class='dept-card' href='/shop/{escape(department.slug)}'>"
+            f"<h2>{escape(department.name)}</h2>"
+            f"<p>{escape(department.blurb)}</p>"
+            f"<div class='dept-meta'><span>{count} item(s)</span><span>{range_note}</span></div>"
+            "</a>"
         )
+
+    rows = _active_listings(session, limit=8)
+    latest = (
+        "<h2 class='section-head'>Fresh in the vault</h2>"
+        f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
+    ) if rows else ""
+
+    body = (
+        intro
+        + f"<div class='dept-grid'>{''.join(cards)}</div>"
+        + latest
+        + "<p style='margin-top:26px'><a class='btn ghost' href='/browse'>Browse everything</a></p>"
+    )
     return shell(session, "NL Vault", body, request=request)
 
 
-@router.get("/browse", response_class=HTMLResponse)
-def browse(request: Request, q: str = Query(""), session: Session = Depends(get_session)) -> HTMLResponse:
+@router.get("/shop/{slug}", response_class=HTMLResponse)
+def department_page(slug: str, request: Request, q: str = Query(""),
+                    session: Session = Depends(get_session)) -> HTMLResponse:
+    department = departments.find(slug)
+    if department is None:
+        raise HTTPException(status_code=404, detail="department not found")
+
     query = q.strip()
-    rows = _active_listings(session, query)
-    heading = f"Results for “{escape(query)}”" if query else "Everything in the vault"
+    rows = _active_listings(session, query, department=department)
+
+    # Bulk lots live in their own table, so TCG gets a pointer to them
+    # rather than trying to merge two differently-shaped products into one
+    # grid -- a lot has no condition and no single catalogue item.
+    bulk_note = ""
+    if department.includes_bulk:
+        lots = session.scalar(
+            select(func.count()).select_from(BulkLot)
+            .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
+        ) or 0
+        if lots:
+            bulk_note = (
+                "<div class='notice'>"
+                f"<strong>{lots} bulk lot(s)</strong> of sorted commons are listed separately in "
+                "<a href='/bulk'>Bulk Master</a> — the cheap way to fill a set.</div>"
+            )
+
+    if rows:
+        content = f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
+        sub = f"{len(rows)} item(s)"
+    else:
+        content = (
+            "<div class='panel empty'>"
+            f"<div class='mark'>{logo_mark(64)}</div>"
+            "<h2>Nothing here yet</h2>"
+            f"<p class='muted'>{escape(department.blurb)}</p></div>"
+        )
+        sub = "Nothing listed yet"
+
+    body = (
+        f"<div class='page-head'><h1>{escape(department.name)}</h1>"
+        f"<p>{escape(department.blurb)} {sub}.</p></div>"
+        f"{bulk_note}{content}"
+    )
+    return shell(session, f"{department.name} — NL Vault", body, request=request, query=query)
+
+
+@router.get("/browse", response_class=HTMLResponse)
+def browse(request: Request, q: str = Query(""), dept: str = Query(""),
+           session: Session = Depends(get_session)) -> HTMLResponse:
+    query = q.strip()
+    department = departments.find(dept)
+    rows = _active_listings(session, query, department=department)
+    scope = department.name if department else "the vault"
+    heading = f"Results for “{escape(query)}”" if query else f"Everything in {scope}"
     if rows:
         content = f"<div class='grid'>{''.join(_card(l, i) for l, i in rows)}</div>"
         sub = f"{len(rows)} item(s)"

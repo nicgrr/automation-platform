@@ -153,6 +153,24 @@ body.nav-open .sidenav{transform:none}
 .sidenav-head{display:flex;align-items:center;justify-content:space-between;padding:0 18px 16px}
 .sidenav-close{background:none;border:none;color:var(--bone);font-size:22px;line-height:1;cursor:pointer;padding:0 4px}
 .sidenav-close:hover{color:var(--brass-lit)}
+.dept-grid{
+  display:grid;gap:16px;margin:22px 0 34px;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+}
+.dept-card{
+  display:flex;flex-direction:column;gap:8px;padding:22px;text-decoration:none;
+  border:1px solid var(--rule);border-radius:14px;background:var(--paper);
+  transition:border-color .15s ease,transform .15s ease;
+}
+.dept-card:hover{border-color:var(--brass);transform:translateY(-2px)}
+.dept-card h2{margin:0;font-size:20px;color:var(--ink)}
+.dept-card p{margin:0;font-size:14px;color:var(--muted);flex:1}
+.dept-meta{
+  display:flex;justify-content:space-between;gap:10px;font-size:13px;
+  color:var(--brass);font-variant-numeric:tabular-nums;
+}
+.section-head{margin:30px 0 14px;font-size:19px;color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.dept-card{transition:none}}
 .navgroup{padding:14px 0 4px}
 .navgroup h4{
   font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#7f8894;
@@ -227,7 +245,7 @@ def sidenav(links: str = "") -> str:
     )
 
 
-def header(cart_count: int = 0, query: str = "") -> str:
+def header(cart_count: int = 0, query: str = "", dept_links: str = "") -> str:
     safe_query = query.replace("'", "&#39;").replace('"', "&quot;")
     badge = f"<span class='cart-pill'>Cart {cart_count}</span>" if cart_count else "<span class='cart-pill'>Cart</span>"
     return (
@@ -240,14 +258,20 @@ def header(cart_count: int = 0, query: str = "") -> str:
         f"<input name='q' value='{safe_query}' placeholder='Search the vault…' autocomplete='off'>"
         "</form>"
         "<nav class='topnav'>"
-        "<a href='/browse' class='hide-sm'>Browse</a><a href='/bulk' class='hide-sm'>Bulk Master</a>"
+        # Departments come from stock rather than being hardcoded, for the
+        # same reason the drawer's do: a header link is the most prominent
+        # place to promise a section, and the worst place to land someone
+        # on an empty page.
+        f"{dept_links}"
+        "<a href='/bulk' class='hide-sm'>Bulk Master</a>"
         "<a href='/shipping' class='hide-sm'>Shipping</a>"
         f"<a href='/cart'>{badge}</a>"
         "</nav></header>"
     )
 
 
-def page(title: str, body: str, *, cart_count: int = 0, query: str = "", nav_links: str = "") -> str:
+def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
+         nav_links: str = "", dept_links: str = "") -> str:
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -255,7 +279,7 @@ def page(title: str, body: str, *, cart_count: int = 0, query: str = "", nav_lin
         f"<meta name='theme-color' content='{BRASS}'>"
         f"{FONTS}{STYLE}</head><body>"
         f"{sidenav(nav_links)}"
-        f"{header(cart_count, query)}"
+        f"{header(cart_count, query, dept_links)}"
         f"<main>{body}</main>"
         "<footer><div class='inner'>"
         "<span>NL Vault — trading cards &amp; collectibles, shipped from Australia.</span>"
