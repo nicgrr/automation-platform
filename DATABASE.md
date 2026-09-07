@@ -146,6 +146,34 @@ actually see it: per variant, current price, 7-day average, 30-day average,
 change %, high, low, last updated, source, plus a hand-drawn inline SVG
 sparkline (no charting library). Linked from `/search` results.
 
+### One Piece catalogue populated from a real API (done, 2026-09-07)
+Two example One Piece cards were seeded manually back in Phase 1 to prove
+`scripts/import_tcg_catalog_csv.py`'s CSV path worked -- that script's own
+docstring said to adopt a real API "as soon as one is identified" rather
+than stay CSV-only. Found one: optcgapi.com, a free, public, no-API-key
+REST API with the full One Piece card pool (confirmed live 2026-09-07).
+`scripts/import_one_piece_from_optcgapi.py` pulls every set from it --
+`GET /api/allSets/` then `GET /api/sets/{set_id}/` per set -- and upserts
+into `catalog_items`/`tcg_cards` using the *same* `_slug(game, set_code,
+number)` id convention as the CSV importer, so it updated the 2 seeded
+rows instead of duplicating them.
+
+Only the non-parallel printing of each card is imported per
+`(set_code, number)` slot -- optcgapi's `card_set_id` isn't unique between
+a card and its parallel, and tracking parallels as distinct catalogue
+entries is a real future need, out of scope for a first population pass.
+No pricing written even though the API returns `market_price`/
+`inventory_price` per card -- catalogue and pricing were treated as two
+separate decisions; see "Real price data" below for that half.
+
+Run against production after a manual backup
+(`~/backups/automation-pre-one-piece-import-20260907-201151.db`): 22 sets,
+2,377 created + 331 updated (the 331 updated on the *first* real run were
+duplicates across two rehearsal passes during testing, not production
+drift), 0 skipped after fixing a regex bug caught during rehearsal (see
+CHANGELOG.md). Verified: 2,379 total one_piece rows across 46 distinct
+set codes, `PRAGMA foreign_key_check` clean, live service restarted.
+
 ### Module 12 — Sonny Angel / Smiski (done, 2026-09-07; ownership added 2026-09-07)
 Uses `collectible_products` (added in the Module 1 migration, previously
 empty). `/collectibles` lists/creates them (brand, series, character,

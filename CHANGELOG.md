@@ -3,6 +3,43 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-07 — One Piece catalogue populated from a real API
+
+Asked to "get data to the platform" -- scoped to the One Piece catalogue
+first (pricing is a separate, later decision). Researched what's actually
+available rather than assume: found optcgapi.com, a free, public,
+no-API-key REST API with the full One Piece card pool, confirmed live by
+hitting it directly. This is the real API `import_tcg_catalog_csv.py`'s
+own docstring said to adopt once one existed, replacing the CSV-only
+stopgap for this game.
+
+- New `scripts/import_one_piece_from_optcgapi.py`: pulls every set
+  (`/api/allSets/`) and every card in each (`/api/sets/{set_id}/`),
+  upserts using the same `_slug(game, set_code, number)` id convention the
+  CSV importer already used -- so it updated the 2 example rows from
+  Phase 1 instead of duplicating them. Dedupes each card's parallel
+  printing (same `card_set_id`, different name/price) down to one
+  catalogue row per physical card design.
+- Caught a real bug during rehearsal, before touching production: the
+  first regex assumed every code looked like "OP01-076" (letters+digits,
+  dash, digits) and silently skipped all 22 promo cards, which use a
+  bare "P-055" shape (letters, dash, digits, no digits after the letters).
+  Fixed by splitting on the *last* dash generically instead of assuming a
+  specific shape -- rehearsing against a throwaway DB copy first is what
+  caught this before it ever ran for real.
+- Rehearsed twice against a throwaway copy of production, then run for
+  real after a manual backup
+  (`~/backups/automation-pre-one-piece-import-20260907-201151.db`):
+  22 sets, 2,377 created, 0 skipped. Verified 2,379 total `one_piece`
+  rows across 46 set codes, `PRAGMA foreign_key_check` clean.
+- 5 new tests (parallel dedup, idempotent re-import, dry-run, unknown-set
+  argument, unparseable-code fallback), all mocking `httpx.Client` -- no
+  real network calls in the test suite. Full suite (677) green;
+  `ezbay.service` restarted clean.
+- Deliberately catalogue-only: optcgapi.com's response also includes
+  `market_price`/`inventory_price` per card, but writing pricing data was
+  scoped out as a separate decision -- see the next entry.
+
 ## 2026-09-07 — Module 22: deal check (read a listing's text, not just a physical card)
 
 Prompted by a real example: a screenshot of a Facebook Marketplace-style
