@@ -26,6 +26,7 @@ from automation_control.models import (
 )
 
 from . import departments, discounts
+from .assets import GAME_LOGOS
 from .photos import router as photo_router
 from .brand import logo_lockup, logo_mark
 from .common import (
@@ -92,15 +93,24 @@ def _card(listing: ShopListing, item: CatalogItem | None, session: Session | Non
     )
 
 
-# A department tile is a category signpost, not a specific product --
-# shoppers recognise Pikachu at a glance, which does more for it than
-# whatever happens to be the priciest thing currently in stock (which can
-# just as easily be an oddly abstract energy card nobody recognises).
+# The hero cast strip (below) leads with a recognisable character --
+# shoppers know Pikachu at a glance, which does more for it than whatever
+# happens to be priciest in stock. The department TILE below is a
+# category signpost instead, so it leads with official set branding
+# (a logo) rather than a character.
 DEPARTMENT_MASCOTS = {"pokemon": "Pikachu", "one_piece": "Monkey D. Luffy"}
 
 
 def _dept_hero(session: Session, department: departments.Department) -> str:
-    """A representative photo for a department tile.
+    """A representative image for a department tile.
+
+    A game department leads with its real official game logo (see
+    assets.GAME_LOGOS) rather than any specific card -- that's brand
+    identification a shopper recognises the way a single card doesn't,
+    and it never depends on what happens to be catalogued or in stock. A
+    game with no logo asset yet falls back to a card/lot photo instead of
+    a set-specific logo, which would read as one set's branding rather
+    than the game's.
 
     Never carries the own-photo/stock-image tag that a real product tile
     does -- this image isn't standing in for a specific physical item the
@@ -108,15 +118,9 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     to and would just be confusing here.
     """
     if department.game:
-        mascot = DEPARTMENT_MASCOTS.get(department.game)
-        if mascot:
-            card = session.scalar(
-                select(CatalogCard)
-                .where(CatalogCard.name.ilike(mascot), CatalogCard.image_url.isnot(None))
-                .limit(1)
-            )
-            if card:
-                return f"<img src='{escape(card.image_url)}' alt='{escape(mascot)}' loading='lazy'>"
+        logo = GAME_LOGOS.get(department.game)
+        if logo:
+            return f"<img src='{logo}' alt='{escape(department.name)}' loading='lazy'>"
 
     row = session.execute(
         select(ShopListing, CatalogItem)
@@ -140,23 +144,43 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     return f"<div class='dept-hero-mark'>{logo_mark(48)}</div>"
 
 
+HERO_CAST_LIMIT = 6
+
+
 def _hero_cast(session: Session, stocked: list[tuple[departments.Department, int]]) -> str:
     """A row of real characters from what's actually in stock, framing the
     wordmark -- the same "let the photography carry the interest" idea the
     department tiles already use, just facing the front door instead of a
     category page.
 
-    Only ever draws from the two sources `_dept_hero` already treats as
-    fair game: publisher reference art for a department's mascot, or an
-    actively-listed item's own photo/art. A withdrawn Sonny Angel with no
-    live listing simply doesn't get a slot -- there is no listing to be
-    the "this is public" consent for, so it stays out of the cast until
-    it's relisted, exactly like it stays out of the department tile.
+    A department's mascot (if cached) leads, but the strip isn't limited
+    to one card per department -- several of a department's own
+    highest-value active listings fill out the rest, each captioned with
+    its real set, so this reads as an actual showcase of current stock
+    rather than one portrait per category.
+
+    Only ever draws from what a listing's own consent already covers: a
+    withdrawn Sonny Angel with no live listing, or a game with no active
+    stock at all, simply gets no slot -- there is no listing to be the
+    "this is public" consent for, so it stays out of the cast until it's
+    relisted (or listed for the first time), exactly like it stays out of
+    the department tile.
     """
     cast: list[str] = []
+    seen_listing_ids: set[str] = set()
+
+    def add(art: str, title: str, subtitle: str) -> None:
+        cast.append(
+            "<div class='hero-cast-item'>"
+            f"<div class='hero-cast-art'>{art}</div>"
+            f"<b>{escape(title)}</b><span>{escape(subtitle)}</span>"
+            "</div>"
+        )
+
     for department, _count in stocked:
-        art = None
-        title = department.name
+        if len(cast) >= HERO_CAST_LIMIT:
+            break
+
         if department.game:
             mascot = DEPARTMENT_MASCOTS.get(department.game)
             if mascot:
@@ -166,42 +190,34 @@ def _hero_cast(session: Session, stocked: list[tuple[departments.Department, int
                     .limit(1)
                 )
                 if card:
-                    art = f"<img src='{escape(card.image_url)}' alt='{escape(mascot)}' loading='lazy'>"
-                    title = mascot
+                    card_set = session.get(CardSet, card.set_id) if card.set_id else None
+                    add(f"<img src='{escape(card.image_url)}' alt='{escape(mascot)}' loading='lazy'>",
+                       mascot, card_set.name if card_set else department.name)
 
-        if art is None:
-            row = session.execute(
-                select(ShopListing, CatalogItem)
-                .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
-                .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
-                      departments.listing_filter(department))
-                .order_by(ShopListing.price.desc()).limit(1)
-            ).first()
-            if row:
-                listing, item = row
-                art = _art(item, listing, session, show_tag=False)
-                title = item.name if item and item.name else listing.title
+        rows = session.execute(
+            select(ShopListing, CatalogItem)
+            .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
+            .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+                  departments.listing_filter(department))
+            .order_by(ShopListing.price.desc()).limit(HERO_CAST_LIMIT)
+        ).all()
+        for listing, item in rows:
+            if len(cast) >= HERO_CAST_LIMIT or listing.id in seen_listing_ids:
+                continue
+            art = _art(item, listing, session, show_tag=False)
+            if "<img" not in art:
+                continue
+            seen_listing_ids.add(listing.id)
+            title = item.name if item and item.name else listing.title
+            add(art, title, _set_name(session, item) or department.name)
 
-        if art is None and department.includes_bulk:
+        if not rows and department.includes_bulk and len(cast) < HERO_CAST_LIMIT:
             stmt = select(BulkLot).where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
             if department.game:
                 stmt = stmt.where(BulkLot.game == department.game)
             lot = session.scalar(stmt.order_by(BulkLot.price.desc()).limit(1))
             if lot and lot.image_url:
-                art = f"<img src='{escape(lot.image_url)}' alt='{escape(lot.title)}'>"
-                title = lot.title
-
-        if art is None or "<img" not in art:
-            continue  # no real photo to show -- skip rather than pad with a placeholder
-
-        cast.append(
-            "<div class='hero-cast-item'>"
-            f"<div class='hero-cast-art'>{art}</div>"
-            f"<b>{escape(title)}</b><span>{escape(department.name)}</span>"
-            "</div>"
-        )
-        if len(cast) == 5:
-            break
+                add(f"<img src='{escape(lot.image_url)}' alt='{escape(lot.title)}'>", lot.title, department.name)
 
     return f"<div class='hero-cast'>{''.join(cast)}</div>" if cast else ""
 
@@ -711,6 +727,8 @@ def create_app() -> FastAPI:
     app.include_router(photo_router)
     from .favicon import router as favicon_router
     app.include_router(favicon_router)
+    from .assets import router as assets_router
+    app.include_router(assets_router)
     from .checkout import router as checkout_router
     app.include_router(checkout_router)
 

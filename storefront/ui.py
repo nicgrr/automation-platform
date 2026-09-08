@@ -332,7 +332,7 @@ footer a:hover{color:var(--ink)}
    the one job of colour on an otherwise monochrome page -- deliberately
    NOT desaturated, since the whole point is to be the page's one splash
    of colour rather than compete with the ink-black wordmark below it. */
-.hero-cast{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:0 0 40px;max-width:640px}
+.hero-cast{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:0 0 40px;max-width:780px}
 .hero-cast-item{display:flex;flex-direction:column;align-items:center;gap:8px;width:100px}
 .hero-cast-art{
   width:100px;aspect-ratio:5/7;border-radius:2px;overflow:hidden;background:var(--sunken);

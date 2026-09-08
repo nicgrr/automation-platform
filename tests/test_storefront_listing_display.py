@@ -124,17 +124,20 @@ def test_home_department_tile_shows_a_hero_photo(client, session):
     add_card(session, "Charizard", price="80.00")
     body = client.get("/").text
     assert "class='dept-hero'" in body
-    hero_section = body.split("class='dept-hero'")[1][:600]
+    hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
     assert "<img" in hero_section
-    assert "images.pokemontcg.io" in hero_section
 
 
-def test_hero_photo_is_the_departments_priciest_item(client, session):
+def test_pokemon_department_tile_shows_the_official_game_logo(client, session):
+    """A category tile is a brand signpost, not a specific product -- it
+    shows the real Pokémon TCG logo (a checked-in asset, see
+    storefront/assets.py), not any particular card, however priced."""
     add_card(session, "Cheap", set_id="sv2", set_name="Cheap Set", price="5.00")
     add_card(session, "Charizard", set_id="sv1", set_name="Scarlet & Violet", price="200.00")
     body = client.get("/").text
-    hero_section = body.split("class='dept-hero'")[1][:800]
-    assert "alt='Charizard #4'" in hero_section
+    hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
+    assert "/assets/pokemon-tcg-logo.svg" in hero_section
+    assert "alt='Charizard #4'" not in hero_section
     assert "alt='Cheap #4'" not in hero_section
 
 
@@ -169,29 +172,31 @@ def test_dept_hero_carries_no_authenticity_tag(client, session):
     assert "art-tag" not in hero_section
 
 
-def test_pokemon_department_leads_with_pikachu_not_the_priciest_item(client, session):
-    """A shopper recognises Pikachu; they don't recognise whatever
-    happens to be the priciest card in stock today."""
+def test_pokemon_department_tile_shows_the_logo_even_with_a_cached_mascot(client, session):
+    """The logo wins over the mascot card too, for the tile specifically
+    -- the mascot card is what the hero cast strip leads with instead
+    (see test_hero_cast_shows_the_department_mascot)."""
     from automation_control.models import CatalogCard
 
     session.merge(CardSet(id="sm10", name="Unbroken Bonds"))
     session.add(CatalogCard(id="sm10-54", set_id="sm10", number="54", name="Pikachu",
                             image_url="https://images.pokemontcg.io/sm10/54.png"))
     session.commit()
-    add_card(session, "SomeRareCard", price="500.00")  # far pricier, must lose to the mascot
+    add_card(session, "SomeRareCard", price="500.00")
 
     body = client.get("/").text
-    hero_section = body.split("class='dept-hero'")[1][:400]
-    assert "images.pokemontcg.io/sm10/54.png" in hero_section
-    assert "alt='Pikachu'" in hero_section
+    hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
+    assert "/assets/pokemon-tcg-logo.svg" in hero_section
+    assert "sm10/54.png" not in hero_section
 
 
-def test_falls_back_to_the_priciest_item_when_no_mascot_card_is_cached(client, session):
-    """No cached Pikachu card at all -- must not crash, and must fall
-    back to the existing priciest-item logic."""
-    add_card(session, "Charizard", price="80.00")
+def test_falls_back_to_the_priciest_item_for_a_game_with_no_logo_asset(client, session):
+    """One Piece has no cached logo asset yet (see assets.GAME_LOGOS) --
+    its department tile must not crash, and falls back to the existing
+    priciest-item logic instead of the Pokémon-only logo."""
+    add_card(session, "Luffy", game="one_piece", set_id="op1", set_name="Romance Dawn", price="80.00")
     body = client.get("/").text
-    hero_section = body.split("class='dept-hero'")[1][:400]
+    hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
     assert "<img" in hero_section
     assert "images.pokemontcg.io/x/1.png" in hero_section
 
@@ -203,10 +208,9 @@ def test_hero_cast_absent_with_no_stock(client, session):
     assert "class='hero-cast'" not in body
 
 
-def test_hero_cast_shows_the_department_mascot(client, session):
-    """Same mascot-first rule as the department tile (Pikachu, not
-    whatever's priciest) -- the hero cast is the same idea, just facing
-    the front door."""
+def test_hero_cast_shows_the_department_mascot_first(client, session):
+    """Mascot leads the strip -- Pikachu, not whatever's priciest --
+    captioned with its own real set, not just the department name."""
     from automation_control.models import CatalogCard
 
     session.merge(CardSet(id="sm10", name="Unbroken Bonds"))
@@ -217,10 +221,26 @@ def test_hero_cast_shows_the_department_mascot(client, session):
 
     body = client.get("/").text
     cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
-    assert "images.pokemontcg.io/sm10/54.png" in cast
-    assert "alt='Pikachu'" in cast
-    assert "<b>Pikachu</b>" in cast
-    assert "<span>Pokémon</span>" in cast
+    mascot_item = cast.split("hero-cast-item")[1]
+    assert "images.pokemontcg.io/sm10/54.png" in mascot_item
+    assert "alt='Pikachu'" in mascot_item
+    assert "<b>Pikachu</b>" in mascot_item
+    assert "<span>Unbroken Bonds</span>" in mascot_item
+
+
+def test_hero_cast_fills_out_with_more_of_the_departments_own_stock(client, session):
+    """Not just one card per department -- the mascot leads, but the
+    strip is a real showcase of current stock, each captioned with its
+    own set."""
+    add_card(session, "SomeRareCard", set_id="sv1", set_name="Scarlet & Violet", price="500.00")
+    add_card(session, "AnotherCard", set_id="sv2", set_name="Paldea Evolved", price="300.00")
+    body = client.get("/").text
+    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
+    assert cast.count("hero-cast-item") == 2
+    assert "<b>SomeRareCard</b>" in cast
+    assert "<span>Scarlet &amp; Violet</span>" in cast
+    assert "<b>AnotherCard</b>" in cast
+    assert "<span>Paldea Evolved</span>" in cast
 
 
 def test_hero_cast_falls_back_to_the_priciest_listing_with_no_mascot_cached(client, session):
@@ -246,8 +266,8 @@ def test_hero_cast_shows_multiple_departments(client, session):
     body = client.get("/").text
     cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
     assert cast.count("hero-cast-item") == 2
-    assert "<span>Pokémon</span>" in cast
-    assert "<span>One Piece</span>" in cast
+    assert "<span>Scarlet &amp; Violet</span>" in cast
+    assert "<span>Romance Dawn</span>" in cast
 
 
 def test_dept_hero_uses_contain_not_cover(client, session):
