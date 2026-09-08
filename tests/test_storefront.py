@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from automation_control.database import Base, get_session
 from automation_control.models import (
     BulkLot, CardSet, CatalogItem, CatalogItemType, ShippingRate, ShippingZone,
-    ShopListing, ShopListingStatus,
+    ShopListing, ShopListingStatus, TcgCard,
 )
 from storefront.app import app
 
@@ -33,6 +33,7 @@ def client(session):
 
 def _listing(session, *, title="Charizard #4", price="80.00", status=ShopListingStatus.ACTIVE, quantity=1):
     session.add(CatalogItem(id="c1", item_type=CatalogItemType.TCG_CARD, name="Charizard"))
+    session.add(TcgCard(catalog_item_id="c1", game="pokemon", set_id="sv1", number="4"))
     listing = ShopListing(catalog_item_id="c1", title=title, price=Decimal(price), quantity=quantity, status=status)
     session.add(listing)
     session.commit()

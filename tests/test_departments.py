@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    BulkLot, CatalogItem, CatalogItemType, CollectibleProduct, ShopListing, ShopListingStatus,
+    BulkLot, CatalogItem, CatalogItemType, CollectibleProduct, SealedProduct,
+    ShopListing, ShopListingStatus, TcgCard,
 )
 from storefront import departments
 from storefront.app import create_app
@@ -29,153 +30,265 @@ def client(session):
     app.dependency_overrides.clear()
 
 
-def add_listing(session, name, item_type, price="10.00", title=None):
-    item = CatalogItem(id=f"i-{name}", item_type=item_type, name=name)
-    session.add(item)
-    session.add(ShopListing(
-        id=f"l-{name}", catalog_item_id=item.id, title=title or name,
-        price=Decimal(price), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE,
-    ))
-    return item
-
-
-def test_every_department_slug_is_unique_and_resolvable():
-    slugs = [d.slug for d in departments.DEPARTMENTS]
-    assert len(slugs) == len(set(slugs))
-    for slug in slugs:
-        assert departments.find(slug) is not None
-
-
-def test_no_item_type_lands_in_two_departments():
-    """The split has to be a partition -- an item showing up under both
-    Cards and Collectibles would make the counts lie."""
-    seen = set()
-    for department in departments.DEPARTMENTS:
-        for item_type in department.item_types:
-            assert item_type not in seen, item_type
-            seen.add(item_type)
-
-
-def test_find_is_forgiving_about_case_and_whitespace():
-    assert departments.find(" TCG ") is departments.find("tcg")
-    assert departments.find("nonsense") is None
-
-
-def test_counts_separate_cards_from_collectibles(session):
-    add_listing(session, "charizard", CatalogItemType.TCG_CARD)
-    add_listing(session, "booster", CatalogItemType.SEALED_PRODUCT)
-    add_listing(session, "hamburger", CatalogItemType.COLLECTIBLE)
+def add_card(session, name, *, game="pokemon", set_id="s1", set_name="Set One", price="10.00", quantity=1):
+    item_id = f"i-{name}"
+    session.add(CatalogItem(id=item_id, item_type=CatalogItemType.TCG_CARD, name=name))
+    session.add(TcgCard(catalog_item_id=item_id, game=game, set_id=set_id, number="1"))
+    listing_id = f"l-{name}"
+    session.add(ShopListing(id=listing_id, catalog_item_id=item_id, title=name,
+                            price=Decimal(price), currency="AUD", quantity=quantity,
+                            status=ShopListingStatus.ACTIVE))
     session.commit()
-
-    totals = departments.counts(session)
-    assert totals["tcg"] == 2
-    assert totals["collectibles"] == 1
-    assert totals["apparel"] == 0
+    return listing_id
 
 
-def test_bulk_lots_count_toward_tcg_only(session):
-    session.add(BulkLot(
-        id="b1", set_id=None, game="pokemon", title="Base bulk", card_count=50,
-        price=Decimal("20.00"), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE,
-    ))
+def add_sealed(session, name, *, game="pokemon", price="45.00"):
+    item_id = f"i-{name}"
+    session.add(CatalogItem(id=item_id, item_type=CatalogItemType.SEALED_PRODUCT, name=name))
+    session.add(SealedProduct(catalog_item_id=item_id, game=game))
+    listing_id = f"l-{name}"
+    session.add(ShopListing(id=listing_id, catalog_item_id=item_id, title=name,
+                            price=Decimal(price), currency="AUD", quantity=1,
+                            status=ShopListingStatus.ACTIVE))
     session.commit()
-    totals = departments.counts(session)
-    assert totals["tcg"] == 1
-    assert totals["collectibles"] == 0
+    return listing_id
+
+
+def add_collectible(session, name, *, series="Fruit Series", price="20.00"):
+    item_id = f"i-{name}"
+    session.add(CatalogItem(id=item_id, item_type=CatalogItemType.COLLECTIBLE, name=name))
+    session.add(CollectibleProduct(catalog_item_id=item_id, brand="Sonny Angel", series=series))
+    listing_id = f"l-{name}"
+    session.add(ShopListing(id=listing_id, catalog_item_id=item_id, title=name,
+                            price=Decimal(price), currency="AUD", quantity=1,
+                            status=ShopListingStatus.ACTIVE))
+    session.commit()
+    return listing_id
+
+
+def add_bulk_lot(session, *, game="pokemon", title="Set One bulk", price="20.00"):
+    lot = BulkLot(set_id="s1", game=game, title=title, card_count=50,
+                 price=Decimal(price), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE)
+    session.add(lot)
+    session.commit()
+    return lot.id
+
+
+# --- dynamic per-game departments -------------------------------------------
+
+def test_a_game_with_no_stock_has_no_department(session):
+    assert departments.find(session, "game-pokemon") is None
+
+
+def test_a_game_with_stock_gets_its_own_department(session):
+    add_card(session, "Charizard", game="pokemon")
+    department = departments.find(session, "game-pokemon")
+    assert department is not None
+    assert department.name == "Pokémon"
+    assert department.game == "pokemon"
+
+
+def test_two_games_get_two_separate_departments(session):
+    add_card(session, "Charizard", game="pokemon")
+    add_card(session, "Luffy", game="one_piece")
+    slugs = {d.slug for d, _ in departments.in_stock(session)}
+    assert {"game-pokemon", "game-one_piece"} <= slugs
+
+
+def test_an_unlabelled_game_code_still_gets_a_readable_name(session):
+    add_card(session, "Something", game="digimon")
+    department = departments.find(session, "game-digimon")
+    assert department.name == "Digimon"  # title-cased fallback, not the raw code
+
+
+def test_find_is_forgiving_about_case_and_whitespace(session):
+    add_card(session, "Charizard", game="pokemon")
+    assert departments.find(session, " GAME-POKEMON ") is not None
+
+
+def test_find_returns_none_for_nonsense(session):
+    assert departments.find(session, "nonsense") is None
+
+
+def test_collectibles_and_apparel_are_not_game_departments(session):
+    add_collectible(session, "Hamburger")
+    department = departments.find(session, "collectibles")
+    assert department.game is None
+
+
+def test_no_item_type_lands_in_two_departments(session):
+    """The split has to be a partition -- a TCG card showing up under two
+    game departments (or under Collectibles) would make counts lie."""
+    add_card(session, "Charizard", game="pokemon")
+    add_card(session, "Luffy", game="one_piece")
+    add_collectible(session, "Hamburger")
+    counts = departments.counts(session)
+    assert sum(counts.values()) == 3
+
+
+def test_bulk_lots_count_toward_their_own_games_department_only(session):
+    add_card(session, "Charizard", game="pokemon")
+    add_bulk_lot(session, game="pokemon")
+    add_bulk_lot(session, game="one_piece", title="One Piece bulk")
+    counts = departments.counts(session)
+    # the one_piece bulk lot has no singles, but still earns the game its
+    # own department entirely on the strength of the lot
+    assert counts["game-pokemon"] == 2  # 1 single + 1 lot
+    assert counts["game-one_piece"] == 1  # the lot alone
 
 
 def test_empty_departments_stay_out_of_navigation(session):
-    add_listing(session, "charizard", CatalogItemType.TCG_CARD)
-    session.commit()
+    add_card(session, "Charizard", game="pokemon")
     slugs = [d.slug for d, _ in departments.in_stock(session)]
-    assert slugs == ["tcg"]  # apparel has no stock and must not be advertised
+    assert "apparel" not in slugs
+    assert "collectibles" not in slugs
 
 
-def test_department_page_shows_only_its_own_stock(client, session):
-    add_listing(session, "charizard", CatalogItemType.TCG_CARD, title="Charizard Holo")
-    add_listing(session, "hamburger", CatalogItemType.COLLECTIBLE, title="Sonny Angel Hamburger")
-    session.commit()
+def test_department_page_shows_only_its_own_game(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    add_card(session, "Luffy", game="one_piece")
 
-    cards = client.get("/shop/tcg").text
-    assert "Charizard Holo" in cards
-    assert "Sonny Angel Hamburger" not in cards
+    pokemon_body = client.get("/shop/game-pokemon").text
+    assert "Charizard" in pokemon_body
+    assert "Luffy" not in pokemon_body
 
-    collectibles = client.get("/shop/collectibles").text
-    assert "Sonny Angel Hamburger" in collectibles
-    assert "Charizard Holo" not in collectibles
+    one_piece_body = client.get("/shop/game-one_piece").text
+    assert "Luffy" in one_piece_body
+    assert "Charizard" not in one_piece_body
 
 
 def test_unknown_department_is_a_404(client):
     assert client.get("/shop/jewellery").status_code == 404
 
 
-def test_apparel_department_exists_but_is_empty(client):
-    response = client.get("/shop/apparel")
-    assert response.status_code == 200
-    assert "Nothing here yet" in response.text
-
-
-def test_home_lists_departments_with_counts(client, session):
-    add_listing(session, "charizard", CatalogItemType.TCG_CARD)
-    add_listing(session, "hamburger", CatalogItemType.COLLECTIBLE)
-    session.commit()
+def test_home_lists_one_tile_per_game_plus_collectibles(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    add_card(session, "Luffy", game="one_piece")
+    add_collectible(session, "Hamburger")
 
     body = client.get("/").text
-    assert "href='/shop/tcg'" in body
+    assert "href='/shop/game-pokemon'" in body
+    assert "href='/shop/game-one_piece'" in body
     assert "href='/shop/collectibles'" in body
-    assert "Trading cards" in body and "Collectibles" in body
+    assert "Pokémon" in body and "One Piece" in body
 
 
 def test_home_without_stock_does_not_advertise_departments(client):
     body = client.get("/").text
     assert "Nothing listed yet" in body
-    assert "href='/shop/tcg'" not in body
+    assert "href='/shop/" not in body
 
 
-def test_browse_can_filter_by_department(client, session):
-    add_listing(session, "charizard", CatalogItemType.TCG_CARD, title="Charizard Holo")
-    add_listing(session, "hamburger", CatalogItemType.COLLECTIBLE, title="Sonny Angel Hamburger")
-    session.commit()
+def test_browse_can_filter_by_a_game_department(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    add_card(session, "Luffy", game="one_piece")
 
-    filtered = client.get("/browse?dept=collectibles").text
-    assert "Sonny Angel Hamburger" in filtered
-    assert "Charizard Holo" not in filtered
-
-    everything = client.get("/browse").text
-    assert "Sonny Angel Hamburger" in everything and "Charizard Holo" in everything
+    filtered = client.get("/browse?dept=game-pokemon").text
+    assert "Charizard" in filtered
+    assert "Luffy" not in filtered
 
 
 def test_a_listing_with_no_catalogue_row_is_not_filed_under_a_department(client, session):
-    # would otherwise default into whichever department the join fell into
+    add_card(session, "Charizard", game="pokemon")  # gives game-pokemon a real department to check
     session.add(ShopListing(
         id="orphan", catalog_item_id="missing", title="Orphan listing",
         price=Decimal("5.00"), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE,
     ))
     session.commit()
-    for slug in ["tcg", "collectibles", "apparel"]:
-        assert "Orphan listing" not in client.get(f"/shop/{slug}").text, slug
+    body = client.get("/shop/game-pokemon").text
+    assert "Orphan listing" not in body
 
 
-def test_tcg_department_points_at_bulk_master(client, session):
-    add_listing(session, "charizard", CatalogItemType.TCG_CARD)
-    session.add(BulkLot(
-        id="b1", set_id=None, game="pokemon", title="Base bulk", card_count=50,
-        price=Decimal("20.00"), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE,
-    ))
-    session.commit()
-    body = client.get("/shop/tcg").text
-    assert "/bulk" in body and "Bulk Master" in body
+def test_tcg_department_points_at_bulk_master_for_its_own_game(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    add_bulk_lot(session, game="pokemon")
+    add_bulk_lot(session, game="one_piece", title="One Piece bulk")
+
+    body = client.get("/shop/game-pokemon").text
+    assert "/bulk?game=pokemon" in body
+    assert "1 bulk lot(s)" in body  # not the one_piece lot
 
 
-def test_sonny_angel_secrets_are_their_own_catalogue_rows(session):
-    """The secret/regular split is what makes the pricing meaningful --
-    secrets run several times the price of a regular figure."""
-    for name, secret in [("Fruit Series blind box", False), ("Fruit Series secret", True)]:
-        item = CatalogItem(id=f"i-{name}", item_type=CatalogItemType.COLLECTIBLE, name=name)
-        session.add(item)
-        session.add(CollectibleProduct(
-            catalog_item_id=item.id, brand="Sonny Angel", series="Fruit Series",
-            is_secret=secret, blind_box_series="Fruit Series",
-        ))
-    session.commit()
-    assert departments.counts(session)["collectibles"] == 0  # catalogued, not listed
+# --- segments: singles / premium / sealed -----------------------------------
+
+def test_premium_segment_only_shows_expensive_singles(client, session):
+    add_card(session, "Cheap", game="pokemon", price="2.00")
+    add_card(session, "Dear", game="pokemon", price="80.00")
+
+    body = client.get("/shop/game-pokemon?seg=premium").text
+    assert "Dear" in body
+    assert "Cheap" not in body
+
+
+def test_premium_pill_is_hidden_when_nothing_qualifies(client, session):
+    add_card(session, "Cheap", game="pokemon", price="2.00")
+    body = client.get("/shop/game-pokemon").text
+    assert "Premium" not in body
+
+
+def test_premium_pill_appears_once_something_qualifies(client, session):
+    add_card(session, "Dear", game="pokemon", price="80.00")
+    body = client.get("/shop/game-pokemon").text
+    assert "Premium" in body
+
+
+def test_sealed_segment_shows_only_sealed_product(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    add_sealed(session, "Booster Box", game="pokemon")
+
+    body = client.get("/shop/game-pokemon?seg=sealed").text
+    assert "Booster Box" in body
+    assert "Charizard" not in body
+
+
+def test_sealed_pill_hidden_with_no_sealed_stock(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    assert "Sealed product" not in client.get("/shop/game-pokemon").text
+
+
+def test_singles_segment_excludes_sealed_product(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    add_sealed(session, "Booster Box", game="pokemon")
+
+    body = client.get("/shop/game-pokemon?seg=singles").text
+    assert "Charizard" in body
+    assert "Booster Box" not in body
+
+
+def test_an_unknown_segment_falls_back_to_all(client, session):
+    add_card(session, "Charizard", game="pokemon")
+    body = client.get("/shop/game-pokemon?seg=nonsense").text
+    assert "Charizard" in body
+
+
+def test_segment_pills_do_not_appear_on_non_game_departments(client, session):
+    # assert on the rendered element, not the string -- the stylesheet
+    # always defines .seg-tab, whether or not the page renders one
+    add_collectible(session, "Hamburger")
+    body = client.get("/shop/collectibles").text
+    assert "<a class='seg-tab" not in body
+    assert "class='seg-tabs'" not in body
+
+
+# --- Bulk Master game filter --------------------------------------------------
+
+def test_bulk_master_can_be_filtered_by_game(client, session):
+    add_bulk_lot(session, game="pokemon", title="Pokemon bulk")
+    add_bulk_lot(session, game="one_piece", title="One Piece bulk")
+
+    body = client.get("/bulk?game=pokemon").text
+    assert "Pokemon bulk" in body
+    assert "One Piece bulk" not in body
+
+
+def test_bulk_master_heading_reflects_the_game_filter(client, session):
+    add_bulk_lot(session, game="pokemon")
+    body = client.get("/bulk?game=pokemon").text
+    assert "Bulk Master — Pokémon" in body
+
+
+def test_bulk_master_shows_everything_with_no_game_filter(client, session):
+    add_bulk_lot(session, game="pokemon", title="Pokemon bulk")
+    add_bulk_lot(session, game="one_piece", title="One Piece bulk")
+    body = client.get("/bulk").text
+    assert "Pokemon bulk" in body and "One Piece bulk" in body

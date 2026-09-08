@@ -37,7 +37,7 @@ router = APIRouter()
 # --- browsing ---------------------------------------------------------------
 
 def _active_listings(session: Session, query: str = "", limit: int = 60,
-                     department: departments.Department | None = None):
+                     department: departments.Department | None = None, segment: str | None = None):
     stmt = (
         select(ShopListing, CatalogItem)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
@@ -50,6 +50,10 @@ def _active_listings(session: Session, query: str = "", limit: int = 60,
         # catalogue row has no department and drops out, rather than being
         # silently filed under the wrong one
         stmt = stmt.where(departments.listing_filter(department))
+        if segment:
+            extra = departments.segment_filter(department, segment)
+            if extra is not None:
+                stmt = stmt.where(extra)
     return session.execute(stmt.order_by(ShopListing.price.desc()).limit(limit)).all()
 
 
@@ -111,29 +115,53 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
 
 
 @router.get("/shop/{slug}", response_class=HTMLResponse)
-def department_page(slug: str, request: Request, q: str = Query(""),
+def department_page(slug: str, request: Request, q: str = Query(""), seg: str = Query("all"),
                     session: Session = Depends(get_session)) -> HTMLResponse:
-    department = departments.find(slug)
+    department = departments.find(session, slug)
     if department is None:
         raise HTTPException(status_code=404, detail="department not found")
 
     query = q.strip()
-    rows = _active_listings(session, query, department=department)
+    segment = seg if seg in departments.SEGMENTS else "all"
+    rows = _active_listings(session, query, department=department, segment=segment)
 
-    # Bulk lots live in their own table, so TCG gets a pointer to them
-    # rather than trying to merge two differently-shaped products into one
-    # grid -- a lot has no condition and no single catalogue item.
+    # Segment pills only for a game department -- "Premium"/"Sealed
+    # product" are trading-card concepts with no meaning for Collectibles
+    # or Apparel, and a pill nobody can act on is worse than no pill.
+    segment_bar = ""
+    if department.game:
+        available = {"all", "singles"}
+        if departments.has_premium_stock(session, department):
+            available.add("premium")
+        if departments.has_sealed_stock(session, department):
+            available.add("sealed")
+        pill_items = []
+        for key, label in departments.SEGMENTS.items():
+            if key not in available:
+                continue
+            active_class = " active" if key == segment else ""
+            pill_items.append(
+                f"<a class='seg-tab{active_class}' href='/shop/{escape(slug)}?seg={key}'>{escape(label)}</a>"
+            )
+        pills = "".join(pill_items)
+        segment_bar = f"<div class='seg-tabs'>{pills}</div>"
+
+    # Bulk lots live in their own table, so a game department gets a
+    # pointer to them (scoped to its own game) rather than trying to
+    # merge two differently-shaped products into one grid -- a lot has no
+    # condition and no single catalogue item.
     bulk_note = ""
     if department.includes_bulk:
         lots = session.scalar(
             select(func.count()).select_from(BulkLot)
-            .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
+            .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0,
+                  BulkLot.game == department.game)
         ) or 0
         if lots:
             bulk_note = (
                 "<div class='notice'>"
                 f"<strong>{lots} bulk lot(s)</strong> of sorted commons are listed separately in "
-                "<a href='/bulk'>Bulk Master</a> — the cheap way to fill a set.</div>"
+                f"<a href='/bulk?game={escape(department.game)}'>Bulk Master</a> — the cheap way to fill a set.</div>"
             )
 
     if rows:
@@ -151,7 +179,7 @@ def department_page(slug: str, request: Request, q: str = Query(""),
     body = (
         f"<div class='page-head'><h1>{escape(department.name)}</h1>"
         f"<p>{escape(department.blurb)} {sub}.</p></div>"
-        f"{bulk_note}{content}"
+        f"{segment_bar}{bulk_note}{content}"
     )
     return shell(session, f"{department.name} — NL Vault", body, request=request, query=query)
 
@@ -160,7 +188,7 @@ def department_page(slug: str, request: Request, q: str = Query(""),
 def browse(request: Request, q: str = Query(""), dept: str = Query(""),
            session: Session = Depends(get_session)) -> HTMLResponse:
     query = q.strip()
-    department = departments.find(dept)
+    department = departments.find(session, dept)
     rows = _active_listings(session, query, department=department)
     scope = department.name if department else "the vault"
     heading = f"Results for “{escape(query)}”" if query else f"Everything in {scope}"
@@ -345,10 +373,12 @@ def bulk_master(
     sort: str = Query("cards_desc"),
     min_cards: int = Query(0),
     max_price: float = Query(0),
+    game: str = Query(""),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     query = q.strip()
     sort_key = sort if sort in BULK_SORTS else "cards_desc"
+    game_filter = game.strip().lower()
 
     stmt = select(BulkLot).where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
     if query:
@@ -357,14 +387,20 @@ def bulk_master(
         stmt = stmt.where(BulkLot.card_count >= min_cards)
     if max_price > 0:
         stmt = stmt.where(BulkLot.price <= Decimal(str(max_price)))
+    if game_filter:
+        # from a game department's "view bulk lots for this game" link --
+        # an unrecognised value just matches nothing rather than erroring
+        stmt = stmt.where(BulkLot.game == game_filter)
     lots = session.scalars(stmt.order_by(BULK_SORTS[sort_key][1]).limit(120)).all()
 
     sort_options = "".join(
         f"<option value='{key}'{' selected' if key == sort_key else ''}>{escape(label)}</option>"
         for key, (label, _) in BULK_SORTS.items()
     )
+    game_field = f"<input type='hidden' name='game' value='{escape(game_filter)}'>" if game_filter else ""
     filters = (
         "<form class='panel filters' method='get' action='/bulk'>"
+        f"{game_field}"
         f"<label class='field'>Search<input name='q' value='{escape(query)}' placeholder='Set name…'></label>"
         f"<label class='field'>Sort<select name='sort'>{sort_options}</select></label>"
         f"<label class='field'>Min cards<input name='min_cards' type='number' min='0' step='1' value='{min_cards or ''}'></label>"
@@ -399,8 +435,9 @@ def bulk_master(
         )
         count_note = "No matches"
 
+    heading = f"Bulk Master — {departments.GAME_LABELS.get(game_filter, game_filter.title())}" if game_filter else "Bulk Master"
     body = (
-        "<div class='page-head'><h1>Bulk Master</h1>"
+        f"<div class='page-head'><h1>{escape(heading)}</h1>"
         f"<p>Sorted, sleeved lots by set — the sensible way to buy commons. {count_note}.</p></div>"
         f"{filters}{content}"
     )

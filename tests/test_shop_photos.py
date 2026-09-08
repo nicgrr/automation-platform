@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from automation_control.config import get_settings
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    CatalogItem, CatalogItemType, InventoryItem, ShopListing, ShopListingStatus,
+    CatalogItem, CatalogItemType, InventoryItem, ShopListing, ShopListingStatus, TcgCard,
 )
 from storefront.app import create_app
 from storefront.photos import has_own_photo, safe_source
@@ -50,13 +50,14 @@ def media_root(tmp_path, monkeypatch):
 def make_listing(session, photo_path, *, status=ShopListingStatus.ACTIVE):
     item = CatalogItem(id="ci1", item_type=CatalogItemType.TCG_CARD, name="Gastrodon",
                        image_url="https://images.pokemontcg.io/x/1.png")
+    tcg = TcgCard(catalog_item_id="ci1", game="pokemon", set_id="sts", number="29")
     inv = InventoryItem(id="inv1", catalog_item_id="ci1", quantity=1,
                         scan_image_path=str(photo_path) if photo_path else None)
     listing = ShopListing(id="l1", catalog_item_id="ci1", inventory_item_id="inv1",
                           title="Gastrodon #29", price=Decimal("12.00"), currency="AUD",
                           quantity=1, status=status,
                           image_url="https://images.pokemontcg.io/x/1.png")
-    session.add_all([item, inv, listing])
+    session.add_all([item, tcg, inv, listing])
     session.commit()
     return listing
 
@@ -112,7 +113,7 @@ def test_has_own_photo_reflects_reality(session, media_root):
 
 def test_listing_without_a_scan_falls_back_to_reference_art(client, session, media_root):
     make_listing(session, None)
-    body = client.get("/shop/tcg").text
+    body = client.get("/shop/game-pokemon").text
     assert "images.pokemontcg.io" in body
     assert "Stock image" in body
     assert "/photo/l1" not in body
@@ -121,7 +122,7 @@ def test_listing_without_a_scan_falls_back_to_reference_art(client, session, med
 def test_a_photographed_listing_shows_the_real_card_and_says_so(client, session, media_root):
     _, photo = media_root
     make_listing(session, photo)
-    body = client.get("/shop/tcg").text
+    body = client.get("/shop/game-pokemon").text
     assert "/photo/l1" in body
     assert "Actual card" in body
     # the stock URL must not also be rendered -- two images would be shown

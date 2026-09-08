@@ -1,19 +1,24 @@
-"""Departments -- the shop's top-level split into TCG, Collectibles and Apparel.
+"""Departments -- the shop's top-level split.
 
-One flat grid of everything worked while the shop was cards only. It stops
-working the moment a Sonny Angel sits next to a Charizard: the two have
-different buyers, different price ranges and different questions ("what
-condition?" vs "is it the secret?"), and a shopper who came for one has to
-scroll past the other.
+One flat grid of everything worked while the shop was cards only. It
+stops working the moment a Sonny Angel sits next to a Charizard, and it
+stops working again the moment One Piece sits next to Pokémon: different
+buyers come looking for different games, and a shopper who came for one
+shouldn't have to scroll past the other.
 
-The split is derived from `CatalogItem.item_type` rather than stored as a
-column on ShopListing. That keeps one source of truth -- an item is in
-Collectibles *because* it's a COLLECTIBLE, not because someone also
-remembered to tag the listing -- and means an item can never appear in two
-departments or none.
+TCG-like items (singles, sealed product, graded cards) are split one
+department PER GAME rather than lumped into one "Trading cards" bucket --
+built from whatever `TcgCard.game` / `SealedProduct.game` values actually
+have active stock, not a hardcoded list. Scan in a new game and its
+department appears on its own the moment something from it is listed; no
+code change needed. Collectibles and Apparel stay as fixed, non-game
+departments, since collectibles group by series/brand instead of a game.
 
-Bulk lots belong to TCG by construction: a lot is a pile of cards from one
-set, so there is no arrangement in which it is apparel.
+The split is derived from `CatalogItem.item_type` (and `game`, for TCG
+departments) rather than stored as a column on ShopListing. That keeps
+one source of truth -- an item is in Pokémon *because* its TcgCard.game
+says so, not because someone also remembered to tag the listing -- and
+means an item can never appear in two departments or none.
 
 Apparel ships with no stock. That's deliberate and not a placeholder: the
 department exists so the first shirt has somewhere to go, and
@@ -24,12 +29,23 @@ shop never advertises a section that lands on an empty page.
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from automation_control.models import (
-    BulkLot, CatalogItem, CatalogItemType, ShopListing, ShopListingStatus,
+    BulkLot, CatalogItem, CatalogItemType, SealedProduct, ShopListing, ShopListingStatus, TcgCard,
 )
+
+# How a game's TcgCard.game value ("pokemon") is written for people
+# ("Pokémon"). A game not in here falls back to a title-cased version of
+# its own code, so a new game still gets a readable name with no edit
+# needed here -- this dict is cosmetic, never a gate on what can appear.
+GAME_LABELS = {"pokemon": "Pokémon", "one_piece": "One Piece"}
+
+# Singles at or above this are shown in a game department's "Premium"
+# segment. A plain constant, not a config table: this is a browsing
+# facet, not a financial figure anything downstream depends on.
+PREMIUM_THRESHOLD = Decimal("15.00")
 
 
 @dataclass(frozen=True)
@@ -38,21 +54,11 @@ class Department:
     name: str
     blurb: str
     item_types: tuple[CatalogItemType, ...]
-    includes_bulk: bool = False
+    game: str | None = None       # restrict to this TcgCard/SealedProduct game, if set
+    includes_bulk: bool = False   # BulkLot rows count too (scoped by `game` if set)
 
 
-DEPARTMENTS: tuple[Department, ...] = (
-    Department(
-        slug="tcg",
-        name="Trading cards",
-        blurb="Pokémon and One Piece singles, sealed product and sorted bulk by set.",
-        item_types=(
-            CatalogItemType.TCG_CARD,
-            CatalogItemType.SEALED_PRODUCT,
-            CatalogItemType.GRADED_CARD,
-        ),
-        includes_bulk=True,
-    ),
+FIXED_DEPARTMENTS: tuple[Department, ...] = (
     Department(
         slug="collectibles",
         name="Collectibles",
@@ -67,43 +73,96 @@ DEPARTMENTS: tuple[Department, ...] = (
     ),
 )
 
-BY_SLUG = {department.slug: department for department in DEPARTMENTS}
+_TCG_ITEM_TYPES = (CatalogItemType.TCG_CARD, CatalogItemType.SEALED_PRODUCT, CatalogItemType.GRADED_CARD)
 
 
-def find(slug: str) -> Department | None:
-    return BY_SLUG.get((slug or "").strip().lower())
+def _game_label(game: str) -> str:
+    return GAME_LABELS.get(game, game.replace("_", " ").title())
+
+
+def _active_games(session: Session) -> list[str]:
+    """Every TCG game with at least one active single, sealed listing, or
+    bulk lot -- the set of games actually worth their own department."""
+    from_cards = session.scalars(
+        select(TcgCard.game).distinct()
+        .join(CatalogItem, CatalogItem.id == TcgCard.catalog_item_id)
+        .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0)
+    ).all()
+    from_sealed = session.scalars(
+        select(SealedProduct.game).distinct()
+        .join(CatalogItem, CatalogItem.id == SealedProduct.catalog_item_id)
+        .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+              SealedProduct.game.isnot(None))
+    ).all()
+    from_bulk = session.scalars(
+        select(BulkLot.game).distinct()
+        .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
+    ).all()
+    return sorted({g for g in (*from_cards, *from_sealed, *from_bulk) if g})
+
+
+def department_list(session: Session) -> list[Department]:
+    """Every department that could plausibly exist -- filtered down to
+    what actually has stock happens in in_stock(), not here, so a page
+    that needs to resolve a specific slug (a direct link, a bookmark)
+    still works even for a department that's currently empty."""
+    game_departments = [
+        Department(
+            slug=f"game-{game}",
+            name=_game_label(game),
+            blurb=f"{_game_label(game)} singles, sealed product and sorted bulk by set.",
+            item_types=_TCG_ITEM_TYPES, game=game, includes_bulk=True,
+        )
+        for game in _active_games(session)
+    ]
+    return game_departments + list(FIXED_DEPARTMENTS)
+
+
+def find(session: Session, slug: str) -> Department | None:
+    slug = (slug or "").strip().lower()
+    return next((d for d in department_list(session) if d.slug == slug), None)
 
 
 def listing_filter(department: Department):
-    """A WHERE clause selecting this department's single listings.
-
-    Joined against CatalogItem, so a listing whose catalogue row is missing
-    resolves to no department and simply doesn't appear -- better than
-    defaulting it into TCG and mislabelling it.
+    """A WHERE-clause condition selecting this department's single
+    listings, joined against CatalogItem -- a listing whose catalogue row
+    is missing resolves to no department and simply doesn't appear,
+    rather than defaulting into one and being mislabelled.
     """
-    return CatalogItem.item_type.in_(department.item_types)
+    condition = CatalogItem.item_type.in_(department.item_types)
+    if department.game is None:
+        return condition
+    return condition & (
+        CatalogItem.id.in_(select(TcgCard.catalog_item_id).where(TcgCard.game == department.game))
+        | CatalogItem.id.in_(select(SealedProduct.catalog_item_id).where(SealedProduct.game == department.game))
+    )
+
+
+def _bulk_filter(department: Department):
+    condition = BulkLot.status == ShopListingStatus.ACTIVE
+    if department.game:
+        condition = condition & (BulkLot.game == department.game)
+    return condition
 
 
 def counts(session: Session) -> dict[str, int]:
     """How many things are actually buyable per department slug."""
-    rows = session.execute(
-        select(CatalogItem.item_type, func.count())
-        .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0)
-        .group_by(CatalogItem.item_type)
-    ).all()
-    by_type = {item_type: count for item_type, count in rows}
-
-    bulk = session.scalar(
-        select(func.count()).select_from(BulkLot)
-        .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
-    ) or 0
-
     totals = {}
-    for department in DEPARTMENTS:
-        total = sum(by_type.get(item_type, 0) for item_type in department.item_types)
+    for department in department_list(session):
+        singles = session.scalar(
+            select(func.count()).select_from(ShopListing)
+            .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
+            .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+                  listing_filter(department))
+        ) or 0
+        total = singles
         if department.includes_bulk:
-            total += bulk
+            total += session.scalar(
+                select(func.count()).select_from(BulkLot)
+                .where(_bulk_filter(department), BulkLot.quantity > 0)
+            ) or 0
         totals[department.slug] = total
     return totals
 
@@ -111,7 +170,7 @@ def counts(session: Session) -> dict[str, int]:
 def in_stock(session: Session) -> list[tuple[Department, int]]:
     """Departments with something in them, for navigation."""
     totals = counts(session)
-    return [(d, totals[d.slug]) for d in DEPARTMENTS if totals[d.slug] > 0]
+    return [(d, totals[d.slug]) for d in department_list(session) if totals[d.slug] > 0]
 
 
 def price_range(session: Session, department: Department) -> tuple[Decimal, Decimal] | None:
@@ -129,10 +188,52 @@ def price_range(session: Session, department: Department) -> tuple[Decimal, Deci
     if department.includes_bulk:
         bulk_row = session.execute(
             select(func.min(BulkLot.price), func.max(BulkLot.price))
-            .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
+            .where(_bulk_filter(department), BulkLot.quantity > 0)
         ).one()
         low = min([v for v in (low, bulk_row[0]) if v is not None], default=None)
         high = max([v for v in (high, bulk_row[1]) if v is not None], default=None)
     if low is None or high is None:
         return None
     return Decimal(str(low)), Decimal(str(high))
+
+
+SEGMENTS = {
+    "all": "Everything",
+    "singles": "Singles",
+    "premium": f"Premium (${PREMIUM_THRESHOLD:,.0f}+)",
+    "sealed": "Sealed product",
+}
+
+
+def segment_filter(department: Department, segment: str):
+    """A further WHERE condition narrowing a game department's singles by
+    segment -- price tier or sealed-vs-not. Returns None for a segment
+    that adds no extra condition ("all"), or one that isn't valid for
+    this department, rather than raising: an unrecognised segment behaves
+    like "all" instead of erroring the page.
+    """
+    if segment == "premium":
+        return ShopListing.price >= PREMIUM_THRESHOLD
+    if segment == "sealed":
+        return CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT
+    if segment == "singles":
+        return CatalogItem.item_type.in_((CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD))
+    return None
+
+
+def has_sealed_stock(session: Session, department: Department) -> bool:
+    return bool(session.scalar(
+        select(func.count()).select_from(ShopListing)
+        .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+              listing_filter(department), CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT)
+    ))
+
+
+def has_premium_stock(session: Session, department: Department) -> bool:
+    return bool(session.scalar(
+        select(func.count()).select_from(ShopListing)
+        .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+              listing_filter(department), ShopListing.price >= PREMIUM_THRESHOLD)
+    ))

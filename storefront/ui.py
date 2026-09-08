@@ -170,6 +170,11 @@ body.nav-open .sidenav{transform:none}
 .art-tag.stock{background:rgba(20,24,29,.62);color:var(--bone)}
 .detail-art .art-tag{left:12px;bottom:12px;font-size:11.5px;padding:4px 9px}
 .line-art .art-tag{display:none}
+.seg-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px}
+.seg-tab{padding:8px 15px;border-radius:999px;font-size:13.5px;font-weight:600;
+  background:var(--paper);border:1px solid var(--rule);color:var(--muted)}
+.seg-tab:hover{border-color:var(--brass)}
+.seg-tab.active{background:var(--ink);color:var(--bone);border-color:var(--ink)}
 .dept-grid{
   display:grid;gap:16px;margin:22px 0 34px;
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
