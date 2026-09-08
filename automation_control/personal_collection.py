@@ -25,7 +25,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .models import (
-    CardPrice, CardSet, CatalogItem, InventoryItem, InventoryStatus, ShippingRate, ShippingZone,
+    CardPrice, CardSet, CatalogCard, CatalogItem, InventoryItem, InventoryStatus, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, TcgCard,
 )
 from .shop_pricing import default_costs, price_floor
@@ -87,13 +87,50 @@ def _set_names(session: Session, tcg_cards: list[TcgCard]) -> dict[str, str]:
     return dict(rows)
 
 
-def _row(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | None, set_name: str | None) -> str:
+def _is_web_url(url: str | None) -> bool:
+    """CatalogItem.image_url holds a local scan-ingest cache path
+    (`scan_ingest_data/cache/...`) for the vast majority of Pokemon rows --
+    an identification-cache artifact, not a publicly servable URL. Same
+    guard storefront/common.py uses, kept local since this admin app
+    doesn't import from the separate storefront package."""
+    return bool(url) and (url.startswith("http://") or url.startswith("https://"))
+
+
+def _reference_images(session: Session, tcg_cards: list[TcgCard]) -> dict[str, str]:
+    """(set_id, number) -> real hosted image URL, from the catalog_cards
+    cache built for perceptual-hash identification -- the one place a
+    real URL is guaranteed for a Pokemon card, per _is_web_url above."""
+    keys = {(c.set_id, c.number) for c in tcg_cards if c.game == "pokemon" and c.set_id and c.number}
+    if not keys:
+        return {}
+    set_ids = {k[0] for k in keys}
+    rows = session.execute(
+        select(CatalogCard.set_id, CatalogCard.number, CatalogCard.image_url).where(CatalogCard.set_id.in_(set_ids))
+    ).all()
+    return {f"{set_id}|{number}": url for set_id, number, url in rows if (set_id, number) in keys and _is_web_url(url)}
+
+
+def _image_url(catalog_item: CatalogItem, tcg_card: TcgCard | None, reference_images: dict[str, str]) -> str | None:
+    if _is_web_url(catalog_item.image_url):
+        return catalog_item.image_url
+    if tcg_card and tcg_card.set_id and tcg_card.number:
+        return reference_images.get(f"{tcg_card.set_id}|{tcg_card.number}")
+    return None
+
+
+def _row(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | None, set_name: str | None,
+         image_url: str | None) -> str:
     game_label = GAME_LABELS.get(tcg_card.game, tcg_card.game) if tcg_card else "—"
     set_bits = " · ".join(part for part in [set_name, tcg_card.number if tcg_card else None] if part)
     sub_parts = [p for p in [game_label, set_bits or None, item.condition] if p]
     graded = f" {pill(item.grading_company, 'ok')}" if item.grading_company else ""
+    thumb = (
+        f"<img class='pc-thumb' src='{escape(image_url)}' alt='' loading='lazy'>"
+        if image_url else "<div class='pc-thumb pc-thumb-empty'>No image</div>"
+    )
     return (
         "<tr>"
+        f"<td>{thumb}</td>"
         f"<td><strong>{escape(catalog_item.name)}</strong>{graded}"
         f"<div class='muted'>{escape(' · '.join(sub_parts))}</div></td>"
         f"<td>{item.quantity}</td>"
@@ -117,12 +154,15 @@ def personal_collection_page(
     rows_data = session.execute(
         _query(session, game, query).order_by(CatalogItem.name).limit(500)
     ).all()
-    set_names = _set_names(session, [tc for _, _, tc in rows_data if tc])
+    tcg_cards = [tc for _, _, tc in rows_data if tc]
+    set_names = _set_names(session, tcg_cards)
+    reference_images = _reference_images(session, tcg_cards)
 
     rows = "".join(
-        _row(item, catalog_item, tcg_card, set_names.get(tcg_card.set_id) if tcg_card else None)
+        _row(item, catalog_item, tcg_card, set_names.get(tcg_card.set_id) if tcg_card else None,
+             _image_url(catalog_item, tcg_card, reference_images))
         for item, catalog_item, tcg_card in rows_data
-    ) or "<tr><td colspan='4' class='muted'>Nothing here.</td></tr>"
+    ) or "<tr><td colspan='5' class='muted'>Nothing here.</td></tr>"
 
     query_suffix = f"&q={escape(query)}" if query else ""
     game_tabs = "".join(
@@ -151,7 +191,7 @@ def personal_collection_page(
         + f"<div class='filter-tabs'>{game_tabs}</div>"
         + f"<div class='listing-toolbar'>{search_form}</div>"
         + "<div class='panel'><div class='table-wrap'><table><thead><tr>"
-        + "<th>Item</th><th>Qty</th><th>Cost paid</th><th></th>"
+        + "<th></th><th>Item</th><th>Qty</th><th>Cost paid</th><th></th>"
         + f"</tr></thead><tbody>{rows}</tbody></table></div></div>"
         + _STYLE
     )
@@ -209,4 +249,6 @@ _STYLE = """<style>
 .listing-search input{padding:7px 10px;border-radius:6px;border:1px solid var(--panel-border);font-size:13px;width:220px}
 .pc-actions{display:flex;gap:6px}
 .btn.small{padding:6px 12px;font-size:13px}
+.pc-thumb{width:48px;height:64px;object-fit:contain;border-radius:4px;background:var(--surface-sunken)}
+.pc-thumb-empty{display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-dim);text-align:center}
 </style>"""

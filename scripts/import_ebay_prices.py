@@ -39,6 +39,7 @@ source it first, or the script will correctly refuse to run:
     .venv/bin/python -m scripts.import_ebay_prices --game one_piece
     .venv/bin/python -m scripts.import_ebay_prices --all --limit 500
     .venv/bin/python -m scripts.import_ebay_prices --brand "Sonny Angel"
+    .venv/bin/python -m scripts.import_ebay_prices --status personal_collection
 """
 
 import argparse
@@ -55,7 +56,7 @@ from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import OAuthError, configured, ebay_services
 from automation_control.models import (
-    CardPrice, CardSet, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem, TcgCard,
+    CardPrice, CardSet, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem, InventoryStatus, TcgCard,
 )
 
 DEFAULT_LIMIT = 200
@@ -91,7 +92,14 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
         return f"{collectible.brand} {item.name}{secret}".strip(), collectible.brand
     if tcg is not None:
         if tcg.set_code and tcg.number:
-            return f"{item.name} {tcg.set_code}-{tcg.number}".strip(), item.name
+            code = f"{tcg.set_code}-{tcg.number}"
+            # A collector-export row's own name sometimes already carries
+            # the code ("Piccolo - FB03-070 (Alternate Art)") -- appending
+            # it again produced a garbled, zero-result query like
+            # "... FB03-070 FB03-070".
+            if code.lower() in item.name.lower():
+                return item.name, item.name
+            return f"{item.name} {code}".strip(), item.name
         if set_name and tcg.number:
             return f"{item.name} {set_name} {tcg.number}".strip(), item.name
         if tcg.number:
@@ -122,7 +130,7 @@ def _price_values(listings: list[dict], must_contain: str | None = None) -> list
 
 
 def _targets(session, *, price_all: bool, game: str | None, limit: int,
-             collectibles: bool = False, brand: str | None = None):
+             collectibles: bool = False, brand: str | None = None, status: str | None = None):
     query = (
         select(CatalogItem, TcgCard, CardSet.name, CollectibleProduct)
         .join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id, isouter=True)
@@ -137,6 +145,13 @@ def _targets(session, *, price_all: bool, game: str | None, limit: int,
         query = query.where(CatalogItem.item_type == CatalogItemType.COLLECTIBLE)
         if brand:
             query = query.where(CollectibleProduct.brand.ilike(brand))
+    elif status:
+        owned_ids = (
+            select(InventoryItem.catalog_item_id)
+            .where(InventoryItem.catalog_item_id.isnot(None), InventoryItem.status == InventoryStatus(status))
+            .distinct()
+        )
+        query = query.where(CatalogItem.id.in_(owned_ids))
     elif not price_all:
         owned_ids = select(InventoryItem.catalog_item_id).where(InventoryItem.catalog_item_id.isnot(None)).distinct()
         query = query.where(CatalogItem.id.in_(owned_ids))
@@ -175,7 +190,7 @@ async def run(args) -> int:
     priced = skipped = failed = 0
     with SessionLocal() as session:
         targets = _targets(session, price_all=args.all, game=args.game, limit=args.limit,
-                           collectibles=args.collectibles, brand=args.brand)
+                           collectibles=args.collectibles, brand=args.brand, status=args.status)
         if not targets:
             print("no matching cards to price.")
             return 0
@@ -233,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--collectibles", action="store_true",
                         help="price every collectible in the catalogue, owned or not")
     parser.add_argument("--brand", help="only price this collectible brand, e.g. 'Sonny Angel'")
+    parser.add_argument("--status", help="only price owned items with this InventoryStatus, e.g. personal_collection")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"max cards to price this run (default {DEFAULT_LIMIT})")
     parser.add_argument("--marketplace", default="EBAY_AU", help="eBay marketplace id (default EBAY_AU)")
     args = parser.parse_args(argv)
