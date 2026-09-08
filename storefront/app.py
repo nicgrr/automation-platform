@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import get_session
 from automation_control.models import (
-    BulkLot, CardSet, CatalogItem, ShippingRate, ShippingZone, ShopListing, ShopListingStatus,
+    BulkLot, CardSet, CatalogItem, CatalogItemType, SealedProduct, ShippingRate, ShippingZone,
+    ShopListing, ShopListingStatus, TcgCard,
 )
 
 from . import departments, discounts
@@ -57,17 +58,67 @@ def _active_listings(session: Session, query: str = "", limit: int = 60,
     return session.execute(stmt.order_by(ShopListing.price.desc()).limit(limit)).all()
 
 
+def _set_name(session: Session, item: CatalogItem | None) -> str | None:
+    """The set a card or sealed product belongs to, for display -- never
+    baked into the stored title, which stays what it was at listing time
+    so an old order still reads correctly if a set gets renamed."""
+    if item is None:
+        return None
+    set_id = None
+    if item.item_type in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD):
+        tcg = session.get(TcgCard, item.id)
+        set_id = tcg.set_id if tcg else None
+    elif item.item_type == CatalogItemType.SEALED_PRODUCT:
+        sealed = session.get(SealedProduct, item.id)
+        set_id = sealed.set_id if sealed else None
+    if not set_id:
+        return None
+    card_set = session.get(CardSet, set_id)
+    return card_set.name if card_set else None
+
+
 def _card(listing: ShopListing, item: CatalogItem | None, session: Session | None = None) -> str:
     low_stock = "<span class='tag low'>Last one</span>" if listing.quantity == 1 else ""
+    set_name = _set_name(session, item) if session is not None else None
+    sub_line = f"{set_name} · {listing.condition or 'Ungraded'}" if set_name else (listing.condition or "Ungraded")
     return (
         f"<a class='card' href='/item/{escape(listing.id)}'>"
         f"<div class='card-art'>{_art(item, listing, session)}</div>"
         "<div class='card-body'>"
         f"<div class='card-title'>{escape(listing.title)}</div>"
-        f"<div class='card-sub'>{escape(listing.condition or 'Ungraded')}</div>"
+        f"<div class='card-sub'>{escape(sub_line)}</div>"
         f"<div class='card-price'>{_money(listing.price)} {low_stock}</div>"
         "</div></a>"
     )
+
+
+def _dept_hero(session: Session, department: departments.Department) -> str:
+    """A representative photo for a department tile -- the priciest active
+    single in it, so the tile leads with something worth having rather
+    than a generic icon. Falls back to a bulk lot's set art for a
+    department that (for now) only has lots, and to the brand mark if it
+    somehow has neither -- a tile must never render with no image at all.
+    """
+    row = session.execute(
+        select(ShopListing, CatalogItem)
+        .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+              departments.listing_filter(department))
+        .order_by(ShopListing.price.desc()).limit(1)
+    ).first()
+    if row:
+        listing, item = row
+        return _art(item, listing, session)
+
+    if department.includes_bulk:
+        stmt = select(BulkLot).where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
+        if department.game:
+            stmt = stmt.where(BulkLot.game == department.game)
+        lot = session.scalar(stmt.order_by(BulkLot.price.desc()).limit(1))
+        if lot and lot.image_url:
+            return f"<img src='{escape(lot.image_url)}' alt=''>"
+
+    return f"<div class='dept-hero-mark'>{logo_mark(48)}</div>"
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -89,14 +140,14 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
 
     cards = []
     for department, count in stocked:
-        span = departments.price_range(session, department)
-        range_note = f"{_money(span[0])} – {_money(span[1])}" if span else ""
         cards.append(
             f"<a class='dept-card' href='/shop/{escape(department.slug)}'>"
+            f"<div class='dept-hero'>{_dept_hero(session, department)}</div>"
+            "<div class='dept-card-body'>"
             f"<h2>{escape(department.name)}</h2>"
             f"<p>{escape(department.blurb)}</p>"
-            f"<div class='dept-meta'><span>{count} item(s)</span><span>{range_note}</span></div>"
-            "</a>"
+            f"<div class='dept-meta'><span>{count} item(s)</span></div>"
+            "</div></a>"
         )
 
     rows = _active_listings(session, limit=8)
@@ -223,6 +274,8 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
         "<button class='btn brass' type='submit'>Add to cart</button></form>"
     )
     description = f"<p class='muted' style='margin-top:14px'>{escape(listing.description)}</p>" if listing.description else ""
+    set_name = _set_name(session, item)
+    set_row = f"<li><span>Set</span><span>{escape(set_name)}</span></li>" if set_name else ""
 
     body = (
         "<div class='detail'>"
@@ -232,6 +285,7 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
         f"<div class='detail-price'>{_money(listing.price)} <span class='muted' style='font-size:15px'>{escape(listing.currency)}</span></div>"
         f"{description}"
         "<ul class='spec-list'>"
+        f"{set_row}"
         f"<li><span>Condition</span><span>{escape(listing.condition or 'Ungraded')}</span></li>"
         f"<li><span>Available</span><span>{listing.quantity}</span></li>"
         "<li><span>Ships from</span><span>Australia</span></li>"

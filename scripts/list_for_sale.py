@@ -7,9 +7,17 @@ inventory is never mutated by it.
 
 Pricing starts from the best market signal on file for each card
 (`ebay_active_low` first -- the conservative figure -- then any other
-source), with an optional margin. Anything with no price signal at all is
-skipped rather than guessed at, since a wrong price in a public shop is a
-real-money mistake.
+source), with an optional margin over it. Anything with no price signal
+at all is skipped rather than guessed at, since a wrong price in a public
+shop is a real-money mistake.
+
+That market-based price is then floored at what fulfilment actually
+costs -- postage, packaging, payment fees, plus the target margin from
+ShopCostConfig (see shop_pricing.py) -- so a listing can never be priced
+below break-even even when the market signal is thin or a cheap
+proxy-priced match undersells the real item. Bulk lots already worked
+this way (build_bulk_lots.py); this was the one pricing path in the shop
+that didn't, which meant nothing guaranteed a single actually made money.
 
     # see what would be listed, write nothing
     .venv/bin/python -m scripts.list_for_sale --min-price 5 --dry-run
@@ -32,8 +40,10 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import SessionLocal
 from automation_control.models import (
-    CardPrice, CatalogCard, CatalogItem, InventoryItem, ShopListing, ShopListingStatus,
+    CardPrice, CatalogCard, CatalogItem, InventoryItem, ShippingRate, ShippingZone,
+    ShopListing, ShopListingStatus,
 )
+from automation_control.shop_pricing import default_costs, price_floor
 
 PREFERRED_SOURCES = ["ebay_active_low", "optcgapi_market", "pokemonpricetracker_market"]
 
@@ -86,7 +96,19 @@ def main(argv: list[str] | None = None) -> int:
             select(InventoryItem).where(InventoryItem.catalog_item_id.isnot(None), InventoryItem.quantity > 0)
         ).all()
 
-        created = skipped_cheap = skipped_unpriced = skipped_existing = 0
+        # The floor every listing gets checked against: what it costs to
+        # fulfil an AU order (the common case), grossed up to the target
+        # margin. A listing below this loses money the moment it sells,
+        # whatever the market signal said.
+        au_rate = session.scalar(select(ShippingRate).where(ShippingRate.zone == ShippingZone.AU).limit(1))
+        floor_model = price_floor(
+            default_costs(session),
+            shipping_charged=Decimal(str(au_rate.price)) if au_rate else Decimal("0"),
+        )
+        print(f"profit floor: ${floor_model.floor} (break-even ${floor_model.break_even} "
+              f"+ {floor_model.margin_pct}% margin, customer pays postage)\n")
+
+        created = skipped_cheap = skipped_unpriced = skipped_existing = raised_to_floor = 0
         min_price = Decimal(str(args.min_price))
         multiplier = Decimal("1") + Decimal(str(args.margin)) / Decimal("100")
         status = ShopListingStatus.ACTIVE if args.activate else ShopListingStatus.DRAFT
@@ -113,14 +135,20 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             card = session.get(CatalogCard, item.catalog_item_id)
 
-            price = _round(market * multiplier)
+            market_price = _round(market * multiplier)
+            price = max(market_price, floor_model.floor)
+            floored = price > market_price
+            if floored:
+                raised_to_floor += 1
+
             title = catalog_item.name
             if card is not None and card.number:
                 title = f"{catalog_item.name} #{card.number}"
             variant = item.variant.value.replace("_", " ").title() if item.variant else None
             condition = " · ".join(part for part in [item.condition, variant] if part)
 
-            print(f"  {'would list' if args.dry_run else 'listed'}: {title} — ${price} (from {source})")
+            note = f" [raised to profit floor, market said ${market_price}]" if floored else ""
+            print(f"  {'would list' if args.dry_run else 'listed'}: {title} — ${price} (from {source}){note}")
             created += 1
             if args.dry_run:
                 continue
@@ -137,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
 
     verb = "would create" if args.dry_run else "created"
     print(
-        f"\n{verb} {created} listing(s) as {status.value}. "
+        f"\n{verb} {created} listing(s) as {status.value}"
+        f"{f', {raised_to_floor} raised to the profit floor' if raised_to_floor else ''}. "
         f"Skipped: {skipped_cheap} under ${args.min_price}, {skipped_unpriced} with no price on file, "
         f"{skipped_existing} already listed."
     )

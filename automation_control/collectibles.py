@@ -728,7 +728,12 @@ def collectible_review_submit(
     ))
     qty = _int(quantity, default=1)
     if qty > 0:
-        session.add(InventoryItem(catalog_item_id=item_id, card_id=None, variant=CardVariant.NORMAL, condition="New", quantity=qty))
+        # The crop made during capture IS a photo of the actual figure,
+        # not reference art -- carrying it forward is what lets the shop
+        # show the real item instead of "no image" the way TCG scans
+        # already do via ShopListing's own-photo preference.
+        session.add(InventoryItem(catalog_item_id=item_id, card_id=None, variant=CardVariant.NORMAL,
+                                  condition="New", quantity=qty, scan_image_path=capture.image_path))
     capture.status = CardCaptureStatus.REVIEWED
     capture.reviewed_at = datetime.now(UTC)
     capture.catalog_item_id = item_id

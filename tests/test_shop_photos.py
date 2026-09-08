@@ -134,3 +134,47 @@ def test_item_page_uses_the_real_photo_too(client, session, media_root):
     make_listing(session, photo)
     body = client.get("/item/l1").text
     assert "/photo/l1" in body and "Actual card" in body
+
+
+# --- a second legitimate photo source: AI-captured collectibles ------------
+
+@pytest.fixture
+def captures_root(tmp_path, monkeypatch):
+    """AI-assisted single-item captures (collectibles.py) land under
+    captured_cards_dir, a genuinely different directory from the bulk
+    scan pipeline's scan_media_dir -- both must be treated as real photo
+    sources, not just the first one found."""
+    from PIL import Image
+
+    root = tmp_path / "captured_cards"
+    root.mkdir()
+    photo = root / "figure.jpg"
+    Image.new("RGB", (400, 400), (10, 20, 30)).save(photo)
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "captured_cards_dir", str(root))
+    monkeypatch.setattr("storefront.photos.get_settings", lambda: settings)
+    return root, photo
+
+
+def test_a_photo_under_captured_cards_dir_is_also_served(client, session, captures_root):
+    _, photo = captures_root
+    make_listing(session, photo)
+    response = client.get("/photo/l1")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
+
+
+def test_traversal_out_of_captured_cards_dir_is_still_refused(client, session, captures_root):
+    root, _ = captures_root
+    make_listing(session, f"{root}/../../../etc/passwd")
+    assert client.get("/photo/l1").status_code == 404
+
+
+def test_a_path_under_neither_root_is_refused(client, session, media_root, captures_root):
+    _, photo = media_root
+    other = photo.parent.parent / "elsewhere.jpg"
+    from PIL import Image
+    Image.new("RGB", (10, 10)).save(other)
+    make_listing(session, other)
+    assert client.get("/photo/l1").status_code == 404

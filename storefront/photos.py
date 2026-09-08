@@ -36,8 +36,19 @@ THUMB_WIDTH = 420
 THUMB_QUALITY = 82
 
 
+def _media_roots() -> list[Path]:
+    """Every directory a real, seller-taken photo can legitimately live
+    under. Bulk-scanned cards land under scan_media_dir; AI-assisted
+    single-item captures (collectibles.py's review flow) land under
+    captured_cards_dir instead -- a genuine second source, not a
+    workaround, so both are allowed roots rather than widening either one.
+    """
+    settings = get_settings()
+    return [Path(settings.scan_media_dir).resolve(), Path(settings.captured_cards_dir).resolve()]
+
+
 def _media_root() -> Path:
-    return Path(get_settings().scan_media_dir).resolve()
+    return _media_roots()[0]
 
 
 def _thumb_dir() -> Path:
@@ -59,8 +70,7 @@ def safe_source(raw_path: str | None) -> Path | None:
         resolved = Path(raw_path).resolve()
     except (OSError, RuntimeError):
         return None
-    root = _media_root()
-    if not resolved.is_relative_to(root):
+    if not any(resolved.is_relative_to(root) for root in _media_roots()):
         return None
     if not resolved.is_file():
         return None

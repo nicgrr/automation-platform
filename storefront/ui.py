@@ -180,17 +180,23 @@ body.nav-open .sidenav{transform:none}
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
 }
 .dept-card{
-  display:flex;flex-direction:column;gap:8px;padding:22px;text-decoration:none;
+  display:flex;flex-direction:column;text-decoration:none;overflow:hidden;
   border:1px solid var(--rule);border-radius:14px;background:var(--paper);
-  transition:border-color .15s ease,transform .15s ease;
+  box-shadow:var(--shadow);
+  transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease;
 }
-.dept-card:hover{border-color:var(--brass);transform:translateY(-2px)}
-.dept-card h2{margin:0;font-size:20px;color:var(--ink)}
+.dept-card:hover{
+  border-color:var(--brass);transform:translateY(-3px);
+  box-shadow:0 6px 16px rgba(20,24,29,.10),0 22px 44px rgba(20,24,29,.10);
+}
+.dept-hero{aspect-ratio:16/9;background:#eee9e1;overflow:hidden;position:relative}
+.dept-hero img{width:100%;height:100%;object-fit:cover}
+.dept-hero .art-tag{left:12px;bottom:12px}
+.dept-hero-mark{width:100%;height:100%;display:grid;place-items:center;color:var(--rule)}
+.dept-card-body{display:flex;flex-direction:column;gap:8px;padding:20px 22px 22px}
+.dept-card h2{margin:0;font-size:21px;color:var(--ink)}
 .dept-card p{margin:0;font-size:14px;color:var(--muted);flex:1}
-.dept-meta{
-  display:flex;justify-content:space-between;gap:10px;font-size:13px;
-  color:var(--brass);font-variant-numeric:tabular-nums;
-}
+.dept-meta{font-size:13px;color:var(--brass);font-variant-numeric:tabular-nums;font-weight:600}
 .section-head{margin:30px 0 14px;font-size:19px;color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.dept-card{transition:none}}
 .navgroup{padding:14px 0 4px}

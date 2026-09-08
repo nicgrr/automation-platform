@@ -173,6 +173,10 @@ def test_review_confirm_creates_catalog_item_and_collectible_product(client, ses
     inventory_item = session.query(InventoryItem).filter_by(catalog_item_id=capture.catalog_item_id).one()
     assert inventory_item.card_id is None
     assert inventory_item.quantity == 1  # default confirm quantity
+    # the crop taken during capture IS a photo of the actual figure --
+    # carrying it forward is what lets the shop show it instead of
+    # falling back to "no image" the way an unphotographed item would
+    assert inventory_item.scan_image_path == "f"
 
 
 def test_review_confirm_with_custom_quantity(client, session):
