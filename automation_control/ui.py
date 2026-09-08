@@ -208,6 +208,7 @@ ADMIN_NAV = [
         ("/export", "Export data"),
         ("/shop-orders", "Shop orders"),
         ("/shop-listings", "Shop listings"),
+        ("/personal-collection", "Personal Collection"),
         ("/contact-messages", "Contact messages"),
         ("/shop-pricing", "Shop pricing"),
         ("/collectibles/identify", "Identify from a link"),
