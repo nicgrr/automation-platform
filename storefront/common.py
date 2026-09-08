@@ -169,16 +169,21 @@ _DEFAULT_SOCIAL_ICON = (
 )
 
 
-def social_links_html(session: Session) -> str:
-    """Footer social links -- only platforms with a real url configured
-    ever render. A row can exist as a placeholder (seeded with url=None,
-    see scripts/migrate_add_social_and_contact.py) without ever showing
-    as a broken or empty link."""
-    rows = session.scalars(
+def _active_social_links(session: Session) -> list[SocialLink]:
+    """Only platforms with a real url configured ever render. A row can
+    exist as a placeholder (seeded with url=None, see
+    scripts/migrate_add_social_and_contact.py) without ever showing as a
+    broken or empty link."""
+    return session.scalars(
         select(SocialLink)
         .where(SocialLink.is_active.is_(True), SocialLink.url.isnot(None), SocialLink.url != "")
         .order_by(SocialLink.sort_order)
     ).all()
+
+
+def social_links_html(session: Session) -> str:
+    """The footer row -- icon plus label."""
+    rows = _active_social_links(session)
     if not rows:
         return ""
     links = "".join(
@@ -189,6 +194,22 @@ def social_links_html(session: Session) -> str:
         for row in rows
     )
     return f"<div class='social-links'>{links}</div>"
+
+
+def social_icons_html(session: Session) -> str:
+    """A more prominent icon-only row for the home page hero -- same
+    underlying links as the footer, larger circular buttons, no text
+    label (the aria-label carries the name for assistive tech)."""
+    rows = _active_social_links(session)
+    if not rows:
+        return ""
+    icons = "".join(
+        f"<a href='{escape(row.url)}' class='social-icon' target='_blank' rel='noopener noreferrer' "
+        f"aria-label='{escape(row.label)}' title='{escape(row.label)}'>"
+        f"{_SOCIAL_ICONS.get(row.platform, _DEFAULT_SOCIAL_ICON)}</a>"
+        for row in rows
+    )
+    return f"<div class='social-icons'>{icons}</div>"
 
 
 def shell(session: Session, title: str, body: str, *, request: Request, query: str = "",

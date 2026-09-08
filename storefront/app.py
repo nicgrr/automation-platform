@@ -30,7 +30,7 @@ from .photos import router as photo_router
 from .brand import logo_mark
 from .common import (
     CART_COOKIE, MAX_PER_LINE, _art, _line_art, _money, cart_count, cart_lines,
-    nav_links, read_cart, resolve_saleable, shell, shipping_for, write_cart,
+    nav_links, read_cart, resolve_saleable, shell, shipping_for, social_icons_html, write_cart,
 )
 
 router = APIRouter()
@@ -145,7 +145,9 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
     stocked = departments.in_stock(session)
     intro = (
         "<div class='page-head'><h1>The vault is open</h1>"
-        "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p></div>"
+        "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
+        f"{social_icons_html(session)}"
+        "</div>"
     )
 
     if not stocked:

@@ -110,3 +110,36 @@ def test_social_links_appear_in_a_defined_order(client, session):
 def test_footer_links_to_contact_on_every_page(client):
     assert "href='/contact'" in client.get("/").text
     assert "href='/contact'" in client.get("/shipping").text
+
+
+# --- home page icon row -----------------------------------------------------
+
+def test_home_shows_no_icon_row_with_no_social_links(client, session):
+    assert "class='social-icons'" not in client.get("/").text
+
+
+def test_home_shows_an_icon_row_once_a_link_is_configured(client, session):
+    session.add(SocialLink(platform="instagram", label="Instagram",
+                           url="https://instagram.com/nlvault", is_active=True))
+    session.commit()
+    body = client.get("/").text
+    assert "class='social-icons'" in body
+    assert "https://instagram.com/nlvault" in body
+    assert "aria-label='Instagram'" in body
+
+
+def test_home_icon_row_has_no_visible_text_label(client, session):
+    session.add(SocialLink(platform="instagram", label="Instagram",
+                           url="https://instagram.com/nlvault", is_active=True))
+    session.commit()
+    body = client.get("/").text
+    icon_block = body.split("class='social-icons'")[1].split("</div>")[0]
+    assert "<span>Instagram</span>" not in icon_block
+
+
+def test_home_icon_row_and_footer_row_both_render_independently(client, session):
+    session.add(SocialLink(platform="instagram", label="Instagram",
+                           url="https://instagram.com/nlvault", is_active=True))
+    session.commit()
+    body = client.get("/").text
+    assert body.count("instagram.com/nlvault") == 2  # once in the hero, once in the footer

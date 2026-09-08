@@ -231,6 +231,15 @@ footer a:hover{color:var(--ink)}
 .social-link svg{width:17px;height:17px;flex:none}
 .social-link span{display:none}
 @media (min-width:560px){.social-link span{display:inline}}
+.social-icons{display:flex;gap:12px;margin-top:18px}
+.social-icon{
+  display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;
+  border-radius:999px;background:var(--paper);border:1px solid var(--rule);color:var(--ink);
+  transition:border-color .15s ease,transform .15s ease,color .15s ease;
+}
+.social-icon:hover{border-color:var(--brass);color:var(--brass);transform:translateY(-2px)}
+.social-icon svg{width:20px;height:20px}
+@media (prefers-reduced-motion:reduce){.social-icon{transition:none}}
 </style>"""
 
 FONTS = (
