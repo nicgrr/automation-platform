@@ -20,6 +20,10 @@ dependencies = [
   "pydantic-settings>=2.6,<3",
   "pytesseract>=0.3,<1",
   "python-multipart>=0.0.20,<1",
+  # Pinned exactly: 2.0.70+ requires pillow>=12.1, which conflicts with
+  # this project's <12 pin. 2.0.69 is the newest release before that
+  # requirement was added, and has no pillow constraint of its own.
+  "rembg[cpu]==2.0.69",
   "sqlalchemy>=2.0,<3",
   "uvicorn>=0.32,<1",
 ]

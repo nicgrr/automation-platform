@@ -1,7 +1,8 @@
 import pytest
 from PIL import Image
 
-from automation_control.image_processing import auto_orient, crop_card, rotate_in_place
+from automation_control import image_processing
+from automation_control.image_processing import auto_orient, crop_card, remove_background, rotate_in_place
 
 
 def _make_image(path, size=(200, 100), color=(255, 0, 0)):
@@ -117,3 +118,51 @@ def test_padding_scales_with_the_box_instead_of_the_image(tmp_path):
     with Image.open(large) as cropped:
         # a card-sized box still gets a real margin, not a hairline
         assert cropped.size[0] > 0.3 * 2000 * 1.1
+
+
+# --- remove_background -------------------------------------------------
+#
+# rembg's actual model is a ~176MB download and CPU-seconds-per-call --
+# far too slow and network-dependent for a unit test, so these mock the
+# rembg module itself rather than exercise the real model.
+
+def test_remove_background_composites_the_cut_subject_onto_white(tmp_path, monkeypatch):
+    path = tmp_path / "figure.jpg"
+    _make_image(path, size=(4, 4), color=(0, 200, 0))
+
+    def fake_remove(img, session=None):
+        rgba = Image.new("RGBA", img.size, (0, 200, 0, 255))
+        for x in range(img.size[0] // 2, img.size[0]):
+            for y in range(img.size[1]):
+                rgba.putpixel((x, y), (0, 200, 0, 0))  # right half "removed"
+        return rgba
+
+    monkeypatch.setattr("rembg.remove", fake_remove)
+    monkeypatch.setattr("rembg.new_session", lambda name: "fake-session")
+    monkeypatch.setattr(image_processing, "_REMBG_SESSION", None)
+
+    def _close(actual, expected, tolerance=8):
+        return all(abs(a - b) <= tolerance for a, b in zip(actual, expected))
+
+    assert remove_background(path) is True
+    with Image.open(path) as out:
+        out = out.convert("RGB")
+        # saved as JPEG, so allow for lossy-compression drift rather than
+        # asserting exact colour equality
+        assert _close(out.getpixel((0, 0)), (0, 200, 0))  # subject kept
+        assert _close(out.getpixel((3, 0)), (255, 255, 255))  # background -> white
+
+
+def test_remove_background_leaves_the_file_untouched_on_failure(tmp_path, monkeypatch):
+    path = tmp_path / "figure.jpg"
+    _make_image(path, size=(10, 10))
+    original = path.read_bytes()
+
+    def boom(img, session=None):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr("rembg.remove", boom)
+    monkeypatch.setattr(image_processing, "_REMBG_SESSION", "already-set")
+
+    assert remove_background(path) is False
+    assert path.read_bytes() == original

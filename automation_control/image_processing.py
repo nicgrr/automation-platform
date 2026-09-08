@@ -2,6 +2,8 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+_REMBG_SESSION = None
+
 # Small margin added around an AI-detected bounding box so a slightly tight
 # crop doesn't clip the card's edge.
 # Padding is a FRACTION OF THE BOX, not a fixed slice of the image.
@@ -67,3 +69,35 @@ def crop_card(source_path: Path, dest_path: Path, bounding_box: list[float], rot
         if rotation_degrees % 360:
             cropped = cropped.rotate(-rotation_degrees, expand=True)
         cropped.save(dest_path)
+
+
+def _rembg_session():
+    global _REMBG_SESSION
+    if _REMBG_SESSION is None:
+        from rembg import new_session
+        _REMBG_SESSION = new_session("u2net")
+    return _REMBG_SESSION
+
+
+def remove_background(path: Path) -> bool:
+    """Cut the subject out of its background and composite it onto plain
+    white, in place -- a cluttered kitchen counter or cabinet edge behind
+    a collectible figure reads as sloppy on a product page. Best-effort:
+    leaves the original photo untouched and returns False on any failure
+    (model not downloaded yet and offline, corrupt image, whatever) --
+    the unprocessed photo is always better than no photo, matching
+    crop_card's own fallback philosophy above.
+
+    Model weights (~176MB) download on first use and are cached under
+    ~/.rembg -- the first call in a fresh environment will be slow.
+    """
+    try:
+        from rembg import remove
+        with Image.open(path) as img:
+            cut = remove(img, session=_rembg_session())
+            white = Image.new("RGB", cut.size, (255, 255, 255))
+            white.paste(cut, mask=cut.split()[3])
+            white.save(path)
+        return True
+    except Exception:
+        return False

@@ -30,7 +30,7 @@ from .auth import require_dashboard_user
 from .card_recognition import extract_collectible_details
 from .config import get_settings
 from .database import SessionLocal, get_session
-from .image_processing import auto_orient, crop_card
+from .image_processing import auto_orient, crop_card, remove_background
 from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .ui import brand_header, page, pill
 
@@ -285,13 +285,17 @@ def _save_collectible_photo(data: bytes, content_type: str | None, settings) -> 
 
 
 def _figure_image(photo_path: Path, extracted, index: int) -> Path:
-    """Crop one figure out of a shared photo for its review page.
+    """Crop one figure out of a shared photo for its review page, then
+    clean up the background -- a cluttered counter or cabinet edge
+    behind the figure reads as sloppy on a product page.
 
-    A cabinet shelf holds forty figures. Without this, all forty review
-    pages show the same wide shot and there is no way to tell which
-    detected name belongs to which figure -- the same problem, and the
-    same fix, as _card_front_image in capture.py. Falls back to the
-    uncropped photo rather than failing a capture over a cosmetic step.
+    A cabinet shelf holds forty figures. Without the crop, all forty
+    review pages show the same wide shot and there is no way to tell
+    which detected name belongs to which figure -- the same problem, and
+    the same fix, as _card_front_image in capture.py. Falls back to the
+    uncropped photo if cropping fails, and to the cropped-but-not-cleaned
+    photo if background removal fails -- neither is worth failing a
+    capture over.
     """
     if not getattr(extracted, "bounding_box", None):
         return photo_path
@@ -300,6 +304,7 @@ def _figure_image(photo_path: Path, extracted, index: int) -> Path:
         crop_card(photo_path, cropped, extracted.bounding_box)
     except Exception:
         return photo_path
+    remove_background(cropped)
     return cropped
 
 
