@@ -149,8 +149,48 @@ def test_a_department_with_only_bulk_lots_falls_back_to_lot_art(client, session)
     assert "images.pokemontcg.io/sv1/logo.png" in body
 
 
-def test_item_count_still_shows_on_the_tile(client, session):
+def test_item_count_no_longer_shows_on_the_tile(client, session):
+    """A raw count ("50 item(s)") read as unexplained clutter -- dropped
+    per direct feedback."""
     add_card(session, "Charizard")
-    add_card(session, "Pikachu")
+    add_card(session, "Growlithe")
     body = client.get("/").text
-    assert "2 item(s)" in body
+    dept_block = body.split("dept-card-body")[1].split("</a>")[0]
+    assert "item(s)" not in dept_block
+
+
+def test_dept_hero_carries_no_authenticity_tag(client, session):
+    """The tag makes an "actual card"/"stock image" claim about a specific
+    product -- a category tile isn't standing in for one, so the claim
+    has nothing to attach to."""
+    add_card(session, "Growlithe")
+    body = client.get("/").text
+    hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
+    assert "art-tag" not in hero_section
+
+
+def test_pokemon_department_leads_with_pikachu_not_the_priciest_item(client, session):
+    """A shopper recognises Pikachu; they don't recognise whatever
+    happens to be the priciest card in stock today."""
+    from automation_control.models import CatalogCard
+
+    session.merge(CardSet(id="sm10", name="Unbroken Bonds"))
+    session.add(CatalogCard(id="sm10-54", set_id="sm10", number="54", name="Pikachu",
+                            image_url="https://images.pokemontcg.io/sm10/54.png"))
+    session.commit()
+    add_card(session, "SomeRareCard", price="500.00")  # far pricier, must lose to the mascot
+
+    body = client.get("/").text
+    hero_section = body.split("class='dept-hero'")[1][:400]
+    assert "images.pokemontcg.io/sm10/54.png" in hero_section
+    assert "alt='Pikachu'" in hero_section
+
+
+def test_falls_back_to_the_priciest_item_when_no_mascot_card_is_cached(client, session):
+    """No cached Pikachu card at all -- must not crash, and must fall
+    back to the existing priciest-item logic."""
+    add_card(session, "Charizard", price="80.00")
+    body = client.get("/").text
+    hero_section = body.split("class='dept-hero'")[1][:400]
+    assert "<img" in hero_section
+    assert "images.pokemontcg.io/x/1.png" in hero_section

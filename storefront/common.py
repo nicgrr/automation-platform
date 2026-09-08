@@ -70,28 +70,30 @@ def _money(value: Decimal | float | None) -> str:
     return "—" if value is None else f"${Decimal(str(value)):,.2f}"
 
 
-def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None = None) -> str:
+def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None = None,
+         show_tag: bool = True) -> str:
     """The seller's own scan wins over publisher reference art.
 
     A shopper buying an ungraded single is assessing condition, and studio
     art of a pristine card can't show them a whitened edge. The reference
     image stays as the fallback for anything not photographed, but it's
     labelled so the two are never confused for each other.
+
+    `show_tag=False` drops that label -- for a context where the photo
+    isn't standing in for a specific physical item at all (a department
+    tile's mood shot), the authenticity claim the tag makes has nothing
+    to attach to and would just be confusing.
     """
     from .photos import has_own_photo
 
     if session is not None and has_own_photo(session, listing.id):
-        return (
-            f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>"
-            "<span class='art-tag own'>Actual card</span>"
-        )
+        tag = "<span class='art-tag own'>Actual card</span>" if show_tag else ""
+        return f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
     url = listing.image_url or (item.image_url if item else None)
     if not url:
         return "<span class='noart'>no image</span>"
-    return (
-        f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>"
-        "<span class='art-tag stock'>Stock image</span>"
-    )
+    tag = "<span class='art-tag stock'>Stock image</span>" if show_tag else ""
+    return f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
 
 
 def _line_art(line: dict, session: Session | None = None) -> str:

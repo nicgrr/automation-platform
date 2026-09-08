@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import get_session
 from automation_control.models import (
-    BulkLot, CardSet, CatalogItem, CatalogItemType, SealedProduct, ShippingRate, ShippingZone,
+    BulkLot, CardSet, CatalogCard, CatalogItem, CatalogItemType, SealedProduct, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, TcgCard,
 )
 
@@ -92,13 +92,32 @@ def _card(listing: ShopListing, item: CatalogItem | None, session: Session | Non
     )
 
 
+# A department tile is a category signpost, not a specific product --
+# shoppers recognise Pikachu at a glance, which does more for it than
+# whatever happens to be the priciest thing currently in stock (which can
+# just as easily be an oddly abstract energy card nobody recognises).
+DEPARTMENT_MASCOTS = {"pokemon": "Pikachu", "one_piece": "Monkey D. Luffy"}
+
+
 def _dept_hero(session: Session, department: departments.Department) -> str:
-    """A representative photo for a department tile -- the priciest active
-    single in it, so the tile leads with something worth having rather
-    than a generic icon. Falls back to a bulk lot's set art for a
-    department that (for now) only has lots, and to the brand mark if it
-    somehow has neither -- a tile must never render with no image at all.
+    """A representative photo for a department tile.
+
+    Never carries the own-photo/stock-image tag that a real product tile
+    does -- this image isn't standing in for a specific physical item the
+    buyer would receive, so that authenticity claim has nothing to attach
+    to and would just be confusing here.
     """
+    if department.game:
+        mascot = DEPARTMENT_MASCOTS.get(department.game)
+        if mascot:
+            card = session.scalar(
+                select(CatalogCard)
+                .where(CatalogCard.name.ilike(mascot), CatalogCard.image_url.isnot(None))
+                .limit(1)
+            )
+            if card:
+                return f"<img src='{escape(card.image_url)}' alt='{escape(mascot)}' loading='lazy'>"
+
     row = session.execute(
         select(ShopListing, CatalogItem)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
@@ -108,7 +127,7 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     ).first()
     if row:
         listing, item = row
-        return _art(item, listing, session)
+        return _art(item, listing, session, show_tag=False)
 
     if department.includes_bulk:
         stmt = select(BulkLot).where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
@@ -139,14 +158,13 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
         ), request=request)
 
     cards = []
-    for department, count in stocked:
+    for department, _count in stocked:
         cards.append(
             f"<a class='dept-card' href='/shop/{escape(department.slug)}'>"
             f"<div class='dept-hero'>{_dept_hero(session, department)}</div>"
             "<div class='dept-card-body'>"
             f"<h2>{escape(department.name)}</h2>"
             f"<p>{escape(department.blurb)}</p>"
-            f"<div class='dept-meta'><span>{count} item(s)</span></div>"
             "</div></a>"
         )
 
