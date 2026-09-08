@@ -79,16 +79,22 @@ def _set_name(session: Session, item: CatalogItem | None) -> str | None:
 
 
 def _card(listing: ShopListing, item: CatalogItem | None, session: Session | None = None) -> str:
-    low_stock = "<span class='tag low'>Last one</span>" if listing.quantity == 1 else ""
+    # A diagonal corner ribbon reads as urgency at a glance, tucked into
+    # the product photo the way the reference's "PRE-ORDER" ribbon does --
+    # more eye-catching than a small pill sitting next to the price.
+    ribbon = (
+        "<div class='ribbon-wrap'><span class='ribbon'>Last one</span></div>"
+        if listing.quantity == 1 else ""
+    )
     set_name = _set_name(session, item) if session is not None else None
     sub_line = f"{set_name} · {listing.condition or 'Ungraded'}" if set_name else (listing.condition or "Ungraded")
     return (
         f"<a class='card' href='/item/{escape(listing.id)}'>"
-        f"<div class='card-art'>{_art(item, listing, session)}</div>"
+        f"<div class='card-art'>{_art(item, listing, session)}{ribbon}</div>"
         "<div class='card-body'>"
         f"<div class='card-title'>{escape(listing.title)}</div>"
         f"<div class='card-sub'>{escape(sub_line)}</div>"
-        f"<div class='card-price'>{_money(listing.price)} {low_stock}</div>"
+        f"<div class='card-price'>{_money(listing.price)}</div>"
         "</div></a>"
     )
 
@@ -144,6 +150,7 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
         "<div class='hero-inner'>"
         f"<h1 class='hero-brand'>{logo_lockup()}</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
+        "<a class='btn brass' href='/browse'>Browse the vault</a>"
         f"{social_icons_html(session)}"
         "</div></div>"
     )
@@ -171,7 +178,8 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
 
     rows = _active_listings(session, limit=8)
     latest = (
-        "<h2 class='section-head'>Fresh in the vault</h2>"
+        "<div class='section-head'><h2>Fresh in the vault</h2>"
+        "<a class='view-all' href='/browse'>View all &rarr;</a></div>"
         f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
     ) if rows else ""
 
