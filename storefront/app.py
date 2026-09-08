@@ -144,7 +144,9 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     stocked = departments.in_stock(session)
     hero = (
-        "<div class='hero-banner'><div class='hero-inner'>"
+        "<div class='hero-banner'>"
+        f"<div class='hero-bg' aria-hidden='true'>{logo_mark(560, framed=False)}</div>"
+        "<div class='hero-inner'>"
         f"<h1 class='hero-brand'>{logo_lockup(72)}</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
         f"{social_icons_html(session)}"

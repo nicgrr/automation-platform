@@ -242,21 +242,38 @@ footer a:hover{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.social-icon{transition:none}}
 
 /* ---- home hero banner ---- */
-.hero-banner{background:var(--ink);color:var(--bone)}
-.hero-inner{max-width:1180px;margin:0 auto;padding:54px 22px 46px}
+.hero-banner{
+  position:relative;overflow:hidden;background:var(--ink);color:var(--bone);
+  background-image:
+    radial-gradient(ellipse 60% 75% at 50% 28%, rgba(179,133,47,.20), transparent 65%),
+    radial-gradient(rgba(255,255,255,.05) 1px, transparent 1.5px);
+  background-size:auto, 26px 26px;
+  background-position:center, center;
+}
+.hero-bg{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:flex-end;
+  opacity:.06;color:var(--brass-lit);pointer-events:none;
+}
+.hero-bg svg{width:560px;height:560px;flex:none;transform:translateX(28%)}
+.hero-inner{
+  position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:64px 22px 54px;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+}
 .hero-inner h1{margin:0 0 14px;color:var(--bone)}
 .hero-brand{display:inline-flex}
 .hero-brand .nl-lockup{gap:18px}
 .hero-brand .nl-words b{font-size:38px}
 .hero-brand .nl-words i{font-size:13px;letter-spacing:.4em;margin-top:4px}
-.hero-inner p{color:#b7bcc4;margin:0;font-size:15.5px;max-width:52ch}
+.hero-inner p{color:#b7bcc4;margin:0 auto;font-size:15.5px;max-width:52ch}
 .hero-inner .social-icons{margin-top:24px}
 .hero-inner .social-icon{background:transparent;border-color:#333c46;color:var(--bone)}
 .hero-inner .social-icon:hover{border-color:var(--brass-lit);color:var(--brass-lit)}
 @media (max-width:560px){
   .hero-inner{padding:40px 22px 34px}
   .hero-brand .nl-words b{font-size:28px}
+  .hero-bg svg{width:380px;height:380px}
 }
+@media (prefers-reduced-motion:reduce){.hero-bg{transition:none}}
 </style>"""
 
 FONTS = (
