@@ -16,7 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from automation_control.models import (
-    BulkLot, CardSet, CatalogItem, ShippingRate, ShippingZone, ShopListing, ShopListingStatus, SocialLink,
+    BulkLot, CardSet, CatalogCard, CatalogItem, CatalogItemType, ShippingRate, ShippingZone,
+    ShopListing, ShopListingStatus, SocialLink, TcgCard,
 )
 
 from .ui import page
@@ -70,30 +71,65 @@ def _money(value: Decimal | float | None) -> str:
     return "—" if value is None else f"${Decimal(str(value)):,.2f}"
 
 
+def _is_web_url(url: str | None) -> bool:
+    """`listing.image_url`/`item.image_url` turned out to hold a local
+    scan-ingest cache path (`scan_ingest_data/cache/...`) for the vast
+    majority of real TCG_CARD rows -- an identification-cache artifact,
+    never a publicly servable URL -- rather than the hosted image the
+    field is meant for. Guard against rendering that straight into an
+    <img src>, which would just be a broken image."""
+    return bool(url) and (url.startswith("http://") or url.startswith("https://"))
+
+
+def _reference_image_url(session: Session, item: CatalogItem | None) -> str | None:
+    """The one source confirmed to always hold a real hosted URL: the
+    catalog_cards cache built for perceptual-hash identification, keyed
+    by the same (set, number) a TcgCard already carries."""
+    if item is None or item.item_type not in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD):
+        return None
+    tcg = session.get(TcgCard, item.id)
+    if tcg is None or not tcg.set_id or not tcg.number:
+        return None
+    card = session.scalar(
+        select(CatalogCard).where(CatalogCard.set_id == tcg.set_id, CatalogCard.number == tcg.number)
+    )
+    return card.image_url if card and _is_web_url(card.image_url) else None
+
+
 def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None = None,
          show_tag: bool = True) -> str:
-    """The seller's own scan wins over publisher reference art.
+    """Publisher reference art wins over the seller's own scan, for now.
 
-    A shopper buying an ungraded single is assessing condition, and studio
-    art of a pristine card can't show them a whitened edge. The reference
-    image stays as the fallback for anything not photographed, but it's
-    labelled so the two are never confused for each other.
+    Used to be the other way around -- a shopper assessing condition on an
+    ungraded single deserves to see the actual card, not a pristine studio
+    render -- but a chunk of the scanned photos turned out to be genuinely
+    saved upside down (a scan-ingest capture bug: the sheet's rotation is
+    corrected for card *identification* but not baked into the saved crop
+    itself), and a correct-looking stock photo beats a wrong-looking real
+    one. Own photos stay as the fallback for anything with no reference
+    image at all. Revert this once the capture pipeline is fixed and the
+    already-saved crops are reprocessed.
 
-    `show_tag=False` drops that label -- for a context where the photo
+    `show_tag=False` drops the label -- for a context where the photo
     isn't standing in for a specific physical item at all (a department
     tile's mood shot), the authenticity claim the tag makes has nothing
     to attach to and would just be confusing.
     """
+    url = listing.image_url if _is_web_url(listing.image_url) else None
+    if url is None and item is not None and _is_web_url(item.image_url):
+        url = item.image_url
+    if url is None and session is not None:
+        url = _reference_image_url(session, item)
+    if url:
+        tag = "<span class='art-tag stock'>Stock image</span>" if show_tag else ""
+        return f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
+
     from .photos import has_own_photo
 
     if session is not None and has_own_photo(session, listing.id):
         tag = "<span class='art-tag own'>Actual card</span>" if show_tag else ""
         return f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
-    url = listing.image_url or (item.image_url if item else None)
-    if not url:
-        return "<span class='noart'>no image</span>"
-    tag = "<span class='art-tag stock'>Stock image</span>" if show_tag else ""
-    return f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
+    return "<span class='noart'>no image</span>"
 
 
 def _line_art(line: dict, session: Session | None = None) -> str:

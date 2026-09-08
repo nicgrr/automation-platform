@@ -85,7 +85,13 @@ h1{font-family:'Baloo 2',sans-serif;font-weight:800;font-size:clamp(26px,4.2vw,3
 h2{font-family:'Baloo 2',sans-serif;font-weight:700;font-size:21px;margin:0 0 14px;letter-spacing:-.005em}
 
 /* ---- product grid ---- */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:20px}
+/* Two tiles per row up through tablet -- bigger, more readable cards on
+   a phone -- widening to a normal responsive fill once there's room for
+   more than two comfortably. */
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+@media (min-width:640px){
+  .grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:20px}
+}
 .card{
   background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
   overflow:hidden;display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(21,23,26,.04);

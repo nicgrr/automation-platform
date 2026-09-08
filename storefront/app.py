@@ -30,16 +30,27 @@ from .assets import GAME_LOGOS
 from .photos import router as photo_router
 from .brand import logo_lockup, logo_mark
 from .common import (
-    CART_COOKIE, MAX_PER_LINE, _art, _line_art, _money, cart_count, cart_lines,
-    nav_links, read_cart, resolve_saleable, shell, shipping_for, social_icons_html, write_cart,
+    CART_COOKIE, MAX_PER_LINE, _art, _is_web_url, _line_art, _money, _reference_image_url, cart_count,
+    cart_lines, nav_links, read_cart, resolve_saleable, shell, shipping_for, social_icons_html, write_cart,
 )
 
 router = APIRouter()
 
 # --- browsing ---------------------------------------------------------------
 
+# (label, ORDER BY) -- a plain dict rather than a dataclass since this is
+# only ever used to populate a <select> and pick an order_by clause.
+SORT_OPTIONS = {
+    "price_desc": ("Price: high to low", ShopListing.price.desc()),
+    "price_asc": ("Price: low to high", ShopListing.price.asc()),
+    "name_asc": ("Name: A to Z", ShopListing.title.asc()),
+}
+DEFAULT_SORT = "price_desc"
+
+
 def _active_listings(session: Session, query: str = "", limit: int = 60,
-                     department: departments.Department | None = None, segment: str | None = None):
+                     department: departments.Department | None = None, segment: str | None = None,
+                     set_id: str = "", sort: str = DEFAULT_SORT):
     stmt = (
         select(ShopListing, CatalogItem)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
@@ -56,7 +67,10 @@ def _active_listings(session: Session, query: str = "", limit: int = 60,
             extra = departments.segment_filter(department, segment)
             if extra is not None:
                 stmt = stmt.where(extra)
-    return session.execute(stmt.order_by(ShopListing.price.desc()).limit(limit)).all()
+    if set_id:
+        stmt = stmt.join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id).where(TcgCard.set_id == set_id)
+    order = SORT_OPTIONS.get(sort, SORT_OPTIONS[DEFAULT_SORT])[1]
+    return session.execute(stmt.order_by(order).limit(limit)).all()
 
 
 def _set_name(session: Session, item: CatalogItem | None) -> str | None:
@@ -193,6 +207,7 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
 
 @router.get("/shop/{slug}", response_class=HTMLResponse)
 def department_page(slug: str, request: Request, q: str = Query(""), seg: str = Query("all"),
+                    set_id: str = Query("", alias="set"), sort: str = Query(DEFAULT_SORT),
                     session: Session = Depends(get_session)) -> HTMLResponse:
     department = departments.find(session, slug)
     if department is None:
@@ -200,7 +215,11 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
 
     query = q.strip()
     segment = seg if seg in departments.SEGMENTS else "all"
-    rows = _active_listings(session, query, department=department, segment=segment)
+    sort_key = sort if sort in SORT_OPTIONS else DEFAULT_SORT
+    sets = departments.sets_in_stock(session, department)
+    set_id = set_id if set_id in {s for s, _ in sets} else ""
+    rows = _active_listings(session, query, limit=200, department=department, segment=segment,
+                            set_id=set_id, sort=sort_key)
 
     # Segment pills only for a game department -- "Premium"/"Sealed
     # product" are trading-card concepts with no meaning for Collectibles
@@ -222,6 +241,30 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
             )
         pills = "".join(pill_items)
         segment_bar = f"<div class='seg-tabs'>{pills}</div>"
+
+    # Set + sort filters -- a set dropdown only makes sense once a game
+    # actually has sets in stock; sort is always offered.
+    sort_options = "".join(
+        f"<option value='{key}'{' selected' if key == sort_key else ''}>{escape(label)}</option>"
+        for key, (label, _) in SORT_OPTIONS.items()
+    )
+    set_field = ""
+    if sets:
+        set_options = "<option value=''>All sets</option>" + "".join(
+            f"<option value='{escape(sid)}'{' selected' if sid == set_id else ''}>{escape(name)}</option>"
+            for sid, name in sets
+        )
+        set_field = f"<label class='field'>Set<select name='set'>{set_options}</select></label>"
+    filter_bar = (
+        f"<form class='panel filters' method='get' action='/shop/{escape(slug)}'>"
+        f"<input type='hidden' name='seg' value='{escape(segment)}'>"
+        f"<label class='field'>Search<input name='q' value='{escape(query)}' placeholder='Search this department…'></label>"
+        f"{set_field}"
+        f"<label class='field'>Sort<select name='sort'>{sort_options}</select></label>"
+        "<button class='btn' type='submit'>Apply</button>"
+        f"<a class='btn ghost' href='/shop/{escape(slug)}?seg={escape(segment)}'>Reset</a>"
+        "</form>"
+    )
 
     # Bulk lots live in their own table, so a game department gets a
     # pointer to them (scoped to its own game) rather than trying to
@@ -256,20 +299,36 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
     body = (
         f"<div class='page-head'><h1>{escape(department.name)}</h1>"
         f"<p>{escape(department.blurb)} {sub}.</p></div>"
-        f"{segment_bar}{bulk_note}{content}"
+        f"{segment_bar}{filter_bar}{bulk_note}{content}"
     )
     crumbs = (("Home", "/"), (department.name, ""))
     return shell(session, f"{department.name} — NL Vault", body, request=request, query=query, crumbs=crumbs)
 
 
 @router.get("/browse", response_class=HTMLResponse)
-def browse(request: Request, q: str = Query(""), dept: str = Query(""),
+def browse(request: Request, q: str = Query(""), dept: str = Query(""), sort: str = Query(DEFAULT_SORT),
            session: Session = Depends(get_session)) -> HTMLResponse:
     query = q.strip()
     department = departments.find(session, dept)
-    rows = _active_listings(session, query, department=department)
+    sort_key = sort if sort in SORT_OPTIONS else DEFAULT_SORT
+    rows = _active_listings(session, query, limit=200, department=department, sort=sort_key)
     scope = department.name if department else "the vault"
     heading = f"Results for “{escape(query)}”" if query else f"Everything in {scope}"
+
+    sort_options = "".join(
+        f"<option value='{key}'{' selected' if key == sort_key else ''}>{escape(label)}</option>"
+        for key, (label, _) in SORT_OPTIONS.items()
+    )
+    dept_field = f"<input type='hidden' name='dept' value='{escape(dept)}'>" if dept else ""
+    filter_bar = (
+        "<form class='panel filters' method='get' action='/browse'>"
+        f"{dept_field}"
+        f"<label class='field'>Search<input name='q' value='{escape(query)}' placeholder='Search the vault…'></label>"
+        f"<label class='field'>Sort<select name='sort'>{sort_options}</select></label>"
+        "<button class='btn' type='submit'>Apply</button>"
+        "</form>"
+    )
+
     if rows:
         content = f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
         sub = f"{len(rows)} item(s)"
@@ -282,7 +341,7 @@ def browse(request: Request, q: str = Query(""), dept: str = Query(""),
             "</div>"
         )
         sub = "No matches"
-    body = f"<div class='page-head'><h1>{heading}</h1><p>{sub}</p></div>{content}"
+    body = f"<div class='page-head'><h1>{heading}</h1><p>{sub}</p></div>{filter_bar}{content}"
     crumbs = (("Home", "/"), ("Browse", ""))
     return shell(session, "Browse — NL Vault", body, request=request, query=query, crumbs=crumbs)
 
@@ -334,11 +393,15 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
     crumbs.append((listing.title, ""))
 
     site_url = str(request.base_url).rstrip("/")
-    from .photos import has_own_photo
-    if has_own_photo(session, listing.id):
-        image_url = f"{site_url}/photo/{listing.id}"
-    else:
-        image_url = listing.image_url or (item.image_url if item else None)
+    image_url = listing.image_url if _is_web_url(listing.image_url) else None
+    if image_url is None and item is not None and _is_web_url(item.image_url):
+        image_url = item.image_url
+    if image_url is None:
+        image_url = _reference_image_url(session, item)
+    if not image_url:
+        from .photos import has_own_photo
+        if has_own_photo(session, listing.id):
+            image_url = f"{site_url}/photo/{listing.id}"
     product_ld = {
         "@context": "https://schema.org",
         "@type": "Product",

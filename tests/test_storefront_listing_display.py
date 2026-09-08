@@ -218,3 +218,61 @@ def test_dept_hero_uses_contain_not_cover(client, session):
     assert match is not None
     assert "object-fit:contain" in match.group(0)
     assert "object-fit:cover" not in match.group(0)
+
+
+# --- set filter + sort ------------------------------------------------------
+
+def test_department_page_offers_a_set_filter_when_multiple_sets_are_stocked(client, session):
+    add_card(session, "Charizard", set_id="sv1", set_name="Scarlet & Violet")
+    add_card(session, "Pikachu", set_id="sv2", set_name="Paldea Evolved")
+    body = client.get("/shop/game-pokemon").text
+    assert "name='set'" in body
+    assert "Scarlet &amp; Violet" in body
+    assert "Paldea Evolved" in body
+
+
+def test_department_page_set_filter_narrows_the_grid(client, session):
+    add_card(session, "Charizard", set_id="sv1", set_name="Scarlet & Violet")
+    add_card(session, "Pikachu", set_id="sv2", set_name="Paldea Evolved")
+    body = client.get("/shop/game-pokemon?set=sv1").text
+    grid = body.split("class='grid'")[1]
+    assert "Charizard" in grid
+    assert "Pikachu" not in grid
+
+
+def test_department_page_sorts_by_price_ascending(client, session):
+    add_card(session, "Cheap", price="2.00")
+    add_card(session, "Pricey", price="200.00")
+    body = client.get("/shop/game-pokemon?sort=price_asc").text
+    grid = body.split("class='grid'")[1]
+    assert grid.index("Cheap") < grid.index("Pricey")
+
+
+def test_department_page_defaults_to_price_descending(client, session):
+    add_card(session, "Cheap", price="2.00")
+    add_card(session, "Pricey", price="200.00")
+    body = client.get("/shop/game-pokemon").text
+    grid = body.split("class='grid'")[1]
+    assert grid.index("Pricey") < grid.index("Cheap")
+
+
+def test_browse_page_has_a_sort_dropdown_and_respects_it(client, session):
+    add_card(session, "Cheap", price="2.00")
+    add_card(session, "Pricey", price="200.00")
+    body = client.get("/browse?sort=price_asc").text
+    assert "name='sort'" in body
+    grid = body.split("class='grid'")[1]
+    assert grid.index("Cheap") < grid.index("Pricey")
+
+
+def test_grid_is_two_columns_by_default(client, session):
+    """Two tiles per row on a phone -- the base rule, widened via a
+    min-width media query only once there's room for more."""
+    import re
+
+    from storefront.ui import STYLE
+
+    base_rule = re.search(r"\.grid\{[^}]*\}", STYLE)
+    assert base_rule is not None
+    assert "repeat(2,1fr)" in base_rule.group(0)
+    assert "min-width:640px" in STYLE.split(base_rule.group(0), 1)[1][:60]

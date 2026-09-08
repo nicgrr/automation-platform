@@ -236,7 +236,7 @@ def test_home_page_falls_back_to_the_default_share_image(client):
     assert "og:image' content='http://testserver/social-share.png'" in body
 
 
-def test_item_page_uses_its_own_image_as_the_share_image(client, session):
+def test_item_page_uses_the_listings_own_image_as_the_share_image(client, session):
     listing_id = add_card(session, "Charizard")
     body = client.get(f"/item/{listing_id}").text
     assert "og:image' content='https://images.pokemontcg.io/x/1.png'" in body

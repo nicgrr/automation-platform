@@ -33,7 +33,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from automation_control.models import (
-    BulkLot, CatalogItem, CatalogItemType, SealedProduct, ShopListing, ShopListingStatus, TcgCard,
+    BulkLot, CardSet, CatalogItem, CatalogItemType, SealedProduct, ShopListing, ShopListingStatus, TcgCard,
 )
 
 # How a game's TcgCard.game value ("pokemon") is written for people
@@ -259,3 +259,23 @@ def has_premium_stock(session: Session, department: Department) -> bool:
         .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
               listing_filter(department), ShopListing.price >= PREMIUM_THRESHOLD)
     ))
+
+
+def sets_in_stock(session: Session, department: Department) -> list[tuple[str, str]]:
+    """(set_id, set_name) pairs with at least one active listing in this
+    department, ordered by name. Only a game department has sets at all
+    -- a fixed department (Collectibles, Apparel) groups by brand/series
+    instead, which isn't modelled here yet, so this returns empty for one
+    rather than guessing at a grouping."""
+    if not department.game:
+        return []
+    rows = session.execute(
+        select(TcgCard.set_id, CardSet.name).distinct()
+        .join(CatalogItem, CatalogItem.id == TcgCard.catalog_item_id)
+        .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
+        .join(CardSet, CardSet.id == TcgCard.set_id, isouter=True)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+              TcgCard.game == department.game, TcgCard.set_id.isnot(None))
+    ).all()
+    pairs = {(set_id, name or set_id) for set_id, name in rows}
+    return sorted(pairs, key=lambda pair: pair[1])
