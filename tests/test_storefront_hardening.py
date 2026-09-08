@@ -160,3 +160,51 @@ def test_item_page_description_mentions_the_actual_item(client, session):
     body = client.get("/item/l1").text
     assert "Charizard #4" in body
     assert "$20.00" in body
+
+
+# --- GSAP -----------------------------------------------------------------
+
+def test_gsap_loads_from_cdnjs(client):
+    body = client.get("/").text
+    assert "cdnjs.cloudflare.com/ajax/libs/gsap" in body
+    assert "gsap.min.js" in body
+    assert "ScrollTrigger.min.js" in body
+
+
+def test_csp_allows_the_gsap_cdn(client):
+    csp = client.get("/").headers["Content-Security-Policy"]
+    assert "cdnjs.cloudflare.com" in csp
+
+
+def test_gsap_scripts_load_before_the_code_that_uses_them(client):
+    """gsap.min.js and ScrollTrigger.min.js are loaded WITHOUT defer/async
+    specifically so they finish before the inline script below them runs
+    -- a deferred script and a following inline script do not execute in
+    that order, so this ordering is load-bearing, not incidental."""
+    body = client.get("/").text
+    gsap_pos = body.index("gsap.min.js")
+    scrolltrigger_pos = body.index("ScrollTrigger.min.js")
+    usage_pos = body.index("gsap.from")
+    assert gsap_pos < scrolltrigger_pos < usage_pos
+
+
+def test_gsap_scripts_are_not_deferred_or_async(client):
+    body = client.get("/").text
+    tag_start = body.index("<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap")
+    tag_end = body.index("</script>", tag_start)
+    tag = body[tag_start:tag_end]
+    assert "defer" not in tag
+    assert "async" not in tag
+
+
+def test_gsap_respects_reduced_motion(client):
+    body = client.get("/").text
+    assert "prefers-reduced-motion" in body
+
+
+def test_gsap_animates_the_hero_and_product_cards_only(client):
+    """Kept to what it's good at -- no gimmicks elsewhere."""
+    body = client.get("/").text
+    assert "querySelector('.hero-inner')" in body
+    assert "gsap.from(hero.children" in body
+    assert ".dept-card, .grid .card" in body

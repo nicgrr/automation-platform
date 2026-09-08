@@ -296,6 +296,39 @@ NAV_SCRIPT = """<script>
 })();
 </script>"""
 
+# GSAP, loaded plain (no defer/async) so these two tags run to completion
+# before the inline script right after them touches the `gsap` global --
+# a deferred script and a following inline script do NOT execute in that
+# order, so this is deliberate, not an oversight.
+#
+# Kept to what GSAP is actually good at and no further: a one-time
+# entrance on the hero, and a fade-up the first time a product tile
+# scrolls into view. No bounce, no colour, no looping -- motion here is
+# a courtesy, not a feature, and prefers-reduced-motion skips all of it.
+GSAP_SCRIPT = """<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js'></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js'></script>
+<script>
+(function(){
+  if (typeof gsap === 'undefined') return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var hero = document.querySelector('.hero-inner');
+  if (hero && hero.children.length) {
+    gsap.from(hero.children, {opacity: 0, y: 16, duration: 0.6, ease: 'power2.out', stagger: 0.08});
+  }
+
+  if (typeof ScrollTrigger !== 'undefined') {
+    gsap.registerPlugin(ScrollTrigger);
+    gsap.utils.toArray('.dept-card, .grid .card').forEach(function(el){
+      gsap.from(el, {
+        opacity: 0, y: 20, duration: 0.5, ease: 'power2.out',
+        scrollTrigger: {trigger: el, start: 'top 92%', once: true},
+      });
+    });
+  }
+})();
+</script>"""
+
 
 def sidenav(links: str = "") -> str:
     """The slide-out navigation. Hidden by default and summoned by the
@@ -380,5 +413,6 @@ def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
         "<a href='/privacy'>Privacy</a> &nbsp;·&nbsp; <a href='/terms'>Terms</a></span>"
         "</div></footer>"
         f"{NAV_SCRIPT}"
+        f"{GSAP_SCRIPT}"
         "</body></html>"
     )
