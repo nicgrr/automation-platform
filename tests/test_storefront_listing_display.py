@@ -194,3 +194,18 @@ def test_falls_back_to_the_priciest_item_when_no_mascot_card_is_cached(client, s
     hero_section = body.split("class='dept-hero'")[1][:400]
     assert "<img" in hero_section
     assert "images.pokemontcg.io/x/1.png" in hero_section
+
+
+def test_dept_hero_uses_contain_not_cover(client, session):
+    """A full card image (portrait, includes name/HP/attack text) cropped
+    with object-fit:cover in a 16:9 box shows an arbitrary horizontal
+    slice of text -- not the artwork. object-fit:contain shows the whole
+    card instead, which is at least never nonsensical."""
+    import re
+
+    from storefront.ui import STYLE
+
+    match = re.search(r"\.dept-hero img\{[^}]*\}", STYLE)
+    assert match is not None
+    assert "object-fit:contain" in match.group(0)
+    assert "object-fit:cover" not in match.group(0)

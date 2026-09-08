@@ -190,7 +190,8 @@ body.nav-open .sidenav{transform:none}
   box-shadow:0 6px 16px rgba(20,24,29,.10),0 22px 44px rgba(20,24,29,.10);
 }
 .dept-hero{aspect-ratio:16/9;background:#eee9e1;overflow:hidden;position:relative}
-.dept-hero img{width:100%;height:100%;object-fit:cover}
+.dept-hero{background:#eee9e1}
+.dept-hero img{width:100%;height:100%;object-fit:contain}
 .dept-hero .art-tag{left:12px;bottom:12px}
 .dept-hero-mark{width:100%;height:100%;display:grid;place-items:center;color:var(--rule)}
 .dept-card-body{display:flex;flex-direction:column;gap:8px;padding:20px 22px 22px}
