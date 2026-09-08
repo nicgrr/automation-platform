@@ -207,6 +207,7 @@ ADMIN_NAV = [
         ("/collectibles", "Collectibles"),
         ("/export", "Export data"),
         ("/shop-orders", "Shop orders"),
+        ("/contact-messages", "Contact messages"),
         ("/shop-pricing", "Shop pricing"),
         ("/collectibles/identify", "Identify from a link"),
     ]),

@@ -212,7 +212,14 @@ body.nav-open .sidenav{transform:none}
 .bulk-count.big{font-family:Fraunces,Georgia,serif;font-weight:900;font-size:76px;color:var(--brass)}
 
 footer{border-top:1px solid var(--rule);margin-top:70px;padding:26px 22px;color:var(--muted);font-size:13px}
-footer .inner{max-width:1180px;margin:0 auto;display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between}
+footer .inner{max-width:1180px;margin:0 auto;display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between;align-items:center}
+footer a:hover{color:var(--ink)}
+.social-links{display:flex;gap:14px;align-items:center}
+.social-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;font-weight:600}
+.social-link:hover{color:var(--brass)}
+.social-link svg{width:17px;height:17px;flex:none}
+.social-link span{display:none}
+@media (min-width:560px){.social-link span{display:inline}}
 </style>"""
 
 FONTS = (
@@ -256,6 +263,7 @@ def sidenav(links: str = "") -> str:
         "<hr>"
         "<div class='navgroup'><h4>Info</h4>"
         "<a href='/shipping'>Shipping &amp; returns</a>"
+        "<a href='/contact'>Contact us</a>"
         "<a href='/cart'>Your cart</a>"
         "</div>"
         "</aside>"
@@ -291,7 +299,8 @@ DEFAULT_DESCRIPTION = "Hand-picked trading cards and collectibles, shipped track
 
 
 def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
-         nav_links: str = "", dept_links: str = "", description: str = DEFAULT_DESCRIPTION) -> str:
+         nav_links: str = "", dept_links: str = "", description: str = DEFAULT_DESCRIPTION,
+         social_html: str = "") -> str:
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -309,7 +318,9 @@ def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
         f"<main>{body}</main>"
         "<footer><div class='inner'>"
         "<span>NL Vault — trading cards &amp; collectibles, shipped from Australia.</span>"
+        f"{social_html}"
         "<span><a href='/shipping'>Shipping &amp; returns</a> &nbsp;·&nbsp; "
+        "<a href='/contact'>Contact us</a> &nbsp;·&nbsp; "
         "<a href='/privacy'>Privacy</a> &nbsp;·&nbsp; <a href='/terms'>Terms</a></span>"
         "</div></footer>"
         f"{NAV_SCRIPT}"

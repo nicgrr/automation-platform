@@ -1195,3 +1195,45 @@ class SetDiscountTier(Base):
     discount_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     label: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+
+class SocialLink(Base):
+    """A social/marketplace link shown in the shop's footer -- Instagram,
+    the eBay store, Whatnot. Rows rather than constants so the operator
+    can add, retire or reorder one without a redeploy; is_active rather
+    than deleting means a paused channel's history isn't lost.
+
+    A blank url is treated as "not ready to show" by the renderer, not an
+    error -- a platform can exist here as a placeholder while the real
+    link is pending, without it ever rendering as a broken link.
+    """
+
+    __tablename__ = "social_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    platform: Mapped[str] = mapped_column(String(64))
+    label: Mapped[str] = mapped_column(String(128))
+    url: Mapped[str | None] = mapped_column(String(512))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ContactMessage(Base):
+    """A message from the shop's Contact page.
+
+    No outbound email exists anywhere in this app, so a message can't be
+    forwarded to an inbox -- it lands here instead, and the operator reads
+    it in the CRM the same way they'd check shop orders. `is_read` rather
+    than a delete keeps a record rather than losing it once handled.
+    """
+
+    __tablename__ = "contact_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(256))
+    email: Mapped[str] = mapped_column(String(256), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

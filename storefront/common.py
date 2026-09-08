@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from automation_control.models import (
-    BulkLot, CardSet, CatalogItem, ShippingRate, ShippingZone, ShopListing, ShopListingStatus,
+    BulkLot, CardSet, CatalogItem, ShippingRate, ShippingZone, ShopListing, ShopListingStatus, SocialLink,
 )
 
 from .ui import page
@@ -143,12 +143,59 @@ def dept_links(session: Session) -> str:
     )
 
 
+_SOCIAL_ICONS = {
+    "instagram": (
+        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"
+        "<rect x='3' y='3' width='18' height='18' rx='5'/>"
+        "<circle cx='12' cy='12' r='4'/><circle cx='17.2' cy='6.8' r='1.1' fill='currentColor' stroke='none'/>"
+        "</svg>"
+    ),
+    "ebay": (
+        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"
+        "<path d='M3 8h4l2 8 2.5-8h1l2.5 8L17 8h4'/><path d='M3 16h18' stroke-opacity='0'/>"
+        "</svg>"
+    ),
+    "whatnot": (
+        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"
+        "<circle cx='12' cy='12' r='9'/><path d='M10 8.5l6 3.5-6 3.5z' fill='currentColor' stroke='none'/>"
+        "</svg>"
+    ),
+}
+_DEFAULT_SOCIAL_ICON = (
+    "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"
+    "<circle cx='12' cy='12' r='9'/></svg>"
+)
+
+
+def social_links_html(session: Session) -> str:
+    """Footer social links -- only platforms with a real url configured
+    ever render. A row can exist as a placeholder (seeded with url=None,
+    see scripts/migrate_add_social_and_contact.py) without ever showing
+    as a broken or empty link."""
+    rows = session.scalars(
+        select(SocialLink)
+        .where(SocialLink.is_active.is_(True), SocialLink.url.isnot(None), SocialLink.url != "")
+        .order_by(SocialLink.sort_order)
+    ).all()
+    if not rows:
+        return ""
+    links = "".join(
+        f"<a href='{escape(row.url)}' class='social-link' target='_blank' rel='noopener noreferrer' "
+        f"aria-label='{escape(row.label)}'>"
+        f"{_SOCIAL_ICONS.get(row.platform, _DEFAULT_SOCIAL_ICON)}"
+        f"<span>{escape(row.label)}</span></a>"
+        for row in rows
+    )
+    return f"<div class='social-links'>{links}</div>"
+
+
 def shell(session: Session, title: str, body: str, *, request: Request, query: str = "",
           description: str | None = None) -> HTMLResponse:
     kwargs = {"description": description} if description else {}
     return HTMLResponse(page(
         title, body, cart_count=cart_count(request), query=query,
-        nav_links=nav_links(session), dept_links=dept_links(session), **kwargs,
+        nav_links=nav_links(session), dept_links=dept_links(session),
+        social_html=social_links_html(session), **kwargs,
     ))
 
 
