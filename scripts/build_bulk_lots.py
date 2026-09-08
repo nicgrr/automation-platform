@@ -10,7 +10,7 @@ combined market value (bulk sells at a discount to singles, always), with
 a floor so a lot never prices below what it costs to post.
 
     .venv/bin/python -m scripts.build_bulk_lots --dry-run
-    .venv/bin/python -m scripts.build_bulk_lots --max-card-price 2 --pct 45
+    .venv/bin/python -m scripts.build_bulk_lots --max-card-price 2 --pct 65
     .venv/bin/python -m scripts.build_bulk_lots --activate
     .venv/bin/python -m scripts.build_bulk_lots --clear
 """
@@ -41,8 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     parser.add_argument("--max-card-price", type=float, default=2.0,
                         help="cards worth up to this go into bulk (default 2)")
-    parser.add_argument("--pct", type=float, default=45.0,
-                        help="percent of combined market value to charge (default 45)")
+    parser.add_argument("--pct", type=float, default=65.0,
+                        help="percent of combined market value to charge (default 65 -- a 35% bulk discount)")
     parser.add_argument("--min-cards", type=int, default=MIN_CARDS_PER_LOT,
                         help=f"skip sets with fewer cards than this (default {MIN_CARDS_PER_LOT})")
     parser.add_argument("--activate", action="store_true", help="publish immediately instead of drafting")
