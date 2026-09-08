@@ -328,31 +328,6 @@ footer a:hover{color:var(--ink)}
 .hero-inner p{color:var(--muted);margin:0 auto;font-size:14.5px;max-width:46ch;line-height:1.6}
 .hero-inner .social-icons{margin-top:26px}
 
-/* the cast strip: real photography of what's actually for sale, doing
-   the one job of colour on an otherwise monochrome page -- deliberately
-   NOT desaturated, since the whole point is to be the page's one splash
-   of colour rather than compete with the ink-black wordmark below it. */
-.hero-cast{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:0 0 40px;max-width:780px}
-.hero-cast-item{display:flex;flex-direction:column;align-items:center;gap:8px;width:100px}
-.hero-cast-art{
-  width:100px;aspect-ratio:5/7;border-radius:2px;overflow:hidden;background:var(--sunken);
-  display:grid;place-items:center;
-}
-.hero-cast-art img{width:100%;height:100%;object-fit:contain}
-.hero-cast-item b{
-  font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-weight:700;
-  font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink);
-  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.hero-cast-item span{
-  font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;
-  font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
-}
-@media (max-width:560px){
-  .hero-cast{gap:10px}
-  .hero-cast-item{width:76px}
-  .hero-cast-art{width:76px}
-}
 @media (max-width:560px){
   .hero-inner{padding:52px 22px 44px}
 }

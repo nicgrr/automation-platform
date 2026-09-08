@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import get_session
 from automation_control.models import (
-    BulkLot, CardSet, CatalogCard, CatalogItem, CatalogItemType, SealedProduct, ShippingRate, ShippingZone,
+    BulkLot, CardSet, CatalogItem, CatalogItemType, SealedProduct, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, TcgCard,
 )
 
@@ -93,14 +93,6 @@ def _card(listing: ShopListing, item: CatalogItem | None, session: Session | Non
     )
 
 
-# The hero cast strip (below) leads with a recognisable character --
-# shoppers know Pikachu at a glance, which does more for it than whatever
-# happens to be priciest in stock. The department TILE below is a
-# category signpost instead, so it leads with official set branding
-# (a logo) rather than a character.
-DEPARTMENT_MASCOTS = {"pokemon": "Pikachu", "one_piece": "Monkey D. Luffy"}
-
-
 def _dept_hero(session: Session, department: departments.Department) -> str:
     """A representative image for a department tile.
 
@@ -144,91 +136,12 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     return f"<div class='dept-hero-mark'>{logo_mark(48)}</div>"
 
 
-HERO_CAST_LIMIT = 6
-
-
-def _hero_cast(session: Session, stocked: list[tuple[departments.Department, int]]) -> str:
-    """A row of real characters from what's actually in stock, framing the
-    wordmark -- the same "let the photography carry the interest" idea the
-    department tiles already use, just facing the front door instead of a
-    category page.
-
-    A department's mascot (if cached) leads, but the strip isn't limited
-    to one card per department -- several of a department's own
-    highest-value active listings fill out the rest, each captioned with
-    its real set, so this reads as an actual showcase of current stock
-    rather than one portrait per category.
-
-    Only ever draws from what a listing's own consent already covers: a
-    withdrawn Sonny Angel with no live listing, or a game with no active
-    stock at all, simply gets no slot -- there is no listing to be the
-    "this is public" consent for, so it stays out of the cast until it's
-    relisted (or listed for the first time), exactly like it stays out of
-    the department tile.
-    """
-    cast: list[str] = []
-    seen_listing_ids: set[str] = set()
-
-    def add(art: str, title: str, subtitle: str) -> None:
-        cast.append(
-            "<div class='hero-cast-item'>"
-            f"<div class='hero-cast-art'>{art}</div>"
-            f"<b>{escape(title)}</b><span>{escape(subtitle)}</span>"
-            "</div>"
-        )
-
-    for department, _count in stocked:
-        if len(cast) >= HERO_CAST_LIMIT:
-            break
-
-        if department.game:
-            mascot = DEPARTMENT_MASCOTS.get(department.game)
-            if mascot:
-                card = session.scalar(
-                    select(CatalogCard)
-                    .where(CatalogCard.name.ilike(mascot), CatalogCard.image_url.isnot(None))
-                    .limit(1)
-                )
-                if card:
-                    card_set = session.get(CardSet, card.set_id) if card.set_id else None
-                    add(f"<img src='{escape(card.image_url)}' alt='{escape(mascot)}' loading='lazy'>",
-                       mascot, card_set.name if card_set else department.name)
-
-        rows = session.execute(
-            select(ShopListing, CatalogItem)
-            .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
-            .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
-                  departments.listing_filter(department))
-            .order_by(ShopListing.price.desc()).limit(HERO_CAST_LIMIT)
-        ).all()
-        for listing, item in rows:
-            if len(cast) >= HERO_CAST_LIMIT or listing.id in seen_listing_ids:
-                continue
-            art = _art(item, listing, session, show_tag=False)
-            if "<img" not in art:
-                continue
-            seen_listing_ids.add(listing.id)
-            title = item.name if item and item.name else listing.title
-            add(art, title, _set_name(session, item) or department.name)
-
-        if not rows and department.includes_bulk and len(cast) < HERO_CAST_LIMIT:
-            stmt = select(BulkLot).where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
-            if department.game:
-                stmt = stmt.where(BulkLot.game == department.game)
-            lot = session.scalar(stmt.order_by(BulkLot.price.desc()).limit(1))
-            if lot and lot.image_url:
-                add(f"<img src='{escape(lot.image_url)}' alt='{escape(lot.title)}'>", lot.title, department.name)
-
-    return f"<div class='hero-cast'>{''.join(cast)}</div>" if cast else ""
-
-
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     stocked = departments.in_stock(session)
     hero = (
         "<div class='hero-banner'>"
         "<div class='hero-inner'>"
-        f"{_hero_cast(session, stocked)}"
         f"<h1 class='hero-brand'>{logo_lockup(72)}</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
         f"{social_icons_html(session)}"

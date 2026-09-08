@@ -142,14 +142,18 @@ def test_pokemon_department_tile_shows_the_official_game_logo(client, session):
 
 
 def test_a_department_with_only_bulk_lots_falls_back_to_lot_art(client, session):
-    session.merge(CardSet(id="sv1", name="Scarlet & Violet", logo_url="https://images.pokemontcg.io/sv1/logo.png"))
-    session.add(BulkLot(set_id="sv1", game="pokemon", title="Scarlet & Violet bulk", card_count=50,
+    """One Piece has no cached game-logo asset (see assets.GAME_LOGOS),
+    so its tile genuinely falls back to lot art -- Pokémon always shows
+    its logo regardless of what's in stock (see the logo tests above)."""
+    session.merge(CardSet(id="op1", name="Romance Dawn"))
+    session.add(BulkLot(set_id="op1", game="one_piece", title="Romance Dawn bulk", card_count=50,
                         price=Decimal("20.00"), currency="AUD", quantity=1,
                         status=ShopListingStatus.ACTIVE,
-                        image_url="https://images.pokemontcg.io/sv1/logo.png"))
+                        image_url="https://images.pokemontcg.io/op1/logo.png"))
     session.commit()
     body = client.get("/").text
-    assert "images.pokemontcg.io/sv1/logo.png" in body
+    hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
+    assert "images.pokemontcg.io/op1/logo.png" in hero_section
 
 
 def test_item_count_no_longer_shows_on_the_tile(client, session):
@@ -199,75 +203,6 @@ def test_falls_back_to_the_priciest_item_for_a_game_with_no_logo_asset(client, s
     hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
     assert "<img" in hero_section
     assert "images.pokemontcg.io/x/1.png" in hero_section
-
-
-# --- home hero cast strip ----------------------------------------------
-
-def test_hero_cast_absent_with_no_stock(client, session):
-    body = client.get("/").text
-    assert "class='hero-cast'" not in body
-
-
-def test_hero_cast_shows_the_department_mascot_first(client, session):
-    """Mascot leads the strip -- Pikachu, not whatever's priciest --
-    captioned with its own real set, not just the department name."""
-    from automation_control.models import CatalogCard
-
-    session.merge(CardSet(id="sm10", name="Unbroken Bonds"))
-    session.add(CatalogCard(id="sm10-54", set_id="sm10", number="54", name="Pikachu",
-                            image_url="https://images.pokemontcg.io/sm10/54.png"))
-    session.commit()
-    add_card(session, "SomeRareCard", price="500.00")
-
-    body = client.get("/").text
-    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
-    mascot_item = cast.split("hero-cast-item")[1]
-    assert "images.pokemontcg.io/sm10/54.png" in mascot_item
-    assert "alt='Pikachu'" in mascot_item
-    assert "<b>Pikachu</b>" in mascot_item
-    assert "<span>Unbroken Bonds</span>" in mascot_item
-
-
-def test_hero_cast_fills_out_with_more_of_the_departments_own_stock(client, session):
-    """Not just one card per department -- the mascot leads, but the
-    strip is a real showcase of current stock, each captioned with its
-    own set."""
-    add_card(session, "SomeRareCard", set_id="sv1", set_name="Scarlet & Violet", price="500.00")
-    add_card(session, "AnotherCard", set_id="sv2", set_name="Paldea Evolved", price="300.00")
-    body = client.get("/").text
-    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
-    assert cast.count("hero-cast-item") == 2
-    assert "<b>SomeRareCard</b>" in cast
-    assert "<span>Scarlet &amp; Violet</span>" in cast
-    assert "<b>AnotherCard</b>" in cast
-    assert "<span>Paldea Evolved</span>" in cast
-
-
-def test_hero_cast_falls_back_to_the_priciest_listing_with_no_mascot_cached(client, session):
-    add_card(session, "Charizard", price="80.00")
-    body = client.get("/").text
-    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
-    assert "images.pokemontcg.io/x/1.png" in cast
-    assert "<b>Charizard</b>" in cast
-
-
-def test_hero_cast_skips_a_department_with_no_photo_at_all(client, session):
-    """A listed item with no reference image and no own photo has nothing
-    to show -- the cast strip should just have one fewer slot, not a
-    placeholder or a broken image."""
-    add_collectible(session, "Hamburger")
-    body = client.get("/").text
-    assert "class='hero-cast'" not in body
-
-
-def test_hero_cast_shows_multiple_departments(client, session):
-    add_card(session, "Charizard", game="pokemon", set_id="sv1", set_name="Scarlet & Violet")
-    add_card(session, "Luffy", game="one_piece", set_id="op1", set_name="Romance Dawn")
-    body = client.get("/").text
-    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
-    assert cast.count("hero-cast-item") == 2
-    assert "<span>Scarlet &amp; Violet</span>" in cast
-    assert "<span>Romance Dawn</span>" in cast
 
 
 def test_dept_hero_uses_contain_not_cover(client, session):
