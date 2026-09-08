@@ -140,12 +140,79 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     return f"<div class='dept-hero-mark'>{logo_mark(48)}</div>"
 
 
+def _hero_cast(session: Session, stocked: list[tuple[departments.Department, int]]) -> str:
+    """A row of real characters from what's actually in stock, framing the
+    wordmark -- the same "let the photography carry the interest" idea the
+    department tiles already use, just facing the front door instead of a
+    category page.
+
+    Only ever draws from the two sources `_dept_hero` already treats as
+    fair game: publisher reference art for a department's mascot, or an
+    actively-listed item's own photo/art. A withdrawn Sonny Angel with no
+    live listing simply doesn't get a slot -- there is no listing to be
+    the "this is public" consent for, so it stays out of the cast until
+    it's relisted, exactly like it stays out of the department tile.
+    """
+    cast: list[str] = []
+    for department, _count in stocked:
+        art = None
+        title = department.name
+        if department.game:
+            mascot = DEPARTMENT_MASCOTS.get(department.game)
+            if mascot:
+                card = session.scalar(
+                    select(CatalogCard)
+                    .where(CatalogCard.name.ilike(mascot), CatalogCard.image_url.isnot(None))
+                    .limit(1)
+                )
+                if card:
+                    art = f"<img src='{escape(card.image_url)}' alt='{escape(mascot)}' loading='lazy'>"
+                    title = mascot
+
+        if art is None:
+            row = session.execute(
+                select(ShopListing, CatalogItem)
+                .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
+                .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+                      departments.listing_filter(department))
+                .order_by(ShopListing.price.desc()).limit(1)
+            ).first()
+            if row:
+                listing, item = row
+                art = _art(item, listing, session, show_tag=False)
+                title = item.name if item and item.name else listing.title
+
+        if art is None and department.includes_bulk:
+            stmt = select(BulkLot).where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
+            if department.game:
+                stmt = stmt.where(BulkLot.game == department.game)
+            lot = session.scalar(stmt.order_by(BulkLot.price.desc()).limit(1))
+            if lot and lot.image_url:
+                art = f"<img src='{escape(lot.image_url)}' alt=''>"
+                title = lot.title
+
+        if art is None or "<img" not in art:
+            continue  # no real photo to show -- skip rather than pad with a placeholder
+
+        cast.append(
+            "<div class='hero-cast-item'>"
+            f"<div class='hero-cast-art'>{art}</div>"
+            f"<b>{escape(title)}</b><span>{escape(department.name)}</span>"
+            "</div>"
+        )
+        if len(cast) == 5:
+            break
+
+    return f"<div class='hero-cast'>{''.join(cast)}</div>" if cast else ""
+
+
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     stocked = departments.in_stock(session)
     hero = (
         "<div class='hero-banner'>"
         "<div class='hero-inner'>"
+        f"{_hero_cast(session, stocked)}"
         f"<h1 class='hero-brand'>{logo_lockup(72)}</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
         f"{social_icons_html(session)}"

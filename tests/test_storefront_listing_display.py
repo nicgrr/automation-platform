@@ -196,6 +196,60 @@ def test_falls_back_to_the_priciest_item_when_no_mascot_card_is_cached(client, s
     assert "images.pokemontcg.io/x/1.png" in hero_section
 
 
+# --- home hero cast strip ----------------------------------------------
+
+def test_hero_cast_absent_with_no_stock(client, session):
+    body = client.get("/").text
+    assert "class='hero-cast'" not in body
+
+
+def test_hero_cast_shows_the_department_mascot(client, session):
+    """Same mascot-first rule as the department tile (Pikachu, not
+    whatever's priciest) -- the hero cast is the same idea, just facing
+    the front door."""
+    from automation_control.models import CatalogCard
+
+    session.merge(CardSet(id="sm10", name="Unbroken Bonds"))
+    session.add(CatalogCard(id="sm10-54", set_id="sm10", number="54", name="Pikachu",
+                            image_url="https://images.pokemontcg.io/sm10/54.png"))
+    session.commit()
+    add_card(session, "SomeRareCard", price="500.00")
+
+    body = client.get("/").text
+    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
+    assert "images.pokemontcg.io/sm10/54.png" in cast
+    assert "alt='Pikachu'" in cast
+    assert "<b>Pikachu</b>" in cast
+    assert "<span>Pokémon</span>" in cast
+
+
+def test_hero_cast_falls_back_to_the_priciest_listing_with_no_mascot_cached(client, session):
+    add_card(session, "Charizard", price="80.00")
+    body = client.get("/").text
+    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
+    assert "images.pokemontcg.io/x/1.png" in cast
+    assert "<b>Charizard</b>" in cast
+
+
+def test_hero_cast_skips_a_department_with_no_photo_at_all(client, session):
+    """A listed item with no reference image and no own photo has nothing
+    to show -- the cast strip should just have one fewer slot, not a
+    placeholder or a broken image."""
+    add_collectible(session, "Hamburger")
+    body = client.get("/").text
+    assert "class='hero-cast'" not in body
+
+
+def test_hero_cast_shows_multiple_departments(client, session):
+    add_card(session, "Charizard", game="pokemon", set_id="sv1", set_name="Scarlet & Violet")
+    add_card(session, "Luffy", game="one_piece", set_id="op1", set_name="Romance Dawn")
+    body = client.get("/").text
+    cast = body.split("class='hero-cast'")[1].split("<h1 class='hero-brand'")[0]
+    assert cast.count("hero-cast-item") == 2
+    assert "<span>Pokémon</span>" in cast
+    assert "<span>One Piece</span>" in cast
+
+
 def test_dept_hero_uses_contain_not_cover(client, session):
     """A full card image (portrait, includes name/HP/attack text) cropped
     with object-fit:cover in a 16:9 box shows an arbitrary horizontal
