@@ -206,6 +206,7 @@ ADMIN_NAV = [
         ("/sealed-products", "Sealed products"),
         ("/collectibles", "Collectibles"),
         ("/export", "Export data"),
+        ("/shop-orders", "Shop orders"),
         ("/shop-pricing", "Shop pricing"),
         ("/collectibles/identify", "Identify from a link"),
     ]),

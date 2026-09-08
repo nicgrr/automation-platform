@@ -143,10 +143,12 @@ def dept_links(session: Session) -> str:
     )
 
 
-def shell(session: Session, title: str, body: str, *, request: Request, query: str = "") -> HTMLResponse:
+def shell(session: Session, title: str, body: str, *, request: Request, query: str = "",
+          description: str | None = None) -> HTMLResponse:
+    kwargs = {"description": description} if description else {}
     return HTMLResponse(page(
         title, body, cart_count=cart_count(request), query=query,
-        nav_links=nav_links(session), dept_links=dept_links(session),
+        nav_links=nav_links(session), dept_links=dept_links(session), **kwargs,
     ))
 
 

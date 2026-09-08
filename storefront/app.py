@@ -212,7 +212,11 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
         "<div class='notice'>Tracked postage Australia-wide. International shipping available at checkout.</div>"
         "</div></div>"
     )
-    return shell(session, f"{listing.title} — NL Vault", body, request=request)
+    description = (
+        f"{listing.title} — {listing.condition or 'ungraded'}, {_money(listing.price)}. "
+        "Shipped tracked from Australia."
+    )
+    return shell(session, f"{listing.title} — NL Vault", body, request=request, description=description)
 
 
 # --- cart -------------------------------------------------------------------
@@ -468,6 +472,11 @@ def create_app() -> FastAPI:
     app.include_router(photo_router)
     from .checkout import router as checkout_router
     app.include_router(checkout_router)
+
+    from .hardening import install_error_pages, install_security_headers, install_seo_routes
+    install_security_headers(app)
+    install_error_pages(app)
+    install_seo_routes(app)
     return app
 
 

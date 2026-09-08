@@ -287,12 +287,21 @@ def header(cart_count: int = 0, query: str = "", dept_links: str = "") -> str:
     )
 
 
+DEFAULT_DESCRIPTION = "Hand-picked trading cards and collectibles, shipped tracked from Australia."
+
+
 def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
-         nav_links: str = "", dept_links: str = "") -> str:
+         nav_links: str = "", dept_links: str = "", description: str = DEFAULT_DESCRIPTION) -> str:
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{title}</title>"
+        f"<meta name='description' content='{description}'>"
+        f"<meta property='og:title' content='{title}'>"
+        f"<meta property='og:description' content='{description}'>"
+        "<meta property='og:type' content='website'>"
+        "<meta property='og:site_name' content='NL Vault'>"
+        "<meta name='twitter:card' content='summary'>"
         f"<meta name='theme-color' content='{BRASS}'>"
         f"{FONTS}{STYLE}</head><body>"
         f"{sidenav(nav_links)}"

@@ -10,12 +10,36 @@ tested, but with no STRIPE_SECRET_KEY configured the checkout button
 explains that payments aren't live yet rather than half-failing. An order
 is still written first in either case, so nothing is lost.
 
-Stock is decremented only once Stripe confirms payment, never at "add to
+Stock is decremented only once payment is confirmed, never at "add to
 cart" -- an abandoned cart must not quietly remove things from sale.
+
+Payment is confirmed two ways, and only Stripe's own word counts as
+confirmation for either:
+
+  * /checkout/complete -- the browser lands here on success, but a
+    redirect landing is not proof of payment: hitting this URL with a
+    known reference is trivial for anyone, and a customer who pays but
+    closes the tab before the redirect never lands here at all. So this
+    page asks Stripe directly whether the session actually paid
+    (fetch_checkout_session) before marking anything -- the redirect is
+    only ever a *hint* to go check.
+  * /webhooks/stripe -- the authoritative path. Stripe calls this
+    server-to-server once the dashboard is told this endpoint's public
+    URL, independent of whether the browser ever comes back. Requests are
+    verified by HMAC signature (verify_stripe_signature) rather than
+    trusted because they arrived on the right path.
+
+Both paths funnel through the same guarded "mark paid" logic, gated on
+the order still being PENDING_PAYMENT, so whichever confirms first wins
+and the other is a no-op rather than a double charge/decrement.
 """
 
+import hashlib
+import hmac
+import json
 import secrets
 import string
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from html import escape
@@ -40,12 +64,75 @@ router = APIRouter()
 STRIPE_API = "https://api.stripe.com/v1/checkout/sessions"
 STRIPE_COUPONS_API = "https://api.stripe.com/v1/coupons"
 REFERENCE_ALPHABET = string.ascii_uppercase + string.digits
+WEBHOOK_TOLERANCE_SECONDS = 300  # Stripe's own default replay-protection window
 
 
 def stripe_secret() -> str | None:
     """Read at call time rather than import time so adding the key to
     .env.local and restarting is all that's needed to go live."""
     return getattr(get_settings(), "stripe_secret_key", None) or None
+
+
+def stripe_webhook_secret() -> str | None:
+    return getattr(get_settings(), "stripe_webhook_secret", None) or None
+
+
+def _is_stripe_session_paid(payload: dict) -> bool:
+    """Stripe's own word for whether a Checkout Session actually paid.
+    payment_status is "paid" for the normal card-payment case; it can sit
+    at "unpaid" briefly for delayed methods (bank transfers), which this
+    correctly refuses to treat as paid rather than guessing."""
+    return (payload or {}).get("payment_status") == "paid"
+
+
+async def fetch_checkout_session(secret: str, session_id: str) -> dict | None:
+    """Ask Stripe directly what a Checkout Session's status actually is.
+    Returns None on any network or API failure rather than raising --
+    a Stripe hiccup here should read as "not confirmed yet", not crash
+    the order-confirmation page a paying customer is looking at."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(f"{STRIPE_API}/{session_id}", auth=(secret, ""))
+    except httpx.HTTPError:
+        return None
+    if response.status_code >= 400:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def verify_stripe_signature(payload: bytes, sig_header: str, secret: str,
+                            tolerance: int = WEBHOOK_TOLERANCE_SECONDS) -> bool:
+    """Stripe's documented webhook signature scheme: HMAC-SHA256 over
+    "{timestamp}.{raw body}", compared to the v1 signature in the
+    Stripe-Signature header. This is what makes a POST to /webhooks/stripe
+    trustworthy -- arriving on the right path proves nothing on its own,
+    since the path is public.
+
+    The timestamp check is replay protection: without it, a captured
+    request could be resent indefinitely and still verify.
+    """
+    if not sig_header or not secret:
+        return False
+    parts: dict[str, str] = {}
+    for piece in sig_header.split(","):
+        if "=" in piece:
+            key, _, value = piece.partition("=")
+            parts[key] = value
+    timestamp, v1 = parts.get("t"), parts.get("v1")
+    if not timestamp or not v1:
+        return False
+    try:
+        age = abs(time.time() - int(timestamp))
+    except ValueError:
+        return False
+    if age > tolerance:
+        return False
+    signed_payload = f"{timestamp}.".encode() + payload
+    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, v1)
 
 
 def order_reference() -> str:
@@ -255,29 +342,55 @@ async def checkout_submit(
     return RedirectResponse(f"/checkout/complete?ref={order.reference}", status_code=303)
 
 
+def _mark_paid(session: Session, order: ShopOrder) -> None:
+    """The one place an order becomes PAID. Guarded on the caller side by
+    a PENDING_PAYMENT check, so calling this from both the redirect page
+    and the webhook is safe -- whichever gets there first wins, and the
+    second call's guard simply doesn't fire rather than double-decrementing
+    stock or double-recording a payment time."""
+    order.status = ShopOrderStatus.PAID
+    order.paid_at = datetime.now(UTC)
+    _decrement_stock(session, order)
+    session.commit()
+
+
 @router.get("/checkout/complete", response_class=HTMLResponse)
-def checkout_complete(
+async def checkout_complete(
     request: Request, ref: str = Query(""), session: Session = Depends(get_session),
 ) -> HTMLResponse:
     order = session.query(ShopOrder).filter_by(reference=ref).one_or_none() if ref else None
     if order is None:
         raise HTTPException(status_code=404, detail="order not found")
 
-    # Stripe redirects here on success. Treat that as payment confirmed and
-    # take the stock down -- only now, never at add-to-cart.
-    if order.status == ShopOrderStatus.PENDING_PAYMENT and stripe_secret() is not None:
-        order.status = ShopOrderStatus.PAID
-        order.paid_at = datetime.now(UTC)
-        _decrement_stock(session, order)
-        session.commit()
+    # The redirect landing here is a hint, never proof -- proof only comes
+    # from asking Stripe. Without this, POSTing straight to this URL with
+    # a guessed or observed reference would mark an unpaid order paid.
+    still_confirming = False
+    secret = stripe_secret()
+    if order.status == ShopOrderStatus.PENDING_PAYMENT and secret and order.stripe_session_id:
+        payload = await fetch_checkout_session(secret, order.stripe_session_id)
+        if payload and _is_stripe_session_paid(payload):
+            _mark_paid(session, order)
+        else:
+            still_confirming = True
 
     paid = order.status == ShopOrderStatus.PAID
-    headline = "Thank you — order confirmed" if paid else "Order received"
-    note = (
-        "<p class='muted'>A confirmation is on its way to your inbox.</p>" if paid else
-        "<div class='notice'>Card payments aren't live yet, so this order is reserved but unpaid — "
-        "we'll be in touch by email to arrange payment.</div>"
-    )
+    if paid:
+        headline = "Thank you — order confirmed"
+        note = "<p class='muted'>We'll be in touch when it's on its way.</p>"
+    elif still_confirming:
+        headline = "Confirming your payment"
+        note = (
+            "<div class='notice'>Stripe hasn't confirmed this payment yet — that's usually just a few "
+            "seconds' delay. Refresh this page shortly; Stripe's own receipt will also land in your inbox "
+            "once it clears.</div>"
+        )
+    else:
+        headline = "Order received"
+        note = (
+            "<div class='notice'>Card payments aren't live yet, so this order is reserved but unpaid — "
+            "we'll be in touch to arrange payment.</div>"
+        )
 
     response = HTMLResponse(page(
         f"{headline} — NL Vault",
@@ -292,6 +405,43 @@ def checkout_complete(
     ))
     response.delete_cookie(CART_COOKIE)
     return response
+
+
+@router.post("/webhooks/stripe")
+async def stripe_webhook(request: Request, session: Session = Depends(get_session)):
+    """The authoritative payment-confirmation path -- Stripe calls this
+    directly once its dashboard is told this endpoint's public URL, so a
+    sale is recorded even if the buyer's browser never makes it back.
+
+    Unconfigured (no STRIPE_WEBHOOK_SECRET yet) is a 503, not a silent
+    no-op: better to see the endpoint plainly isn't live than have it look
+    wired up while doing nothing.
+    """
+    secret = stripe_webhook_secret()
+    if not secret:
+        raise HTTPException(status_code=503, detail="webhook is not configured")
+
+    body = await request.body()
+    if not verify_stripe_signature(body, request.headers.get("stripe-signature", ""), secret):
+        raise HTTPException(status_code=400, detail="invalid signature")
+
+    try:
+        event = json.loads(body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid payload")
+
+    # Any event type not handled below is acknowledged, not rejected --
+    # Stripe retries on anything but 2xx, and there's no reason to make it
+    # retry an event this endpoint was never going to act on.
+    if event.get("type") in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        payload = (event.get("data") or {}).get("object") or {}
+        reference = payload.get("client_reference_id")
+        if reference and _is_stripe_session_paid(payload):
+            order = session.query(ShopOrder).filter_by(reference=reference).one_or_none()
+            if order is not None and order.status == ShopOrderStatus.PENDING_PAYMENT:
+                _mark_paid(session, order)
+
+    return {"received": True}
 
 
 def _decrement_stock(session: Session, order: ShopOrder) -> None:

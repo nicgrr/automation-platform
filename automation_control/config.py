@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # aren't live rather than half-failing at the till.
     stripe_secret_key: str | None = None
     stripe_publishable_key: str | None = None
+    # Verifies POSTs to /webhooks/stripe actually came from Stripe (HMAC
+    # over the raw body, see storefront/checkout.py:verify_stripe_signature).
+    # Created in the Stripe dashboard once the webhook endpoint has a real
+    # public URL to register -- unset, the endpoint just 503s.
+    stripe_webhook_secret: str | None = None
     anthropic_api_key: str | None = None
     captured_cards_dir: str = "captured_cards"
     pokemontcg_api_key: str | None = None
