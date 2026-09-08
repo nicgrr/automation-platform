@@ -244,12 +244,19 @@ footer a:hover{color:var(--ink)}
 /* ---- home hero banner ---- */
 .hero-banner{background:var(--ink);color:var(--bone)}
 .hero-inner{max-width:1180px;margin:0 auto;padding:54px 22px 46px}
-.hero-inner h1{color:var(--bone);margin:0 0 10px}
+.hero-inner h1{margin:0 0 14px;color:var(--bone)}
+.hero-brand{display:inline-flex}
+.hero-brand .nl-lockup{gap:18px}
+.hero-brand .nl-words b{font-size:38px}
+.hero-brand .nl-words i{font-size:13px;letter-spacing:.4em;margin-top:4px}
 .hero-inner p{color:#b7bcc4;margin:0;font-size:15.5px;max-width:52ch}
 .hero-inner .social-icons{margin-top:24px}
 .hero-inner .social-icon{background:transparent;border-color:#333c46;color:var(--bone)}
 .hero-inner .social-icon:hover{border-color:var(--brass-lit);color:var(--brass-lit)}
-@media (max-width:560px){.hero-inner{padding:40px 22px 34px}}
+@media (max-width:560px){
+  .hero-inner{padding:40px 22px 34px}
+  .hero-brand .nl-words b{font-size:28px}
+}
 </style>"""
 
 FONTS = (

@@ -153,10 +153,12 @@ def test_home_has_a_hero_banner(client, session):
     assert "class='hero-inner'" in body
 
 
-def test_hero_banner_contains_the_heading(client, session):
+def test_hero_banner_shows_the_logo_and_company_name(client, session):
     body = client.get("/").text
     hero = body.split("class='hero-inner'")[1].split("</div></div>")[0]
-    assert "The vault is open" in hero
+    assert "class='hero-brand'" in hero
+    assert "class='nl-mark'" in hero  # the logo mark svg
+    assert "<b>NL</b><i>VAULT</i>" in hero  # the company name
 
 
 def test_hero_banner_shows_even_with_no_stock(client, session):
