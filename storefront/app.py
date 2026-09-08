@@ -474,6 +474,8 @@ def create_app() -> FastAPI:
     app.include_router(checkout_router)
 
     from .hardening import install_error_pages, install_security_headers, install_seo_routes
+    from .legal import router as legal_router
+    app.include_router(legal_router)
     install_security_headers(app)
     install_error_pages(app)
     install_seo_routes(app)
