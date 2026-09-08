@@ -314,7 +314,6 @@ footer a:hover{color:var(--ink)}
 }
 .hero-brand{margin:0 0 22px}
 .hero-brand .nl-lockup{display:flex;flex-direction:column;align-items:center;gap:14px}
-.hero-brand .nl-mark{width:52px;height:52px;color:var(--ink)}
 .hero-brand .nl-words{align-items:center;gap:2px}
 .hero-brand .nl-words b{
   font-family:Archivo,sans-serif;font-weight:800;letter-spacing:-.03em;line-height:.86;
@@ -395,7 +394,7 @@ def sidenav(links: str = "") -> str:
         "<div class='scrim' data-nav-close></div>"
         "<aside class='sidenav' aria-label='Shop navigation'>"
         "<div class='sidenav-head'>"
-        f"{logo_lockup(30)}"
+        f"{logo_lockup()}"
         "<button class='sidenav-close' data-nav-close aria-label='Close navigation'>&times;</button>"
         "</div>"
         "<div class='navgroup'><h4>Shop</h4>"

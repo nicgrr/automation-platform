@@ -31,11 +31,14 @@ def logo_mark(size: int = 40, framed: bool = True) -> str:
     )
 
 
-def logo_lockup(size: int = 34) -> str:
-    """Mark plus wordmark, for the site header."""
-    return (
-        "<span class='nl-lockup'>"
-        f"{logo_mark(size, framed=False)}"
-        "<span class='nl-words'><b>NL</b><i>VAULT</i></span>"
-        "</span>"
-    )
+def logo_lockup() -> str:
+    """The wordmark alone, for the site header and hero.
+
+    Used to pair the icon mark next to the same "NL"/"VAULT" text, but
+    that read as the logo appearing twice on the same page (header plus
+    hero) -- the icon mark stays as its own thing (favicon, empty-state
+    illustration) via logo_mark() directly, just not doubled up here.
+    Text sizing comes entirely from CSS context (.topbar vs .hero-brand),
+    so there's no size parameter to thread through any more.
+    """
+    return "<span class='nl-lockup'><span class='nl-words'><b>NL</b><i>VAULT</i></span></span>"

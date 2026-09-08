@@ -142,7 +142,7 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
     hero = (
         "<div class='hero-banner'>"
         "<div class='hero-inner'>"
-        f"<h1 class='hero-brand'>{logo_lockup(72)}</h1>"
+        f"<h1 class='hero-brand'>{logo_lockup()}</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
         f"{social_icons_html(session)}"
         "</div></div>"

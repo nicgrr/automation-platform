@@ -155,11 +155,14 @@ def test_home_has_a_hero_banner(client, session):
     assert "class='hero-inner'" in body
 
 
-def test_hero_banner_shows_the_logo_and_company_name(client, session):
+def test_hero_banner_shows_the_company_name(client, session):
+    """Text only -- the icon mark used to sit next to this too, but that
+    meant the logo showed up twice on the page (header plus hero); see
+    brand.logo_lockup."""
     body = client.get("/").text
     hero = body.split("class='hero-inner'")[1].split("</div></div>")[0]
     assert "class='hero-brand'" in hero
-    assert "class='nl-mark'" in hero  # the logo mark svg
+    assert "class='nl-mark'" not in hero
     assert "<b>NL</b><i>VAULT</i>" in hero  # the company name
 
 
