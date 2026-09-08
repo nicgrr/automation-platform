@@ -100,7 +100,7 @@ def _line_art(line: dict, session: Session | None = None) -> str:
     if line["is_lot"]:
         lot = line["listing"]
         if lot.image_url:
-            return f"<img src='{escape(lot.image_url)}' alt=''>"
+            return f"<img src='{escape(lot.image_url)}' alt='{escape(lot.title)}'>"
         return f"<span class='bulk-count small'>{lot.card_count}</span>"
     return _art(line["item"], line["listing"], session)
 
@@ -213,12 +213,18 @@ def social_icons_html(session: Session) -> str:
 
 
 def shell(session: Session, title: str, body: str, *, request: Request, query: str = "",
-          description: str | None = None, hero: str = "") -> HTMLResponse:
+          description: str | None = None, hero: str = "", robots: str = "", og_image: str = "",
+          crumbs: tuple[tuple[str, str], ...] = (), extra_jsonld: tuple[dict, ...] = ()) -> HTMLResponse:
     kwargs = {"description": description} if description else {}
+    site_url = str(request.base_url).rstrip("/")
+    same_as = tuple(row.url for row in _active_social_links(session))
     return HTMLResponse(page(
         title, body, cart_count=cart_count(request), query=query,
         nav_links=nav_links(session), dept_links=dept_links(session),
-        social_html=social_links_html(session), hero=hero, **kwargs,
+        social_html=social_links_html(session), hero=hero,
+        site_url=site_url, canonical=site_url + request.url.path,
+        same_as=same_as, robots=robots, og_image=og_image,
+        crumbs=crumbs, extra_jsonld=extra_jsonld, **kwargs,
     ))
 
 

@@ -54,7 +54,13 @@ def privacy_page(request: Request, session: Session = Depends(get_session)) -> H
         "[CONTACT_EMAIL].</p>"
         "</div>"
     )
-    return shell(session, "Privacy policy — NL Vault", body, request=request)
+    # noindex until the [PLACEHOLDER] facts above are filled in -- a
+    # search engine indexing a page that still says "[BUSINESS_NAME]"
+    # would be worse than not indexing it yet. Drop this once the real
+    # ABN/GST/contact facts replace the brackets.
+    crumbs = (("Home", "/"), ("Privacy policy", ""))
+    return shell(session, "Privacy policy — NL Vault", body, request=request,
+                crumbs=crumbs, robots="noindex,follow")
 
 
 @router.get("/terms", response_class=HTMLResponse)
@@ -86,4 +92,6 @@ def terms_page(request: Request, session: Session = Depends(get_session)) -> HTM
         "<p class='muted'>[CONTACT_EMAIL]</p>"
         "</div>"
     )
-    return shell(session, "Terms of sale — NL Vault", body, request=request)
+    crumbs = (("Home", "/"), ("Terms of sale", ""))
+    return shell(session, "Terms of sale — NL Vault", body, request=request,
+                crumbs=crumbs, robots="noindex,follow")

@@ -142,7 +142,9 @@ def test_home_icon_row_and_footer_row_both_render_independently(client, session)
                            url="https://instagram.com/nlvault", is_active=True))
     session.commit()
     body = client.get("/").text
-    assert body.count("instagram.com/nlvault") == 2  # once in the hero, once in the footer
+    # Once in the hero, once in the footer, and once more in the
+    # Organization JSON-LD's sameAs -- all three are legitimate.
+    assert body.count("instagram.com/nlvault") == 3
 
 
 # --- hero banner --------------------------------------------------------

@@ -22,3 +22,6 @@ captured_cards/
 *.egg-info/
 *.db-wal
 *.db-shm
+# Favicon / og:image PNGs rasterised on first request from brand.py's own
+# stroke geometry (see storefront/favicon.py) -- reproducible, not source.
+storefront/.generated-assets/

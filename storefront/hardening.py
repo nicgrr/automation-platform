@@ -64,7 +64,7 @@ def _branded_error(status_code: int, headline: str, detail: str) -> HTMLResponse
         "<p style='margin-top:20px'><a class='btn ghost' href='/'>Back to the vault</a></p>"
         "</div>"
     )
-    return HTMLResponse(page(f"{headline} — NL Vault", body), status_code=status_code)
+    return HTMLResponse(page(f"{headline} — NL Vault", body, robots="noindex,follow"), status_code=status_code)
 
 
 def install_error_pages(app: FastAPI) -> None:
@@ -93,15 +93,48 @@ def install_error_pages(app: FastAPI) -> None:
 def install_seo_routes(app: FastAPI) -> None:
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> str:
-        return "User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n"
+        return (
+            "User-agent: *\n"
+            "Allow: /\n"
+            "Disallow: /cart\n"
+            "Disallow: /checkout\n"
+            "Sitemap: /sitemap.xml\n"
+        )
+
+    @app.get("/llms.txt", response_class=PlainTextResponse, include_in_schema=False)
+    def llms_txt(request: Request) -> str:
+        # Same idea as robots.txt, but written for an LLM deciding whether
+        # (and how) to describe this site, rather than a crawler deciding
+        # whether to fetch it -- prose the model can quote, not directives.
+        base = str(request.base_url).rstrip("/")
+        return (
+            "# NL Vault\n\n"
+            "> Trading card singles, sealed product, sorted bulk lots and collectible "
+            "figures, hand-photographed and shipped tracked from Australia.\n\n"
+            "NL Vault is a small, single-operator online shop -- not a marketplace or "
+            "reseller platform. Every listing is real stock the operator personally holds; "
+            "ungraded singles are photographed as the actual card being sold, not a "
+            "publisher's reference image.\n\n"
+            "## Key pages\n\n"
+            f"- [Browse everything]({base}/browse)\n"
+            f"- [Bulk Master (sorted bulk lots by set)]({base}/bulk)\n"
+            f"- [Shipping & returns]({base}/shipping)\n"
+            f"- [Contact]({base}/contact)\n"
+        )
 
     @app.get("/sitemap.xml", include_in_schema=False)
     def sitemap(request: Request, session: Session = Depends(get_session)) -> Response:
         # Absolute URLs built from whatever host actually served the
         # request rather than a hardcoded domain -- there isn't a public
         # one yet, and this stays correct once there is.
+        from . import departments
+
         base = str(request.base_url).rstrip("/")
-        paths = ["/", "/browse", "/bulk", "/shipping"]
+        # /privacy and /terms are deliberately excluded -- they're
+        # noindexed while still carrying [PLACEHOLDER] legal facts, and a
+        # noindexed page has no business being in the sitemap.
+        paths = ["/", "/browse", "/bulk", "/shipping", "/contact"]
+        paths += [f"/shop/{d.slug}" for d, _count in departments.in_stock(session)]
         paths += [
             f"/item/{listing_id}"
             for listing_id in session.scalars(

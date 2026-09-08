@@ -52,7 +52,8 @@ def contact_page(request: Request, session: Session = Depends(get_session)) -> H
         "<p>Question about an order, a listing, or anything else — send it here.</p></div>"
         f"<div class='panel' style='max-width:520px'>{_form()}</div>"
     )
-    return shell(session, "Contact us — NL Vault", body, request=request)
+    crumbs = (("Home", "/"), ("Contact us", ""))
+    return shell(session, "Contact us — NL Vault", body, request=request, crumbs=crumbs)
 
 
 @router.post("/contact", response_class=HTMLResponse)
@@ -85,4 +86,4 @@ def contact_sent(request: Request, session: Session = Depends(get_session)) -> H
         "<p style='margin-top:20px'><a class='btn ghost' href='/'>Back to the vault</a></p>"
         "</div>"
     )
-    return shell(session, "Message sent — NL Vault", body, request=request)
+    return shell(session, "Message sent — NL Vault", body, request=request, robots="noindex,follow")

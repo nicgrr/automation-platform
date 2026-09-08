@@ -213,9 +213,11 @@ def checkout_form(
         "</div></div>"
         "</div>"
     )
+    site_url = str(request.base_url).rstrip("/")
     return HTMLResponse(page(
         "Checkout — NL Vault", body,
         cart_count=sum(line["quantity"] for line in lines), nav_links=nav_links(session),
+        site_url=site_url, canonical=site_url + request.url.path, robots="noindex,follow",
     ))
 
 
@@ -392,6 +394,7 @@ async def checkout_complete(
             "we'll be in touch to arrange payment.</div>"
         )
 
+    site_url = str(request.base_url).rstrip("/")
     response = HTMLResponse(page(
         f"{headline} — NL Vault",
         "<div class='panel' style='max-width:560px;margin:0 auto;text-align:center'>"
@@ -402,6 +405,7 @@ async def checkout_complete(
         "<p style='margin-top:20px'><a class='btn ghost' href='/'>Back to the vault</a></p>"
         "</div>",
         nav_links=nav_links(session),
+        site_url=site_url, canonical=site_url + request.url.path, robots="noindex,follow",
     ))
     response.delete_cookie(CART_COOKIE)
     return response

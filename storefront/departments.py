@@ -125,6 +125,28 @@ def find(session: Session, slug: str) -> Department | None:
     return next((d for d in department_list(session) if d.slug == slug), None)
 
 
+def department_for_item(session: Session, item: CatalogItem | None) -> Department | None:
+    """The department a given catalogue item belongs to -- for breadcrumbs
+    on a page that only has the item, not the department slug, to work
+    from. Built the same way department_list() derives a game department
+    (no stored column to join against), so a card's breadcrumb can never
+    disagree with which grid it actually shows up in."""
+    if item is None:
+        return None
+    if item.item_type in _TCG_ITEM_TYPES:
+        game = session.scalar(select(TcgCard.game).where(TcgCard.catalog_item_id == item.id))
+        if game is None:
+            game = session.scalar(select(SealedProduct.game).where(SealedProduct.catalog_item_id == item.id))
+        if not game:
+            return None
+        return Department(
+            slug=f"game-{game}", name=_game_label(game),
+            blurb=f"{_game_label(game)} singles, sealed product and sorted bulk by set.",
+            item_types=_TCG_ITEM_TYPES, game=game, includes_bulk=True,
+        )
+    return next((d for d in FIXED_DEPARTMENTS if item.item_type in d.item_types), None)
+
+
 def listing_filter(department: Department):
     """A WHERE-clause condition selecting this department's single
     listings, joined against CatalogItem -- a listing whose catalogue row

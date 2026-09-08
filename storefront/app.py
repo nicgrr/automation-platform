@@ -135,7 +135,7 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
             stmt = stmt.where(BulkLot.game == department.game)
         lot = session.scalar(stmt.order_by(BulkLot.price.desc()).limit(1))
         if lot and lot.image_url:
-            return f"<img src='{escape(lot.image_url)}' alt=''>"
+            return f"<img src='{escape(lot.image_url)}' alt='{escape(department.name)}'>"
 
     return f"<div class='dept-hero-mark'>{logo_mark(48)}</div>"
 
@@ -188,7 +188,7 @@ def _hero_cast(session: Session, stocked: list[tuple[departments.Department, int
                 stmt = stmt.where(BulkLot.game == department.game)
             lot = session.scalar(stmt.order_by(BulkLot.price.desc()).limit(1))
             if lot and lot.image_url:
-                art = f"<img src='{escape(lot.image_url)}' alt=''>"
+                art = f"<img src='{escape(lot.image_url)}' alt='{escape(lot.title)}'>"
                 title = lot.title
 
         if art is None or "<img" not in art:
@@ -321,7 +321,8 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
         f"<p>{escape(department.blurb)} {sub}.</p></div>"
         f"{segment_bar}{bulk_note}{content}"
     )
-    return shell(session, f"{department.name} — NL Vault", body, request=request, query=query)
+    crumbs = (("Home", "/"), (department.name, ""))
+    return shell(session, f"{department.name} — NL Vault", body, request=request, query=query, crumbs=crumbs)
 
 
 @router.get("/browse", response_class=HTMLResponse)
@@ -345,7 +346,8 @@ def browse(request: Request, q: str = Query(""), dept: str = Query(""),
         )
         sub = "No matches"
     body = f"<div class='page-head'><h1>{heading}</h1><p>{sub}</p></div>{content}"
-    return shell(session, "Browse — NL Vault", body, request=request, query=query)
+    crumbs = (("Home", "/"), ("Browse", ""))
+    return shell(session, "Browse — NL Vault", body, request=request, query=query, crumbs=crumbs)
 
 
 @router.get("/item/{listing_id}", response_class=HTMLResponse)
@@ -387,7 +389,40 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
         f"{listing.title} — {listing.condition or 'ungraded'}, {_money(listing.price)}. "
         "Shipped tracked from Australia."
     )
-    return shell(session, f"{listing.title} — NL Vault", body, request=request, description=description)
+
+    department = departments.department_for_item(session, item)
+    crumbs = [("Home", "/")]
+    if department:
+        crumbs.append((department.name, f"/shop/{department.slug}"))
+    crumbs.append((listing.title, ""))
+
+    site_url = str(request.base_url).rstrip("/")
+    from .photos import has_own_photo
+    if has_own_photo(session, listing.id):
+        image_url = f"{site_url}/photo/{listing.id}"
+    else:
+        image_url = listing.image_url or (item.image_url if item else None)
+    product_ld = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": listing.title,
+        "description": listing.description or description,
+        "sku": listing.id,
+        "offers": {
+            "@type": "Offer",
+            "url": site_url + request.url.path,
+            "priceCurrency": listing.currency,
+            "price": str(listing.price),
+            "availability": (
+                "https://schema.org/InStock" if listing.quantity > 0 else "https://schema.org/OutOfStock"
+            ),
+        },
+    }
+    if image_url:
+        product_ld["image"] = [image_url]
+
+    return shell(session, f"{listing.title} — NL Vault", body, request=request, description=description,
+                crumbs=tuple(crumbs), og_image=image_url or "", extra_jsonld=(product_ld,))
 
 
 # --- cart -------------------------------------------------------------------
@@ -426,7 +461,7 @@ def cart_view(request: Request, zone: str = Query("au"), session: Session = Depe
             "<p style='margin-top:18px'><a class='btn ghost' href='/browse'>Browse the vault</a></p>"
             "</div>"
         )
-        return shell(session, "Cart — NL Vault", body, request=request)
+        return shell(session, "Cart — NL Vault", body, request=request, robots="noindex,follow")
 
     selected_zone = ShippingZone.INTERNATIONAL if zone == "international" else ShippingZone.AU
     raw_items_total = sum((line["line_total"] for line in lines), Decimal("0"))
@@ -493,7 +528,7 @@ def cart_view(request: Request, zone: str = Query("au"), session: Session = Depe
         "</div>"
         + discount_block
     )
-    return shell(session, "Cart — NL Vault", body, request=request)
+    return shell(session, "Cart — NL Vault", body, request=request, robots="noindex,follow")
 
 
 # --- Bulk Master ------------------------------------------------------------
@@ -557,7 +592,7 @@ def bulk_master(
         cards = "".join(
             f"<a class='card' href='/bulk/{escape(lot.id)}'>"
             "<div class='card-art bulk-art'>"
-            + (f"<img src='{escape(lot.image_url)}' alt='' loading='lazy'>" if lot.image_url
+            + (f"<img src='{escape(lot.image_url)}' alt='{escape(lot.title)}' loading='lazy'>" if lot.image_url
                else f"<span class='bulk-count'>{lot.card_count}</span>")
             + "</div>"
             "<div class='card-body'>"
@@ -584,7 +619,8 @@ def bulk_master(
         f"<p>Sorted, sleeved lots by set — the sensible way to buy commons. {count_note}.</p></div>"
         f"{filters}{content}"
     )
-    return shell(session, "Bulk Master — NL Vault", body, request=request, query=query)
+    crumbs = (("Home", "/"), ("Bulk Master", ""))
+    return shell(session, "Bulk Master — NL Vault", body, request=request, query=query, crumbs=crumbs)
 
 
 @router.get("/bulk/{lot_id}", response_class=HTMLResponse)
@@ -599,7 +635,7 @@ def bulk_detail(lot_id: str, request: Request, session: Session = Depends(get_se
         saving = f"<span class='tag'>{pct:.0f}% under market</span>"
 
     art = (
-        f"<img src='{escape(lot.image_url)}' alt='' style='max-height:220px;margin:0 auto'>"
+        f"<img src='{escape(lot.image_url)}' alt='{escape(lot.title)}' style='max-height:220px;margin:0 auto'>"
         if lot.image_url else f"<div class='bulk-count big'>{lot.card_count}</div>"
     )
     body = (
@@ -621,7 +657,29 @@ def bulk_detail(lot_id: str, request: Request, session: Session = Depends(get_se
         "<div class='notice'>Bulk lots ship in a single tracked parcel — combine several and you still pay postage once.</div>"
         "</div></div>"
     )
-    return shell(session, f"{lot.title} — NL Vault", body, request=request)
+    site_url = str(request.base_url).rstrip("/")
+    bulk_href = f"/bulk?game={escape(lot.game)}" if lot.game else "/bulk"
+    crumbs = (("Home", "/"), ("Bulk Master", bulk_href), (lot.title, ""))
+    lot_ld = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": lot.title,
+        "description": lot.description or f"{lot.card_count} sorted cards from {lot.title}.",
+        "sku": lot.id,
+        "offers": {
+            "@type": "Offer",
+            "url": site_url + request.url.path,
+            "priceCurrency": lot.currency,
+            "price": str(lot.price),
+            "availability": (
+                "https://schema.org/InStock" if lot.quantity > 0 else "https://schema.org/OutOfStock"
+            ),
+        },
+    }
+    if lot.image_url:
+        lot_ld["image"] = [lot.image_url]
+    return shell(session, f"{lot.title} — NL Vault", body, request=request, crumbs=crumbs,
+                og_image=lot.image_url or "", extra_jsonld=(lot_ld,))
 
 
 @router.get("/shipping", response_class=HTMLResponse)
@@ -643,13 +701,16 @@ def shipping_info(request: Request, session: Session = Depends(get_session)) -> 
         "<p class='muted'>If something arrives damaged or isn't as described, contact us within 7 days "
         "of delivery and we'll make it right.</p></div>"
     )
-    return shell(session, "Shipping — NL Vault", body, request=request)
+    crumbs = (("Home", "/"), ("Shipping & returns", ""))
+    return shell(session, "Shipping — NL Vault", body, request=request, crumbs=crumbs)
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="NL Vault", docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(router)
     app.include_router(photo_router)
+    from .favicon import router as favicon_router
+    app.include_router(favicon_router)
     from .checkout import router as checkout_router
     app.include_router(checkout_router)
 

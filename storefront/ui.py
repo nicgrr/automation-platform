@@ -15,6 +15,9 @@ accents) is kept, but demoted to meaning rather than decoration: a price,
 a savings figure, "this is your own photo" -- never a background.
 """
 
+import json
+from html import escape
+
 from .brand import BRASS, logo_lockup
 
 STYLE = """<style>
@@ -242,6 +245,15 @@ body.nav-open .sidenav{transform:none}
   margin:34px 0 16px;font-family:Archivo,sans-serif;font-weight:800;font-size:18px;
   letter-spacing:-.01em;color:var(--ink);
 }
+.breadcrumbs{
+  display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:0 0 18px;
+  font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+}
+.breadcrumbs a{color:var(--muted)}
+.breadcrumbs a:hover{color:var(--ink)}
+.breadcrumbs span[aria-current]{color:var(--ink);font-weight:600}
+.breadcrumbs .sep{opacity:.5}
 @media (prefers-reduced-motion:reduce){.dept-card{transition:none}}
 .navgroup{padding:14px 0 4px}
 .navgroup h4{
@@ -455,25 +467,85 @@ def header(cart_count: int = 0, query: str = "", dept_links: str = "") -> str:
 DEFAULT_DESCRIPTION = "Hand-picked trading cards and collectibles, shipped tracked from Australia."
 
 
+def _breadcrumb_nav(crumbs: tuple[tuple[str, str], ...]) -> str:
+    """The visible trail. The last crumb is never a link, regardless of
+    what href it was given -- it's the page you're already on."""
+    if not crumbs:
+        return ""
+    parts = []
+    last = len(crumbs) - 1
+    for i, (label, href) in enumerate(crumbs):
+        if i == last or not href:
+            parts.append(f"<span aria-current='page'>{escape(label)}</span>")
+        else:
+            parts.append(f"<a href='{escape(href)}'>{escape(label)}</a>")
+    return "<nav class='breadcrumbs' aria-label='Breadcrumb'>" + "<span class='sep'>/</span>".join(parts) + "</nav>"
+
+
+def _breadcrumb_jsonld(crumbs: tuple[tuple[str, str], ...], site_url: str) -> dict | None:
+    if not crumbs or not site_url:
+        return None
+    items = []
+    for i, (label, href) in enumerate(crumbs, start=1):
+        entry = {"@type": "ListItem", "position": i, "name": label}
+        if href:
+            entry["item"] = site_url + href
+        items.append(entry)
+    return {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": items}
+
+
 def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
          nav_links: str = "", dept_links: str = "", description: str = DEFAULT_DESCRIPTION,
-         social_html: str = "", hero: str = "") -> str:
+         social_html: str = "", hero: str = "", canonical: str = "", site_url: str = "",
+         og_image: str = "", robots: str = "", same_as: tuple[str, ...] = (),
+         crumbs: tuple[tuple[str, str], ...] = (), extra_jsonld: tuple[dict, ...] = ()) -> str:
+    title_safe = escape(title)
+    description_safe = escape(description)
+    image = og_image or (f"{site_url}/social-share.png" if site_url else "")
+
+    organization: dict = {
+        "@context": "https://schema.org",
+        "@type": "OnlineStore",
+        "name": "NL Vault",
+        "description": DEFAULT_DESCRIPTION,
+    }
+    if site_url:
+        organization["url"] = site_url
+    if same_as:
+        organization["sameAs"] = list(same_as)
+    json_ld_blocks: list[dict] = [organization]
+    crumb_ld = _breadcrumb_jsonld(crumbs, site_url)
+    if crumb_ld:
+        json_ld_blocks.append(crumb_ld)
+    json_ld_blocks.extend(extra_jsonld)
+    structured_data = "".join(
+        f"<script type='application/ld+json'>{json.dumps(block)}</script>" for block in json_ld_blocks
+    )
+
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{title}</title>"
-        f"<meta name='description' content='{description}'>"
-        f"<meta property='og:title' content='{title}'>"
-        f"<meta property='og:description' content='{description}'>"
+        f"<title>{title_safe}</title>"
+        f"<meta name='description' content='{description_safe}'>"
+        + (f"<meta name='robots' content='{escape(robots)}'>" if robots else "")
+        + (f"<link rel='canonical' href='{escape(canonical)}'>" if canonical else "")
+        + f"<meta property='og:title' content='{title_safe}'>"
+        f"<meta property='og:description' content='{description_safe}'>"
         "<meta property='og:type' content='website'>"
         "<meta property='og:site_name' content='NL Vault'>"
-        "<meta name='twitter:card' content='summary'>"
-        f"<meta name='theme-color' content='{BRASS}'>"
-        f"{FONTS}{STYLE}</head><body>"
+        + (f"<meta property='og:url' content='{escape(canonical)}'>" if canonical else "")
+        + (f"<meta property='og:image' content='{escape(image)}'>" if image else "")
+        + f"<meta name='twitter:card' content='{'summary_large_image' if image else 'summary'}'>"
+        + (f"<meta name='twitter:image' content='{escape(image)}'>" if image else "")
+        + f"<meta name='theme-color' content='{BRASS}'>"
+        "<link rel='icon' type='image/svg+xml' href='/favicon.svg'>"
+        "<link rel='icon' type='image/png' href='/favicon.ico'>"
+        "<link rel='apple-touch-icon' href='/apple-touch-icon.png'>"
+        f"{FONTS}{STYLE}{structured_data}</head><body>"
         f"{sidenav(nav_links)}"
         f"{header(cart_count, query, dept_links)}"
         f"{hero}"
-        f"<main>{body}</main>"
+        f"<main>{_breadcrumb_nav(crumbs)}{body}</main>"
         "<footer><div class='inner'>"
         "<span>NL Vault — trading cards &amp; collectibles, shipped from Australia.</span>"
         f"{social_html}"
