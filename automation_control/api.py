@@ -41,6 +41,7 @@ from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, Jo
 from .sealed_economics import router as sealed_economics_router
 from .search import router as search_router
 from .shop_admin import router as shop_admin_router
+from .shop_listings_admin import router as shop_listings_router
 from .shop_orders import router as shop_orders_router
 from .ui import brand_header, page
 from .whatnot import router as whatnot_router
@@ -82,6 +83,7 @@ app.include_router(quick_price_router)
 app.include_router(market_search_router)
 app.include_router(deal_check_router)
 app.include_router(shop_admin_router)
+app.include_router(shop_listings_router)
 app.include_router(shop_orders_router)
 
 
