@@ -143,21 +143,23 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     stocked = departments.in_stock(session)
-    intro = (
-        "<div class='page-head'><h1>The vault is open</h1>"
+    hero = (
+        "<div class='hero-banner'><div class='hero-inner'>"
+        "<h1>The vault is open</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
         f"{social_icons_html(session)}"
-        "</div>"
+        "</div></div>"
     )
 
     if not stocked:
-        return shell(session, "NL Vault", intro + (
+        body = (
             "<div class='panel empty'>"
             f"<div class='mark'>{logo_mark(64)}</div>"
             "<h2>Nothing listed yet</h2>"
             "<p class='muted'>Stock is added from the vault as it's catalogued. Check back shortly.</p>"
             "</div>"
-        ), request=request)
+        )
+        return shell(session, "NL Vault", body, request=request, hero=hero)
 
     cards = []
     for department, _count in stocked:
@@ -177,12 +179,11 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
     ) if rows else ""
 
     body = (
-        intro
-        + f"<div class='dept-grid'>{''.join(cards)}</div>"
+        f"<div class='dept-grid'>{''.join(cards)}</div>"
         + latest
         + "<p style='margin-top:26px'><a class='btn ghost' href='/browse'>Browse everything</a></p>"
     )
-    return shell(session, "NL Vault", body, request=request)
+    return shell(session, "NL Vault", body, request=request, hero=hero)
 
 
 @router.get("/shop/{slug}", response_class=HTMLResponse)

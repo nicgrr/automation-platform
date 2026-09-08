@@ -213,12 +213,12 @@ def social_icons_html(session: Session) -> str:
 
 
 def shell(session: Session, title: str, body: str, *, request: Request, query: str = "",
-          description: str | None = None) -> HTMLResponse:
+          description: str | None = None, hero: str = "") -> HTMLResponse:
     kwargs = {"description": description} if description else {}
     return HTMLResponse(page(
         title, body, cart_count=cart_count(request), query=query,
         nav_links=nav_links(session), dept_links=dept_links(session),
-        social_html=social_links_html(session), **kwargs,
+        social_html=social_links_html(session), hero=hero, **kwargs,
     ))
 
 

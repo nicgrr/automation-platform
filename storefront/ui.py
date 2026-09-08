@@ -240,6 +240,16 @@ footer a:hover{color:var(--ink)}
 .social-icon:hover{border-color:var(--brass);color:var(--brass);transform:translateY(-2px)}
 .social-icon svg{width:20px;height:20px}
 @media (prefers-reduced-motion:reduce){.social-icon{transition:none}}
+
+/* ---- home hero banner ---- */
+.hero-banner{background:var(--ink);color:var(--bone)}
+.hero-inner{max-width:1180px;margin:0 auto;padding:54px 22px 46px}
+.hero-inner h1{color:var(--bone);margin:0 0 10px}
+.hero-inner p{color:#b7bcc4;margin:0;font-size:15.5px;max-width:52ch}
+.hero-inner .social-icons{margin-top:24px}
+.hero-inner .social-icon{background:transparent;border-color:#333c46;color:var(--bone)}
+.hero-inner .social-icon:hover{border-color:var(--brass-lit);color:var(--brass-lit)}
+@media (max-width:560px){.hero-inner{padding:40px 22px 34px}}
 </style>"""
 
 FONTS = (
@@ -320,7 +330,7 @@ DEFAULT_DESCRIPTION = "Hand-picked trading cards and collectibles, shipped track
 
 def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
          nav_links: str = "", dept_links: str = "", description: str = DEFAULT_DESCRIPTION,
-         social_html: str = "") -> str:
+         social_html: str = "", hero: str = "") -> str:
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -335,6 +345,7 @@ def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
         f"{FONTS}{STYLE}</head><body>"
         f"{sidenav(nav_links)}"
         f"{header(cart_count, query, dept_links)}"
+        f"{hero}"
         f"<main>{body}</main>"
         "<footer><div class='inner'>"
         "<span>NL Vault — trading cards &amp; collectibles, shipped from Australia.</span>"
