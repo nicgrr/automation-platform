@@ -71,17 +71,43 @@ def _fetch_set_cards(client: httpx.Client, set_id: str) -> list[dict]:
     return response.json()
 
 
+# A base card_name often already ends in its own number or full code in
+# parentheses -- "Roronoa Zoro (001)", "Roronoa Zoro (EB04-007)", "Yamato
+# (OP16-098)" -- that's not a print-variant marker, so it needs stripping
+# before checking for one. A real variant marker ("SP", "Alternate Art",
+# "Parallel", "Full Art", "Jolly Roger Foil") is always letters and
+# spaces with no digit; the card's own number/code always contains at
+# least one digit, so "contains a digit" is what distinguishes them --
+# checking for pure digits alone missed the alphanumeric-code case.
+_TRAILING_CODE_PAREN_RE = re.compile(r"\([A-Za-z0-9-]*\d[A-Za-z0-9-]*\)$")
+
+
+def _is_plain_print(name: str) -> bool:
+    return "(" not in _TRAILING_CODE_PAREN_RE.sub("", name).strip()
+
+
 def _dedupe_parallels(cards: list[dict]) -> dict[str, dict]:
-    """One entry per physical card design -- prefer the non-parallel
-    printing when both exist for the same card_set_id."""
+    """One entry per physical card design -- prefer the plain printing
+    when more than one card shares the same card_set_id.
+
+    Originally looked for the literal marker "(parallel)" -- but real
+    optcgapi data never uses that word; alternate/chase prints are named
+    "(Alternate Art)", and this project also saw a stale "(SP)" variant
+    for a handful of cards. That made this check dead code: it always
+    just kept whichever entry the API listed first for a given code,
+    which is arbitrary and occasionally landed on a SAMPLE-watermarked
+    preview image (no real scan exists yet for some very new chase
+    prints) instead of the plain card's real photo. See _is_plain_print
+    for what "plain" actually means here.
+    """
     by_code: dict[str, dict] = {}
     for card in cards:
         code = (card.get("card_set_id") or "").strip()
         if not code:
             continue
-        is_parallel = "(parallel)" in (card.get("card_name") or "").lower()
+        name = card.get("card_name") or ""
         existing = by_code.get(code)
-        if existing is None or (is_parallel is False and "(parallel)" in (existing.get("card_name") or "").lower()):
+        if existing is None or (_is_plain_print(name) and not _is_plain_print(existing.get("card_name") or "")):
             by_code[code] = card
     return by_code
 
@@ -114,7 +140,17 @@ def main(argv: list[str] | None = None) -> int:
         with SessionLocal() as session:
             for i, set_row in enumerate(sets):
                 set_id, set_name = set_row["set_id"], set_row["set_name"]
-                cards = _fetch_set_cards(client, set_id)
+                # A fresh connection per set, not the one shared for the
+                # whole sweep above: reusing one long-lived connection
+                # across ~20 sequential requests was observed to come back
+                # with a stale response for a handful of sets (an old
+                # duplicate printing instead of the current one) even
+                # though a lone request for that same set, moments later,
+                # always returned the current data -- looks like a
+                # connection-pinned cache on optcgapi's side, not
+                # anything this app controls.
+                with httpx.Client(timeout=30.0) as set_client:
+                    cards = _fetch_set_cards(set_client, set_id)
                 by_code = _dedupe_parallels(cards)
 
                 created = updated = skipped = priced = 0
@@ -136,25 +172,40 @@ def main(argv: list[str] | None = None) -> int:
                         continue
 
                     catalog_item = session.get(CatalogItem, item_id)
+                    tcg_card = session.get(TcgCard, item_id)
+                    # _dedupe_parallels only sees one set's own card list --
+                    # it can't catch a card_set_id that's ALSO reprinted as
+                    # a bonus secret rare inside a different, later set (a
+                    # real thing optcgapi's data does: e.g. PRB02-006
+                    # stands alone in PRB-02 but reappears as "(SP)" inside
+                    # OP14-EB04's own list). Never let that later set's own
+                    # -- non-plain -- listing overwrite an already-plain
+                    # identity already on file; a price observation is
+                    # still worth recording either way, below.
+                    already_plain = tcg_card is not None and _is_plain_print(tcg_card.character or "")
+                    overwrite = _is_plain_print(card["card_name"]) or not already_plain
+
                     if catalog_item is None:
                         catalog_item = CatalogItem(id=item_id, item_type=CatalogItemType.TCG_CARD, name=card["card_name"])
                         session.add(catalog_item)
+                        catalog_item.image_url = card.get("card_image")
                         created += 1
                     else:
-                        catalog_item.name = card["card_name"]
+                        if overwrite:
+                            catalog_item.name = card["card_name"]
+                            catalog_item.image_url = card.get("card_image") or catalog_item.image_url
                         updated += 1
-                    catalog_item.image_url = card.get("card_image") or catalog_item.image_url
 
-                    tcg_card = session.get(TcgCard, item_id)
                     if tcg_card is None:
                         tcg_card = TcgCard(catalog_item_id=item_id)
                         session.add(tcg_card)
                     tcg_card.game = GAME
-                    tcg_card.set_id = set_id
-                    tcg_card.set_code = set_code
+                    if overwrite:
+                        tcg_card.set_id = set_id
+                        tcg_card.set_code = set_code
+                        tcg_card.character = card["card_name"]
+                        tcg_card.rarity = card.get("rarity")
                     tcg_card.number = number
-                    tcg_card.character = card["card_name"]
-                    tcg_card.rarity = card.get("rarity")
                     tcg_card.language = "English"
 
                     if market_price and not args.no_prices:
