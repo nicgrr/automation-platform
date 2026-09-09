@@ -54,6 +54,32 @@ def _best_price(session: Session, catalog_item_id: str) -> tuple[Decimal, str] |
             return Decimal(str(row.price)), row.source
     return None
 
+
+def _best_prices(session: Session, catalog_item_ids: list[str]) -> dict[str, Decimal]:
+    """Batched form of _best_price, for rendering a whole page of rows
+    without one CardPrice query per row."""
+    if not catalog_item_ids:
+        return {}
+    rows = session.execute(
+        select(CardPrice.card_id, CardPrice.source, CardPrice.price)
+        .where(CardPrice.card_id.in_(catalog_item_ids), CardPrice.price > 0)
+        .order_by(CardPrice.fetched_at.desc())
+    ).all()
+    by_item: dict[str, list[tuple[str, Decimal]]] = {}
+    for card_id, source, price in rows:
+        by_item.setdefault(card_id, []).append((source, Decimal(str(price))))
+
+    best: dict[str, Decimal] = {}
+    for card_id, observations in by_item.items():
+        for source in PREFERRED_SOURCES:
+            match = next((price for src, price in observations if src == source), None)
+            if match is not None:
+                best[card_id] = match
+                break
+        else:
+            best[card_id] = observations[0][1]
+    return best
+
 GAME_LABELS = {
     "pokemon": "Pokémon",
     "one_piece": "One Piece",
@@ -119,7 +145,7 @@ def _image_url(catalog_item: CatalogItem, tcg_card: TcgCard | None, reference_im
 
 
 def _row(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | None, set_name: str | None,
-         image_url: str | None) -> str:
+         image_url: str | None, price: Decimal | None) -> str:
     game_label = GAME_LABELS.get(tcg_card.game, tcg_card.game) if tcg_card else "—"
     set_bits = " · ".join(part for part in [set_name, tcg_card.number if tcg_card else None] if part)
     sub_parts = [p for p in [game_label, set_bits or None, item.condition] if p]
@@ -135,6 +161,7 @@ def _row(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | Non
         f"<div class='muted'>{escape(' · '.join(sub_parts))}</div></td>"
         f"<td>{item.quantity}</td>"
         f"<td>{_money(item.allocated_cost_basis)}</td>"
+        f"<td>{_money(price)}</td>"
         f"<td class='pc-actions'>"
         f"<form method='post' action='/personal-collection/{escape(item.id)}/list-for-sale'>"
         "<button class='btn small'>List for sale</button></form></td>"
@@ -142,13 +169,21 @@ def _row(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | Non
     )
 
 
+SORTS = {
+    "name": "Name",
+    "price_desc": "Price: high to low",
+    "price_asc": "Price: low to high",
+}
+
+
 @router.get("/personal-collection", response_class=HTMLResponse)
 def personal_collection_page(
-    game: str = Query("all"), q: str = Query(""),
+    game: str = Query("all"), q: str = Query(""), sort: str = Query("name"),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ) -> HTMLResponse:
     query = q.strip()
     game = game if game in {*GAME_LABELS, "all"} else "all"
+    sort = sort if sort in SORTS else "name"
 
     count = len(session.execute(_query(session, game, query)).all())
     rows_data = session.execute(
@@ -157,18 +192,33 @@ def personal_collection_page(
     tcg_cards = [tc for _, _, tc in rows_data if tc]
     set_names = _set_names(session, tcg_cards)
     reference_images = _reference_images(session, tcg_cards)
+    prices = _best_prices(session, [catalog_item.id for _, catalog_item, _ in rows_data])
+
+    if sort in ("price_desc", "price_asc"):
+        # Unpriced items always sink to the bottom, in either direction --
+        # "no price on file" isn't the same as "worth zero", and burying
+        # priced items under a wall of unknowns would defeat the point.
+        priced_rows = [r for r in rows_data if prices.get(r[1].id) is not None]
+        unpriced_rows = [r for r in rows_data if prices.get(r[1].id) is None]
+        priced_rows.sort(key=lambda r: prices[r[1].id], reverse=(sort == "price_desc"))
+        rows_data = priced_rows + unpriced_rows
 
     rows = "".join(
         _row(item, catalog_item, tcg_card, set_names.get(tcg_card.set_id) if tcg_card else None,
-             _image_url(catalog_item, tcg_card, reference_images))
+             _image_url(catalog_item, tcg_card, reference_images), prices.get(catalog_item.id))
         for item, catalog_item, tcg_card in rows_data
-    ) or "<tr><td colspan='5' class='muted'>Nothing here.</td></tr>"
+    ) or "<tr><td colspan='6' class='muted'>Nothing here.</td></tr>"
 
     query_suffix = f"&q={escape(query)}" if query else ""
+    sort_suffix = f"&sort={sort}" if sort != "name" else ""
     game_tabs = "".join(
         f"<a class='filter-tab{' active' if key == game else ''}' "
-        f"href='/personal-collection?game={key}{query_suffix}'>{escape(label)}</a>"
+        f"href='/personal-collection?game={key}{query_suffix}{sort_suffix}'>{escape(label)}</a>"
         for key, label in [("all", "All"), *GAME_LABELS.items()]
+    )
+    sort_options = "".join(
+        f"<option value='{key}'{' selected' if key == sort else ''}>{escape(label)}</option>"
+        for key, label in SORTS.items()
     )
     search_form = (
         "<form method='get' action='/personal-collection' class='listing-search'>"
@@ -176,6 +226,7 @@ def personal_collection_page(
         f"<input name='q' value='{escape(query)}' placeholder='Search by name…'>"
         "<button class='btn small'>Search</button>"
         + (f"<a class='btn small ghost' href='/personal-collection?game={escape(game)}'>Clear</a>" if query else "")
+        + f"<label class='field'>Sort<select name='sort' onchange='this.form.submit()'>{sort_options}</select></label>"
         + "</form>"
     )
 
@@ -191,7 +242,7 @@ def personal_collection_page(
         + f"<div class='filter-tabs'>{game_tabs}</div>"
         + f"<div class='listing-toolbar'>{search_form}</div>"
         + "<div class='panel'><div class='table-wrap'><table><thead><tr>"
-        + "<th></th><th>Item</th><th>Qty</th><th>Cost paid</th><th></th>"
+        + "<th></th><th>Item</th><th>Qty</th><th>Cost paid</th><th>Price</th><th></th>"
         + f"</tr></thead><tbody>{rows}</tbody></table></div></div>"
         + _STYLE
     )
@@ -247,6 +298,8 @@ _STYLE = """<style>
 .listing-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:14px}
 .listing-search{display:flex;gap:8px}
 .listing-search input{padding:7px 10px;border-radius:6px;border:1px solid var(--panel-border);font-size:13px;width:220px}
+.listing-search .field{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim)}
+.listing-search .field select{padding:6px 8px;border-radius:6px;border:1px solid var(--panel-border);font-size:13px}
 .pc-actions{display:flex;gap:6px}
 .btn.small{padding:6px 12px;font-size:13px}
 .pc-thumb{width:48px;height:64px;object-fit:contain;border-radius:4px;background:var(--surface-sunken)}
