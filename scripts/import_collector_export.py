@@ -75,20 +75,51 @@ GAME_BY_CATEGORY = {
 }
 
 # Known near-miss aliases between this export's Set names and this DB's
-# CardSet.name, found by inspecting the 69 unmatched pairs by hand.
+# CardSet.name -- found by inspecting the unmatched pairs by hand and
+# checking each candidate against pokemontcg.io's real set list rather
+# than guessing (a wrong alias silently mismatches a card to the wrong
+# set forever, which is worse than leaving it unmatched).
 SET_NAME_ALIASES = {
     "pokemon 151": "151",
     "sv: 151": "151",
-    "base set (unlimited)": "base set",
-    "base set (shadowless)": "base set",
+    "base set (unlimited)": "base",
+    "base set (shadowless)": "base",
     "xy base set": "xy",
     "sword & shield base set": "sword & shield",
+    "sword & shield promo": "swsh black star promos",
     "scarlet & violet base set": "scarlet & violet",
+    "scarlet & violet promo": "scarlet & violet black star promos",
     "sun & moon base set": "sun & moon",
     "diamond & pearl base set": "diamond & pearl",
     "black & white base set": "black & white",
-    "shining fates: shiny vault": "shining fates",
-    "hidden fates: shiny vault": "hidden fates",
+    "black and white": "black & white",
+    "shining fates: shiny vault": "shining fates shiny vault",
+    "hidden fates: shiny vault": "hidden fates shiny vault",
+    "crown zenith: galarian gallery": "crown zenith galarian gallery",
+    "expedition": "expedition base set",
+    "pokemon go": "pokémon go",
+    "undaunted": "hs—undaunted",
+    "xy promos": "xy black star promos",
+    # NOT aliased: "wotc promo" -> "wizards black star promos" -- checked,
+    # and this export's own promo numbering ("08/82") doesn't correspond
+    # to pokemontcg.io's card numbers for the same set (it resolved to a
+    # completely different card, "Mew", for a card named "Dark Gyarados").
+    # Promo sets generally can't be trusted to number-match this way;
+    # the other promo aliases here were individually verified by name.
+    # EX-era sets are catalogued under the character/theme name alone,
+    # without the "EX " prefix collector apps commonly add.
+    "ex crystal guardians": "crystal guardians",
+    "ex deoxys": "deoxys",
+    "ex dragon frontiers": "dragon frontiers",
+    "ex emerald": "emerald",
+    "ex hidden legends": "hidden legends",
+    "ex holon phantoms": "holon phantoms",
+    "ex legend maker": "legend maker",
+    "ex power keepers": "power keepers",
+    "ex ruby & sapphire": "ruby & sapphire",
+    "ex team magma vs team aqua": "team magma vs team aqua",
+    "ex team rocket returns": "team rocket returns",
+    "ex unseen forces": "unseen forces",
 }
 
 CODE_NUMBER_RE = re.compile(r"^([A-Za-z]+\d+)-(\d+)$")
