@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
-from .models import CardSet, ShopListing, ShopListingStatus, TcgCard
+from .models import CardSet, EbayListingLink, EbayListingLinkStatus, ShopListing, ShopListingStatus, TcgCard
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["shop-listings"])
@@ -73,7 +73,24 @@ def _set_names(session: Session, listings: list[ShopListing]) -> dict[str, str]:
     return {catalog_item_id: name for catalog_item_id, name in rows if name}
 
 
-def _row(listing: ShopListing, set_name: str | None) -> str:
+def _ebay_links(session: Session, listings: list[ShopListing]) -> dict[str, EbayListingLink]:
+    ids = [listing.id for listing in listings]
+    if not ids:
+        return {}
+    rows = session.scalars(select(EbayListingLink).where(EbayListingLink.shop_listing_id.in_(ids))).all()
+    return {link.shop_listing_id: link for link in rows}
+
+
+_EBAY_LINK_PILLS = {
+    EbayListingLinkStatus.PUBLISHING: "warn",
+    EbayListingLinkStatus.ACTIVE: "ok",
+    EbayListingLinkStatus.FAILED: "bad",
+    EbayListingLinkStatus.ENDING: "warn",
+    EbayListingLinkStatus.ENDED: "neutral",
+}
+
+
+def _row(listing: ShopListing, set_name: str | None, ebay_link: EbayListingLink | None) -> str:
     sub = f"{escape(set_name)} · " if set_name else ""
     actions = []
     if listing.status == ShopListingStatus.DRAFT:
@@ -86,6 +103,13 @@ def _row(listing: ShopListing, set_name: str | None) -> str:
             f"<form method='post' action='/shop-listings/{escape(listing.id)}/withdraw'>"
             "<button class='btn small ghost'>Withdraw</button></form>"
         )
+    if ebay_link is None or ebay_link.status in (EbayListingLinkStatus.FAILED, EbayListingLinkStatus.ENDED):
+        actions.append(
+            f"<form method='post' action='/shop-listings/{escape(listing.id)}/publish-to-ebay'>"
+            f"<button class='btn small ghost'>{'Retry eBay' if ebay_link else 'Publish to eBay'}</button></form>"
+        )
+    else:
+        actions.append(pill(f"eBay: {ebay_link.status.value}", _EBAY_LINK_PILLS.get(ebay_link.status, "neutral")))
     return (
         "<tr>"
         f"<td><strong>{escape(listing.title)}</strong><div class='muted'>{sub}{escape(listing.condition or 'Ungraded')}</div></td>"
@@ -109,10 +133,12 @@ def shop_listings_page(
     count = len(session.scalars(_filtered(session, status, query)).all())
     listings = session.scalars(_filtered(session, status, query).order_by(ShopListing.price.desc()).limit(200)).all()
     set_names = _set_names(session, listings)
+    ebay_links = _ebay_links(session, listings)
 
-    rows = "".join(_row(listing, set_names.get(listing.catalog_item_id)) for listing in listings) or (
-        "<tr><td colspan='5' class='muted'>Nothing here.</td></tr>"
-    )
+    rows = "".join(
+        _row(listing, set_names.get(listing.catalog_item_id), ebay_links.get(listing.id))
+        for listing in listings
+    ) or "<tr><td colspan='5' class='muted'>Nothing here.</td></tr>"
 
     filter_bar = "".join(
         f"<a class='filter-tab{' active' if key == status else ''}' "
