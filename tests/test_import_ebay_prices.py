@@ -102,6 +102,18 @@ def test_irrelevant_listings_are_excluded_from_pricing():
     assert script._price_values(listings, "Sonny Angel") == [Decimal("40.00")]
 
 
+def test_gender_symbol_is_ignored_since_real_listings_rarely_include_it():
+    """The bug this guards: Nidoran ♀/♂ (and family) went permanently
+    unpriced because must_contain required the literal unicode symbol,
+    which real eBay sellers essentially never type."""
+    listings = [
+        {"title": "Pokemon Nidoran Female 151 Card NM", "price": "1.20"},
+        {"title": "Pokemon Nidoran F 151 Card NM", "price": "1.50"},
+        {"title": "Totally Unrelated Card", "price": "99.00"},
+    ]
+    assert script._price_values(listings, "Nidoran ♀") == [Decimal("1.20"), Decimal("1.50")]
+
+
 def test_records_low_and_median_as_separate_sources(patched):
     engine = patched
     with Session(engine) as session:

@@ -111,9 +111,19 @@ def _price_values(listings: list[dict], must_contain: str | None = None) -> list
     """Prices of the listings that actually look like the thing we asked
     for. eBay's search is fuzzy and happily returns adjacent products, so
     a title that doesn't even mention the item is dropped rather than
-    averaged into its market price."""
+    averaged into its market price.
+
+    Gender symbols (Nidoran ♀/♂ and its family) are stripped from the
+    needle first -- real eBay listing titles essentially never contain
+    the literal unicode symbol (sellers type "Nidoran" or "Nidoran F/M"
+    instead), so requiring it verbatim made every relevant listing look
+    unrelated and left these cards permanently unpriced. "Nidoran" alone
+    still discriminates against genuinely unrelated products the same
+    way any other card name does.
+    """
     values = []
     needle = (must_contain or "").lower().strip()
+    needle = needle.replace("♀", "").replace("♂", "").strip()
     for listing in listings:
         if needle and needle not in (listing.get("title") or "").lower():
             continue
