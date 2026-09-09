@@ -22,6 +22,7 @@ sudo journalctl -u ezbay -f
 | `sheet-check.timer` | daily, 20:30 | Reports stuck sheets in `watch/` (read-only) |
 | `scanbd-restart.timer` | daily, 14:00 | Restarts `scanbd` pre-emptively |
 | `pokemonpricetracker-backfill.timer` | daily, 12:00 | Prices already-scanned inventory via the paid API — **rate-limit-sensitive, see below** |
+| `ebay-order-import.timer` | every 10 min | Polls eBay orders, reflects a sale onto the matching `ShopListing` — see below |
 | `restic-backup.timer` | daily, 03:00 | Whole-filesystem encrypted backup to OneDrive (pre-existing, not built by this project) |
 
 ```bash
@@ -92,6 +93,29 @@ still real. If `pokemonpricetracker-backfill.timer` needs pausing again:
 ```bash
 sudo systemctl disable --now pokemonpricetracker-backfill.timer
 sudo systemctl enable --now pokemonpricetracker-backfill.timer   # to resume
+```
+
+## eBay two-way stock sync
+
+`scripts/import_ebay_orders.py` (run via `scripts/run-ebay-order-import.sh`)
+polls eBay for orders and reflects a sale onto the matching `ShopListing`;
+a website sale pushes the other direction automatically already (see
+`automation_control/ebay_sync.py`), no timer needed for that half.
+
+Not yet enabled on this host -- `ebay-order-import.timer` needs, before
+it does anything useful: reconnecting eBay OAuth via `/auth/ebay/start`
+(the scope widened to include write access, so the existing connection
+if any needs re-authorizing), and eBay Seller Hub business policies
+(payment/fulfillment/return) plus a merchant location, with the
+resulting IDs set as `EBAY_PAYMENT_POLICY_ID` / `EBAY_FULFILLMENT_POLICY_ID`
+/ `EBAY_RETURN_POLICY_ID` / `EBAY_MERCHANT_LOCATION_KEY` in `.env.local`.
+Until then the script just exits with a clear "not configured for
+writes" error -- safe to enable early, it won't do anything destructive,
+but it'll fail every run and log nothing useful.
+
+Once configured, enable it the same way as any other timer:
+```bash
+sudo systemctl enable --now ebay-order-import.timer
 ```
 
 ## Other Docker containers on this host
