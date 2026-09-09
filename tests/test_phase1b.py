@@ -12,7 +12,7 @@ from automation_control.audit import redact
 from automation_control.auth import create_session, hash_password, require_dashboard_user, verify_password, verify_session
 from automation_control.config import Settings
 from automation_control.database import get_session
-from automation_control.ebay_oauth import AUTH_URL, AUTH_URL_PRODUCTION, IDENTITY_READ_SCOPE, INVENTORY_READ_SCOPE, SELLER_SCOPE, EbayOAuthClient, OAuthError, TokenCipher, authorization_url, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_runame, valid_user_access_token
+from automation_control.ebay_oauth import AUTH_URL, AUTH_URL_PRODUCTION, FULFILLMENT_READ_SCOPE, IDENTITY_READ_SCOPE, INVENTORY_WRITE_SCOPE, SELLER_SCOPE, EbayOAuthClient, OAuthError, TokenCipher, authorization_url, configured_for_writes, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_runame, valid_user_access_token
 
 
 def test_oauth_state_validation_is_single_use_and_rejects_missing(session):
@@ -59,7 +59,7 @@ def test_dashboard_password_and_session_validation():
     assert verify_session(cookie, "wrong-key", now=1001) is None
 
 
-def test_sandbox_authorization_request_uses_runame_and_read_only_scopes():
+def test_sandbox_authorization_request_uses_runame_and_seller_scope():
     target = authorization_url("example-SBX-client", "example-SBX-runame", "opaque-state")
     parsed = urlsplit(target)
     query = parse_qs(parsed.query)
@@ -68,7 +68,7 @@ def test_sandbox_authorization_request_uses_runame_and_read_only_scopes():
         "client_id": ["example-SBX-client"],
         "redirect_uri": ["example-SBX-runame"],
         "response_type": ["code"],
-        "scope": [f"{INVENTORY_READ_SCOPE} {IDENTITY_READ_SCOPE}"],
+        "scope": [f"{INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} {IDENTITY_READ_SCOPE}"],
         "state": ["opaque-state"],
     }
 
@@ -150,6 +150,17 @@ def test_configured_rejects_a_sandbox_credential_when_env_is_production():
     assert configured(production_ok)
 
 
+def test_configured_for_writes_requires_business_policies_on_top_of_oauth():
+    base = dict(ebay_env="sandbox", ebay_client_id="app-SBX-x", ebay_runame="app-SBX-runame",
+                ebay_client_secret="s", ebay_token_encryption_key="k", app_public_base_url="https://example.test")
+    assert configured(Settings(**base))
+    assert not configured_for_writes(Settings(**base))  # OAuth alone isn't enough to publish
+
+    full = Settings(**base, ebay_payment_policy_id="p", ebay_fulfillment_policy_id="f",
+                    ebay_return_policy_id="r", ebay_merchant_location_key="loc-1")
+    assert configured_for_writes(full)
+
+
 def test_store_user_tokens_records_the_given_environment(session):
     from automation_control.models import EbayCredential
 
@@ -203,9 +214,19 @@ async def test_ebay_api_failure_is_sanitized():
         raise AssertionError("expected API failure")
 
 
-def test_read_only_policy_enforcement():
+def test_read_adapter_has_no_write_methods_regardless_of_granted_scope():
+    """SELLER_SCOPE now includes write/order-read permissions (see
+    ebay_oauth.py's own comment on why), but EbaySandboxReadAdapter itself
+    must stay read-only no matter what the OAuth grant allows -- the write
+    path is a separate class (adapters/ebay_write.py) gated behind an
+    Approval record, not something a wider scope alone unlocks here."""
     adapter = EbaySandboxReadAdapter("token")
-    assert "sell.inventory.readonly" in SELLER_SCOPE
-    assert "commerce.identity.readonly" in SELLER_SCOPE
     for method in ("create_listing", "update_listing", "update_price", "update_inventory", "create_offer", "get_orders"):
         assert not hasattr(adapter, method)
+
+
+def test_seller_scope_includes_inventory_write_and_fulfillment_read():
+    assert "sell.inventory" in SELLER_SCOPE
+    assert "sell.inventory.readonly" not in SELLER_SCOPE  # superseded, not additive
+    assert "sell.fulfillment.readonly" in SELLER_SCOPE
+    assert "commerce.identity.readonly" in SELLER_SCOPE

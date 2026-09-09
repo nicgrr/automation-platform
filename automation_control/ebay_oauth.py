@@ -15,9 +15,20 @@ from sqlalchemy.orm import Session
 from .config import Settings
 from .models import EbayCredential, OAuthState
 
-INVENTORY_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly"
+# Widened from sell.inventory.readonly (Phase 1B) to full sell.inventory
+# plus sell.fulfillment.readonly -- required to create/publish/withdraw
+# listings and to read orders (see automation_control/adapters/ebay_write.py
+# and scripts/import_ebay_orders.py). The write path itself stays gated
+# behind an Approval record (see automation_control/ebay_publish.py) --
+# this scope change only widens what the OAuth grant *permits*, not what
+# any code path actually *does* on its own. Every already-connected
+# account must reconnect via /auth/ebay/start: a refresh token only
+# carries the scopes originally granted, so an old token can't silently
+# start being used for writes just because this constant changed.
+INVENTORY_WRITE_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory"
+FULFILLMENT_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
 IDENTITY_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly"
-SELLER_SCOPE = f"{INVENTORY_READ_SCOPE} {IDENTITY_READ_SCOPE}"
+SELLER_SCOPE = f"{INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} {IDENTITY_READ_SCOPE}"
 MARKET_SCOPE = "https://api.ebay.com/oauth/api_scope"
 AUTH_URL = "https://auth.sandbox.ebay.com/oauth2/authorize"
 TOKEN_URL = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
@@ -194,6 +205,23 @@ def configured(settings: Settings) -> bool:
         and settings.ebay_token_encryption_key
         and not settings.ebay_token_encryption_key.startswith("REPLACE_WITH_")
         and settings.app_public_base_url
+    )
+
+
+def configured_for_writes(settings: Settings) -> bool:
+    """Whether the app can actually publish a listing, not just read prices.
+    On top of the base OAuth setup, every createOffer call requires the
+    four business-policy IDs and a merchant location (see config.py's own
+    comment on why these can't be auto-provisioned). Checked separately
+    from `configured` so a plain "not connected" error and a "connected
+    but missing listing policies" error can be told apart -- the fix for
+    each is completely different."""
+    return bool(
+        configured(settings)
+        and settings.ebay_payment_policy_id
+        and settings.ebay_fulfillment_policy_id
+        and settings.ebay_return_policy_id
+        and settings.ebay_merchant_location_key
     )
 
 

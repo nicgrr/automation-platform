@@ -18,14 +18,26 @@ class Settings(BaseSettings):
     session_signing_key: str | None = None
     ebay_token_encryption_key: str | None = None
     # "production" unlocks the api.ebay.com / auth.ebay.com endpoints and the
-    # matching credential validators in ebay_oauth.py -- it does NOT unlock
-    # any write capability (listing_pipeline/publish.py is still a documented
-    # placeholder, unimplemented and unwired). Defaults to sandbox; this app
-    # never assumes production on your behalf.
+    # matching credential validators in ebay_oauth.py. A real write adapter
+    # now exists (adapters/ebay_write.py), but every write call still goes
+    # through automation_control/ebay_publish.py's Approval gate -- flipping
+    # this alone never causes a listing to be created or ended on its own.
+    # Defaults to sandbox; this app never assumes production on your behalf.
     ebay_env: Literal["sandbox", "production"] = "sandbox"
     ebay_client_id: str | None = None
     ebay_client_secret: str | None = None
     ebay_runame: str | None = None
+    # eBay listing-write prerequisites (see automation_control.ebay_oauth
+    # .configured_for_writes) -- every createOffer call requires these
+    # business-policy IDs and a merchant location, none of which this app
+    # can create end-to-end on its own: business policies need the
+    # seller's eBay account opted into "Business Policies" first, set up
+    # once in Seller Hub (or via eBay's Account API) rather than assumed.
+    ebay_marketplace_id: str = "EBAY_AU"
+    ebay_payment_policy_id: str | None = None
+    ebay_fulfillment_policy_id: str | None = None
+    ebay_return_policy_id: str | None = None
+    ebay_merchant_location_key: str | None = None
     listing_pipeline_output_dir: str = "listing_pipeline_data/output"
     listing_pipeline_config_path: str = "listing_pipeline_data/config.toml"
     # Stripe Checkout for the NL Vault storefront. Absent by default: the
