@@ -12,11 +12,13 @@ price on file, floored at the profit floor), then hands off to the
 already-built /shop-listings review page instead of duplicating it.
 """
 
+import mimetypes
 import uuid
 from decimal import Decimal
 from html import escape
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +26,7 @@ from sqlalchemy.orm import Session
 from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
+from .image_processing import auto_orient
 from .models import (
     CardPrice, CardSet, CatalogCard, CatalogItem, InventoryItem, InventoryStatus, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, TcgCard,
@@ -32,6 +35,31 @@ from .shop_pricing import default_costs, price_floor
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["personal-collection"])
+
+# Some cards (a brand-new set, a low-print premium booster) don't have a
+# clean, unwatermarked photo on ANY catalogue source yet -- neither
+# optcgapi nor TCGplayer, both checked by hand. For those, letting the
+# user attach their own photo is the only real fix. Stored under /static
+# (already mounted, see api.py) so it needs no new serving route -- and
+# kept OUT of catalog_items.image_url, which is shared with the
+# storefront app on a different origin where a bare /static/... path
+# wouldn't resolve; this is deliberately scoped to this admin page only.
+PHOTO_DIR = Path("static/personal_collection_photos")
+
+
+def _save_photo(item_id: str, data: bytes, content_type: str | None) -> str:
+    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+    extension = mimetypes.guess_extension(content_type or "") or ".jpg"
+    path = PHOTO_DIR / f"{item_id}{extension}"
+    for stale in PHOTO_DIR.glob(f"{item_id}.*"):
+        if stale != path:
+            stale.unlink(missing_ok=True)
+    path.write_bytes(data)
+    try:
+        auto_orient(path)
+    except Exception:
+        pass
+    return f"/static/personal_collection_photos/{path.name}"
 
 # Same trust order scripts/list_for_sale.py uses for normal stock -- a
 # personal-collection item usually only has "collector_import" on file,
@@ -136,7 +164,13 @@ def _reference_images(session: Session, tcg_cards: list[TcgCard]) -> dict[str, s
     return {f"{set_id}|{number}": url for set_id, number, url in rows if (set_id, number) in keys and _is_web_url(url)}
 
 
-def _image_url(catalog_item: CatalogItem, tcg_card: TcgCard | None, reference_images: dict[str, str]) -> str | None:
+def _image_url(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | None,
+                reference_images: dict[str, str]) -> str | None:
+    # A photo the user uploaded themselves wins outright -- they only
+    # ever add one because every catalogue source came back watermarked
+    # or missing, so it's never a downgrade.
+    if item.scan_image_path:
+        return item.scan_image_path
     if _is_web_url(catalog_item.image_url):
         return catalog_item.image_url
     if tcg_card and tcg_card.set_id and tcg_card.number:
@@ -154,9 +188,16 @@ def _row(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | Non
         f"<img class='pc-thumb' src='{escape(image_url)}' alt='' loading='lazy'>"
         if image_url else "<div class='pc-thumb pc-thumb-empty'>No image</div>"
     )
+    upload_form = (
+        f"<form method='post' action='/personal-collection/{escape(item.id)}/upload-photo' "
+        "enctype='multipart/form-data' class='pc-photo-form'>"
+        "<input type='file' name='photo' accept='image/*' required>"
+        f"<button class='btn small ghost'>{'Replace' if item.scan_image_path else 'Add'} photo</button>"
+        "</form>"
+    )
     return (
         "<tr>"
-        f"<td>{thumb}</td>"
+        f"<td>{thumb}{upload_form}</td>"
         f"<td><strong>{escape(catalog_item.name)}</strong>{graded}"
         f"<div class='muted'>{escape(' · '.join(sub_parts))}</div></td>"
         f"<td>{item.quantity}</td>"
@@ -205,7 +246,7 @@ def personal_collection_page(
 
     rows = "".join(
         _row(item, catalog_item, tcg_card, set_names.get(tcg_card.set_id) if tcg_card else None,
-             _image_url(catalog_item, tcg_card, reference_images), prices.get(catalog_item.id))
+             _image_url(item, catalog_item, tcg_card, reference_images), prices.get(catalog_item.id))
         for item, catalog_item, tcg_card in rows_data
     ) or "<tr><td colspan='6' class='muted'>Nothing here.</td></tr>"
 
@@ -290,6 +331,23 @@ def list_item_for_sale(
     return RedirectResponse("/shop-listings?status=draft", status_code=303)
 
 
+@router.post("/personal-collection/{item_id}/upload-photo")
+async def upload_photo(
+    item_id: str, photo: UploadFile = File(...),
+    user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+):
+    item = session.get(InventoryItem, item_id)
+    if item is None or item.status != InventoryStatus.PERSONAL_COLLECTION:
+        raise HTTPException(status_code=404, detail="personal collection item not found")
+
+    item.scan_image_path = _save_photo(item_id, await photo.read(), photo.content_type)
+    session.commit()
+    record_event(session, actor_type="user", actor_id=user, action="personal_collection.upload_photo",
+                resource_type="inventory_item", resource_id=item_id, outcome="success",
+                correlation_id=item_id, details={})
+    return RedirectResponse("/personal-collection", status_code=303)
+
+
 _STYLE = """<style>
 .filter-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
 .filter-tab{padding:7px 13px;border-radius:999px;font-size:13px;font-weight:600;
@@ -302,6 +360,9 @@ _STYLE = """<style>
 .listing-search .field select{padding:6px 8px;border-radius:6px;border:1px solid var(--panel-border);font-size:13px}
 .pc-actions{display:flex;gap:6px}
 .btn.small{padding:6px 12px;font-size:13px}
-.pc-thumb{width:48px;height:64px;object-fit:contain;border-radius:4px;background:var(--surface-sunken)}
+.pc-thumb{width:48px;height:64px;object-fit:contain;border-radius:4px;background:var(--surface-sunken);display:block}
 .pc-thumb-empty{display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-dim);text-align:center}
+.pc-photo-form{display:flex;flex-direction:column;gap:4px;margin-top:6px;width:70px}
+.pc-photo-form input[type=file]{font-size:10px;width:70px}
+.pc-photo-form .btn.small{padding:3px 6px;font-size:11px}
 </style>"""

@@ -25,3 +25,9 @@ captured_cards/
 # Favicon / og:image PNGs rasterised on first request from brand.py's own
 # stroke geometry (see storefront/favicon.py) -- reproducible, not source.
 storefront/.generated-assets/
+# User-uploaded photos for Personal Collection items with no clean catalogue
+# image available (see automation_control/personal_collection.py) -- real
+# user data, not source.
+static/personal_collection_photos/*
+!static/personal_collection_photos/.gitkeep
+
