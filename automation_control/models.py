@@ -289,6 +289,108 @@ class EbayCredential(Base):
     scopes: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     last_successful_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Separate cursor from last_successful_sync_at above, which belongs to
+    # the unrelated read-mirror sync (GET /api/ebay/listings). This one
+    # tracks scripts/import_ebay_orders.py's own "orders modified since"
+    # position -- one field per purpose, not a shared one two jobs fight
+    # over.
+    last_order_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EbayListingLinkStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PUBLISHING = "publishing"
+    ACTIVE = "active"
+    ENDING = "ending"
+    ENDED = "ended"
+    FAILED = "failed"
+
+
+class EbayListingLink(Base):
+    """The write-side source of truth for "is this ShopListing also live on
+    eBay, and as what" -- deliberately separate from EbayListing (below),
+    which is a read-only mirror wholesale-upserted by polling eBay's own
+    listing data and has no concept of which local ShopListing a row
+    corresponds to. Conflating the two would mean a failed poll cycle
+    could blank fields the sync logic depends on.
+
+    sku is always == shop_listing_id, stored explicitly (rather than only
+    implied by the FK) so eBay API payloads/responses can be matched
+    without a join back to shop_listings.
+
+    status moves draft -> publishing (row created, eBay calls in flight)
+    -> active (published) or failed, then active -> ending -> ended when
+    the listing sells out or is withdrawn. Persisted as PUBLISHING before
+    the first eBay call, not after, so a crash mid-sequence (see
+    ebay_publish.py) leaves a diagnosable partial record instead of
+    nothing.
+    """
+
+    __tablename__ = "ebay_listing_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    shop_listing_id: Mapped[str] = mapped_column(ForeignKey("shop_listings.id"), unique=True, index=True)
+    sku: Mapped[str] = mapped_column(String(64), index=True)
+    marketplace_id: Mapped[str] = mapped_column(String(32))
+    ebay_offer_id: Mapped[str | None] = mapped_column(String(128))
+    ebay_listing_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    status: Mapped[EbayListingLinkStatus] = mapped_column(Enum(EbayListingLinkStatus), default=EbayListingLinkStatus.DRAFT, index=True)
+    last_pushed_quantity: Mapped[int | None] = mapped_column(Integer)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    approval_id: Mapped[str | None] = mapped_column(ForeignKey("approvals.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EbayImportedOrder(Base):
+    """One row per eBay order line scripts/import_ebay_orders.py has ever
+    seen, kept as an append-only idempotency ledger -- eBay's getOrders
+    returns a rolling window rather than "new since last call" cleanly,
+    so without this a re-run could decrement the matching ShopListing's
+    stock twice for the same real-world sale.
+
+    applied_at is None the moment a row is written (seen, not yet acted
+    on) and set only once the matching ShopListing has actually been
+    decremented -- the poller's idempotency check is "does a row with
+    this ebay_order_id already have applied_at set", not merely "does a
+    row exist", so a row written just before a crash gets retried rather
+    than silently treated as done.
+    """
+
+    __tablename__ = "ebay_imported_orders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ebay_order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    sku: Mapped[str] = mapped_column(String(64), index=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    marketplace_id: Mapped[str] = mapped_column(String(32))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shop_listing_id: Mapped[str | None] = mapped_column(ForeignKey("shop_listings.id"))
+    raw_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class EbayCategoryMapping(Base):
+    """Which eBay category a card belongs to, keyed loosely enough to cover
+    most of the catalogue from a handful of seeded rows rather than one
+    row per card: (marketplace, item_type, game). ebay_publish.py falls
+    back from the full key to (marketplace, item_type, None) when no
+    game-specific row exists, so a single "tcg_card, game=None" row can
+    cover a brand-new game with zero config. Seeded once by
+    scripts/seed_ebay_categories.py, not hardcoded, matching this
+    project's existing rates/rules-as-rows-not-constants convention
+    (see ShippingRate, MarketplaceFeeRule)."""
+
+    __tablename__ = "ebay_category_mappings"
+    __table_args__ = (UniqueConstraint("marketplace_id", "catalog_item_type", "game"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    marketplace_id: Mapped[str] = mapped_column(String(32))
+    catalog_item_type: Mapped[str] = mapped_column(String(32))
+    game: Mapped[str | None] = mapped_column(String(32))
+    ebay_category_id: Mapped[str] = mapped_column(String(32))
 
 
 class MarketObservation(Base):
