@@ -45,15 +45,17 @@ from decimal import Decimal
 from html import escape
 
 import httpx
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from automation_control.config import get_settings
 from automation_control.database import get_session
+from automation_control.ebay_sync import sync_ebay_after_sale
 from automation_control.models import (
     BulkLot, ShippingZone, ShopListing, ShopListingStatus, ShopOrder, ShopOrderItem, ShopOrderStatus,
 )
+from automation_control.stock import decrement_listing_quantity
 
 from . import discounts
 from .common import CART_COOKIE, cart_lines, nav_links, read_cart, shipping_for
@@ -344,21 +346,29 @@ async def checkout_submit(
     return RedirectResponse(f"/checkout/complete?ref={order.reference}", status_code=303)
 
 
-def _mark_paid(session: Session, order: ShopOrder) -> None:
+def _mark_paid(session: Session, order: ShopOrder) -> list[tuple[str, int]]:
     """The one place an order becomes PAID. Guarded on the caller side by
     a PENDING_PAYMENT check, so calling this from both the redirect page
     and the webhook is safe -- whichever gets there first wins, and the
     second call's guard simply doesn't fire rather than double-decrementing
-    stock or double-recording a payment time."""
+    stock or double-recording a payment time.
+
+    Returns the (listing_id, new_quantity) pairs that actually changed, so
+    callers can schedule an eBay sync push for each -- see
+    automation_control.ebay_sync.sync_ebay_after_sale. This function itself
+    stays eBay-agnostic; every caller is responsible for firing that sync
+    as a background task, never inline, so a slow or failing eBay call can
+    never delay or fail this commit."""
     order.status = ShopOrderStatus.PAID
     order.paid_at = datetime.now(UTC)
-    _decrement_stock(session, order)
+    changed = _decrement_stock(session, order)
     session.commit()
+    return changed
 
 
 @router.get("/checkout/complete", response_class=HTMLResponse)
 async def checkout_complete(
-    request: Request, ref: str = Query(""), session: Session = Depends(get_session),
+    request: Request, background_tasks: BackgroundTasks, ref: str = Query(""), session: Session = Depends(get_session),
 ) -> HTMLResponse:
     order = session.query(ShopOrder).filter_by(reference=ref).one_or_none() if ref else None
     if order is None:
@@ -372,7 +382,8 @@ async def checkout_complete(
     if order.status == ShopOrderStatus.PENDING_PAYMENT and secret and order.stripe_session_id:
         payload = await fetch_checkout_session(secret, order.stripe_session_id)
         if payload and _is_stripe_session_paid(payload):
-            _mark_paid(session, order)
+            for listing_id, new_quantity in _mark_paid(session, order):
+                background_tasks.add_task(sync_ebay_after_sale, listing_id, new_quantity)
         else:
             still_confirming = True
 
@@ -412,7 +423,7 @@ async def checkout_complete(
 
 
 @router.post("/webhooks/stripe")
-async def stripe_webhook(request: Request, session: Session = Depends(get_session)):
+async def stripe_webhook(request: Request, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """The authoritative payment-confirmation path -- Stripe calls this
     directly once its dashboard is told this endpoint's public URL, so a
     sale is recorded even if the buyer's browser never makes it back.
@@ -443,29 +454,37 @@ async def stripe_webhook(request: Request, session: Session = Depends(get_sessio
         if reference and _is_stripe_session_paid(payload):
             order = session.query(ShopOrder).filter_by(reference=reference).one_or_none()
             if order is not None and order.status == ShopOrderStatus.PENDING_PAYMENT:
-                _mark_paid(session, order)
+                for listing_id, new_quantity in _mark_paid(session, order):
+                    background_tasks.add_task(sync_ebay_after_sale, listing_id, new_quantity)
 
     return {"received": True}
 
 
-def _decrement_stock(session: Session, order: ShopOrder) -> None:
+def _decrement_stock(session: Session, order: ShopOrder) -> list[tuple[str, int]]:
     """Take sold quantity off the listing, marking it sold out at zero.
     Bulk lots aren't matched back by id (an order line keeps only its
     title once the lot is gone), so they're handled by title match --
     imprecise, but a lot is a one-off product and this is only ever a
-    convenience for the operator, not an accounting record."""
+    convenience for the operator, not an accounting record. Bulk lots
+    have no eBay presence, so they're not part of the returned list.
+
+    Returns (listing_id, new_quantity) for every ShopListing this order
+    actually reduced -- the set of listings a caller should push an eBay
+    sync for."""
+    changed: list[tuple[str, int]] = []
     for item in session.query(ShopOrderItem).filter_by(order_id=order.id).all():
         if item.unit_price < 0:
             continue  # a set-discount line, not a real stock line
         if item.listing_id:
             listing = session.get(ShopListing, item.listing_id)
             if listing is not None:
-                listing.quantity = max(0, listing.quantity - item.quantity)
-                if listing.quantity == 0:
-                    listing.status = ShopListingStatus.SOLD_OUT
+                new_quantity = decrement_listing_quantity(listing, item.quantity)
+                if new_quantity is not None:
+                    changed.append((listing.id, new_quantity))
         else:
             lot = session.query(BulkLot).filter_by(title=item.title).one_or_none()
             if lot is not None:
                 lot.quantity = max(0, lot.quantity - item.quantity)
                 if lot.quantity == 0:
                     lot.status = ShopListingStatus.SOLD_OUT
+    return changed
