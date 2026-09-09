@@ -89,6 +89,15 @@ def test_build_query_targets_the_secret_variant_when_flagged():
     assert script.build_query(item, None, collectible=collectible) == ("Sonny Angel Hamburger secret", "Sonny Angel")
 
 
+def test_build_query_strips_a_trailing_parenthetical_for_collectibles():
+    """The bug this guards: "Sonny Angel Sugar (sugar pot/jar)" returned 0
+    eBay results while "Sonny Angel Sugar" returned 10 -- confirmed live.
+    The relevance filter stays on brand alone, so nothing is lost."""
+    item = CatalogItem(id="c1", item_type=CatalogItemType.COLLECTIBLE, name="Sugar (sugar pot/jar)")
+    collectible = CollectibleProduct(catalog_item_id="c1", brand="Sonny Angel", is_secret=False)
+    assert script.build_query(item, None, collectible=collectible) == ("Sonny Angel Sugar", "Sonny Angel")
+
+
 def test_build_query_falls_back_to_name_without_a_code():
     item = CatalogItem(id="x", item_type=CatalogItemType.TCG_CARD, name="Some Promo")
     assert script.build_query(item, None) == ("Some Promo", "Some Promo")

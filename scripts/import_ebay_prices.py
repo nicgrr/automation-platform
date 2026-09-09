@@ -44,6 +44,7 @@ source it first, or the script will correctly refuse to run:
 
 import argparse
 import asyncio
+import re
 import statistics
 import time
 import uuid
@@ -89,7 +90,14 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
         # "Sonny Angel Animal Series 4 secret secret" is both sloppy and
         # worse for eBay's relevance ranking.
         secret = " secret" if collectible.is_secret and "secret" not in item.name.lower() else ""
-        return f"{collectible.brand} {item.name}{secret}".strip(), collectible.brand
+        # A parenthetical sub-variant note in the catalogue name ("Sugar
+        # (sugar pot/jar)", "Strawberry Shortcake (Christmas Cake)")
+        # isn't a disambiguator eBay's own search handles -- confirmed:
+        # the exact same query with the parenthetical stripped went from
+        # 0 results to 10. The relevance filter stays on brand alone
+        # either way, so nothing is lost by not sending it.
+        clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", item.name).strip()
+        return f"{collectible.brand} {clean_name}{secret}".strip(), collectible.brand
     if tcg is not None:
         if tcg.set_code and tcg.number:
             code = f"{tcg.set_code}-{tcg.number}"
