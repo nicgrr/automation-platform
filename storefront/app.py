@@ -524,7 +524,10 @@ def cart_view(request: Request, zone: str = Query("au"), session: Session = Depe
         f"<div><span>{escape(ship_label)}</span><span>{_money(ship_cost)}</span></div>"
         f"<div class='grand'><span>Total</span><span>{_money(items_total + ship_cost)}</span></div>"
         "</div>"
-        f"<div style='margin-top:20px'><a class='btn brass' href='/checkout?zone={selected_zone.value}'>Checkout</a></div>"
+        "<div style='margin-top:20px;display:flex;gap:12px;flex-wrap:wrap'>"
+        f"<a class='btn brass' href='/checkout?zone={selected_zone.value}'>Checkout</a>"
+        "<a class='btn ghost' href='/browse' onclick='history.back();return false;'>Continue shopping</a>"
+        "</div>"
         "</div>"
         + discount_block
     )

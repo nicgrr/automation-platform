@@ -26,6 +26,7 @@ STYLE = """<style>
   --muted:#6b6b6b; --rule:#e7e2d8;
   --brass:#b3852f; --brass-lit:#8a6423;
   --teal:#0f9e94; --teal-dark:#0b7a72;
+  --blue:#2f6fed; --blue-dark:#1e4fc0;
   --pink:#ff5d8f; --pink-dark:#e14577;
   --radius:16px; --radius-sm:10px;
 }
@@ -130,8 +131,8 @@ h2{font-family:'Baloo 2',sans-serif;font-weight:700;font-size:21px;margin:0 0 14
   transition:transform .1s ease,background .12s ease,border-color .12s ease;
 }
 .btn:hover{transform:translateY(-1px)}
-.btn.brass{background:var(--teal);color:#fff;border-color:var(--teal)}
-.btn.brass:hover{background:var(--teal-dark);border-color:var(--teal-dark)}
+.btn.brass{background:var(--blue);color:#fff;border-color:var(--blue)}
+.btn.brass:hover{background:var(--blue-dark);border-color:var(--blue-dark)}
 .btn.ghost{background:transparent;color:var(--ink);border:2px solid var(--rule)}
 .btn.ghost:hover{border-color:var(--ink)}
 .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
