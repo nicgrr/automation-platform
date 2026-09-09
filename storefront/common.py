@@ -193,11 +193,10 @@ _SOCIAL_ICONS = {
         "<path d='M3 8h4l2 8 2.5-8h1l2.5 8L17 8h4'/><path d='M3 16h18' stroke-opacity='0'/>"
         "</svg>"
     ),
-    "whatnot": (
-        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"
-        "<circle cx='12' cy='12' r='9'/><path d='M10 8.5l6 3.5-6 3.5z' fill='currentColor' stroke='none'/>"
-        "</svg>"
-    ),
+    # Whatnot's own icon mark (see assets.py) rather than a generic
+    # play-button placeholder -- kept in its real brand colors, not
+    # currentColor, same reasoning as assets.py's own docstring.
+    "whatnot": "<img src='/assets/whatnot-icon.svg' alt=''>",
 }
 _DEFAULT_SOCIAL_ICON = (
     "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"

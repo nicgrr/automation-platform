@@ -293,7 +293,7 @@ footer a:hover{color:var(--teal-dark)}
 .social-links{display:flex;gap:14px;align-items:center}
 .social-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;font-weight:700}
 .social-link:hover{color:var(--teal-dark)}
-.social-link svg{width:16px;height:16px;flex:none}
+.social-link svg,.social-link img{width:16px;height:16px;flex:none}
 .social-link span{display:none}
 @media (min-width:560px){.social-link span{display:inline}}
 .social-icons{display:flex;gap:12px;margin-top:22px}
@@ -303,7 +303,7 @@ footer a:hover{color:var(--teal-dark)}
   transition:border-color .15s ease,transform .15s ease,color .15s ease;
 }
 .social-icon:hover{border-color:var(--teal);color:var(--teal-dark);transform:translateY(-2px)}
-.social-icon svg{width:19px;height:19px}
+.social-icon svg,.social-icon img{width:19px;height:19px}
 @media (prefers-reduced-motion:reduce){.social-icon{transition:none}}
 
 /* ---- home hero ----
