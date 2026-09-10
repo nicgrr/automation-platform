@@ -199,16 +199,39 @@ def _any_catalog_image_url(session: Session, name: str) -> str | None:
     return None
 
 
-def _hero_tcg_art(session: Session) -> list[tuple[str, str]]:
-    """Real, hosted card art for the homepage's trading card panel.
-    Returns (image_url, alt_text) pairs, skipping any pick with no usable
-    image rather than showing a broken <img>."""
+def _picks_art(session: Session, picks: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Real, hosted card art for a curated (id, name) pick list -- shared
+    by the hero panel and the homepage backdrop collage. Skips any pick
+    with no usable image rather than showing a broken <img>."""
     art = []
-    for item_id, name in _HERO_TCG_PICKS:
+    for item_id, name in picks:
         url = _catalog_image_url(session, item_id) or _any_catalog_image_url(session, name)
         if url:
             art.append((url, name))
     return art
+
+
+# The homepage's ambient background collage -- "Pokemon and One Piece
+# together" per the user's own request, distinct from _HERO_TCG_PICKS'
+# two-card fan so the backdrop reads as a fuller cast, not a repeat of the
+# hero above it.
+_BACKDROP_PICKS = [
+    ("swsh4-25", "Charizard"),
+    ("sm10-70", "Gengar"),
+    ("sm12-166", "Eevee"),
+    ("one-piece-op01-024", "Monkey.D.Luffy"),
+    ("one-piece-op02-062", "Roronoa Zoro"),
+    ("one-piece-op01-003", "Nami"),
+]
+
+
+def _home_backdrop_art(session: Session) -> list[tuple[str, str]]:
+    return _picks_art(session, _BACKDROP_PICKS)
+
+
+def _hero_tcg_art(session: Session) -> list[tuple[str, str]]:
+    """Real, hosted card art for the homepage's trading card panel."""
+    return _picks_art(session, _HERO_TCG_PICKS)
 
 
 def _hero_collectible_photo(session: Session) -> str | None:
@@ -279,11 +302,30 @@ def _hero_split(session: Session) -> str:
     )
 
 
+def _home_backdrop(session: Session) -> str:
+    """A fixed, page-wide ambient collage behind the whole homepage --
+    real Pokemon/One Piece card art, faded and scattered rather than
+    sharp, so it reads as atmosphere behind the shop rather than
+    competing with it for attention (the exact complaint that got an
+    earlier, sharper card showcase pulled from the hero itself -- see
+    ui.py's STYLE comment above .hero-banner). Every foreground section
+    (topbar, hero, product grid, footer) keeps its own opaque background,
+    so this only ever shows through in the gaps between them.
+    """
+    cards = "".join(
+        f"<img class='backdrop-card bc-{i}' src='{escape(url)}' alt='' aria-hidden='true' loading='lazy'>"
+        for i, (url, _name) in enumerate(_home_backdrop_art(session))
+    )
+    return f"<div class='home-backdrop' aria-hidden='true'>{cards}</div>"
+
+
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     stocked = departments.in_stock(session)
+    backdrop = _home_backdrop(session) if stocked else ""
     hero = (
-        "<div class='hero-banner'>"
+        backdrop
+        + "<div class='hero-banner'>"
         "<div class='hero-inner'>"
         f"<h1 class='hero-brand'>{logo_lockup()}</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"

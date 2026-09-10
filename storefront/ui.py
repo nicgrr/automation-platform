@@ -32,7 +32,7 @@ STYLE = """<style>
 }
 *{box-sizing:border-box}
 body{
-  margin:0;background:var(--paper);color:var(--ink);
+  margin:0;background:var(--paper);color:var(--ink);position:relative;
   font-family:Nunito,ui-sans-serif,system-ui,-apple-system,sans-serif;
   line-height:1.55;-webkit-font-smoothing:antialiased;
 }
@@ -393,6 +393,36 @@ footer a:hover{color:var(--teal-dark)}
 }
 @media (prefers-reduced-motion:reduce){
   .hero-card, .hero-pane-photo, .hero-pane-cta{transition:none}
+}
+
+/* ---- home backdrop: ambient card collage ----
+   z-index:-1 only paints below body's own children (not below the page
+   root) because body itself is position:relative above -- without that,
+   a fixed negative-z-index box can render entirely behind body's own
+   opaque background and disappear. The ::after wash paints last (after
+   the <img> children, always, by spec) to fade the collage down to
+   texture rather than a legible photo strip. */
+.home-backdrop{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.home-backdrop{
+  background:
+    radial-gradient(55% 45% at 12% 8%,rgba(179,133,47,.32) 0%,transparent 60%),
+    radial-gradient(50% 40% at 88% 14%,rgba(255,93,143,.26) 0%,transparent 60%),
+    radial-gradient(60% 55% at 50% 100%,rgba(15,158,148,.22) 0%,transparent 65%),
+    var(--paper);
+}
+.home-backdrop::after{content:'';position:absolute;inset:0;background:var(--paper);opacity:.6}
+.backdrop-card{
+  position:absolute;width:200px;aspect-ratio:5/7;object-fit:cover;border-radius:14px;
+  opacity:.55;filter:saturate(1.05);box-shadow:0 18px 40px rgba(0,0,0,.10);
+}
+.bc-0{top:-6%;left:2%;transform:rotate(-13deg)}
+.bc-1{top:6%;left:76%;transform:rotate(9deg)}
+.bc-2{top:34%;left:-6%;transform:rotate(8deg)}
+.bc-3{top:40%;right:-6%;transform:rotate(-7deg)}
+.bc-4{top:68%;left:18%;transform:rotate(6deg)}
+.bc-5{top:80%;right:8%;transform:rotate(-10deg)}
+@media (max-width:760px){
+  .backdrop-card{width:130px}
 }
 </style>"""
 

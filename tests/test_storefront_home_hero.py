@@ -176,3 +176,27 @@ def test_gsap_animates_the_hero_panes_too(client, session):
     _stock_something(session)
     body = client.get("/").text
     assert "gsap.from(panes" in body
+
+
+def test_home_renders_an_ambient_backdrop_collage(client, session):
+    session.add(CatalogCard(id="swsh4-25", set_id="swsh4", number="25", name="Charizard",
+                             image_url="https://images.pokemontcg.io/swsh4/25.png"))
+    _stock_something(session)
+
+    body = _body_only(client.get("/").text)
+    assert "class='home-backdrop'" in body
+    assert "https://images.pokemontcg.io/swsh4/25.png" in body
+
+
+def test_backdrop_is_skipped_entirely_with_no_stock_at_all(client, session):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "class='home-backdrop'" not in _body_only(response.text)
+
+
+def test_backdrop_only_appears_on_the_homepage(client, session):
+    """A fixed, page-wide element belongs only where it was actually
+    designed in -- other storefront pages must not inherit it."""
+    _stock_something(session)
+    other_page = _body_only(client.get("/browse").text)
+    assert "class='home-backdrop'" not in other_page
