@@ -10,8 +10,15 @@ most-confident mismatch, lets a human either confirm it's a false positive
 (a foil or edge-crop that legitimately hashes far from its own reference --
 see that script's docstring) or delete the bad listing/item outright, and
 moves to the next one. Mirrors /foil-review's tap-through shape.
+
+find_mismatches hashes every item's photo against ~20k reference cards --
+~28s confirmed live at 1,619 items. Recomputing that on every page load (and
+every action redirects back to one) made the page feel broken, so results
+are cached to a file exactly like foil_review.py's candidate cache, with
+its own "Rescan" button rather than a silent background refresh.
 """
 
+import json
 import uuid
 from html import escape
 from pathlib import Path
@@ -22,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
+from .config import get_settings
 from .database import get_session
 from .inventory_audit import find_mismatches
 from .models import InventoryItem, PhotoAuditDismissal, ShopListing
@@ -30,13 +38,48 @@ from .ui import brand_header, page
 router = APIRouter(prefix="/inventory-audit", tags=["inventory-audit"])
 
 
+def _cache_path() -> Path:
+    return Path(get_settings().scan_media_dir) / "inventory_audit_cache.json"
+
+
+def _save_mismatches(mismatches: list[dict]) -> None:
+    path = _cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(mismatches))
+
+
+def _load_or_compute(session: Session) -> list[dict]:
+    path = _cache_path()
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    mismatches = find_mismatches(session)
+    _save_mismatches(mismatches)
+    return mismatches
+
+
 def _dismissed_item_ids(session: Session) -> set[str]:
     return set(session.scalars(select(PhotoAuditDismissal.inventory_item_id)))
 
 
 def _pending(session: Session) -> list[dict]:
+    """Cached candidates, filtered live against current DB state -- a
+    dismissal, a delete, or a stock-photo swap all take effect immediately
+    without needing a full ~28s rescan, since checking whether an item
+    still exists / still has its flagged photo is a cheap per-row lookup,
+    unlike recomputing every hash from scratch."""
     dismissed = _dismissed_item_ids(session)
-    return [m for m in find_mismatches(session) if m["item_id"] not in dismissed]
+    pending = []
+    for m in _load_or_compute(session):
+        if m["item_id"] in dismissed:
+            continue
+        item = session.get(InventoryItem, m["item_id"])
+        if item is None or item.scan_image_path != m.get("_scan_image_path"):
+            continue
+        pending.append(m)
+    return pending
 
 
 @router.get("", response_class=HTMLResponse)
@@ -54,6 +97,8 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
         + f"<div class='stat-card'><div class='label'>Flagged, awaiting review</div><div class='value'>{len(pending)}</div></div>"
         + f"<div class='stat-card'><div class='label'>Dismissed as false positives</div><div class='value'>{dismissed_count}</div></div>"
         + "</div>"
+        + "<div class='toolbar'><form method='post' action='/inventory-audit/rescan'>"
+          "<button class='chip' type='submit'>Rescan inventory (~30s)</button></form></div>"
     )
 
     if not pending:
@@ -77,6 +122,12 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
         + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
         + f"<input type='hidden' name='own_distance' value='{m['own_distance']}'>"
         + "<button class='audit-btn audit-btn-keep' type='submit'>Photo's fine, keep it</button></form>"
+        + (
+            "<form method='post' action='/inventory-audit/use-stock-photo'>"
+            + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
+            + "<button class='audit-btn audit-btn-stock' type='submit'>Replace with stock photo</button></form>"
+            if m["reference_image_url"] else ""
+        )
         + "<form method='post' action='/inventory-audit/delete' "
           "onsubmit=\"return confirm('Delete this listing and inventory item? This cannot be undone here.');\">"
         + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
@@ -85,6 +136,12 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Inventory photo audit", body))
+
+
+@router.post("/rescan")
+def inventory_audit_rescan(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    _save_mismatches(find_mismatches(session))
+    return RedirectResponse("/inventory-audit", status_code=303)
 
 
 @router.post("/dismiss")
@@ -101,6 +158,31 @@ def inventory_audit_dismiss(
             own_distance_at_dismissal=own_distance, dismissed_by=user,
         ))
         session.commit()
+    return RedirectResponse("/inventory-audit", status_code=303)
+
+
+@router.post("/use-stock-photo")
+def inventory_audit_use_stock_photo(
+    item_id: str = Form(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    """Clears the item's local scan photo -- typically an uncropped or
+    mis-split sheet region, per the reason this landed in the queue -- so
+    both this page and the storefront (which already prefers publisher
+    reference art over a seller's own scan, see storefront/common.py::_art)
+    show the correct card instead of the wrong crop. Keeps the inventory
+    item and listing themselves untouched: the card is still genuinely
+    owned, only its photo was wrong."""
+    item = session.get(InventoryItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="inventory item not found")
+
+    item.scan_image_path = None
+    dismissal = session.scalar(select(PhotoAuditDismissal).where(PhotoAuditDismissal.inventory_item_id == item_id))
+    if dismissal is not None:
+        session.delete(dismissal)
+    session.commit()
     return RedirectResponse("/inventory-audit", status_code=303)
 
 
@@ -136,6 +218,11 @@ def inventory_audit_image(item_id: str, user: str = Depends(require_dashboard_us
 
 
 _STYLE = """<style>
+.toolbar{display:flex;gap:10px;align-items:center;margin:14px 0 22px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;padding:10px 16px;border-radius:999px;font-size:14px;
+  border:1px solid var(--panel-border);color:var(--text-dim);background:var(--surface-sunken);cursor:pointer}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+
 .audit-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:16px;
   padding:20px;display:flex;flex-direction:column;gap:10px;max-width:480px;margin:0 auto}
 .audit-face{display:block;border-radius:12px;overflow:hidden;background:var(--surface-sunken);
@@ -152,6 +239,7 @@ _STYLE = """<style>
 .audit-btn{width:100%;padding:14px 10px;border-radius:10px;font-size:14px;font-weight:700;
   cursor:pointer;border:1px solid var(--panel-border);background:none;color:var(--text)}
 .audit-btn-keep:hover{border-color:var(--accent-2);color:var(--accent-2)}
+.audit-btn-stock:hover{border-color:var(--accent);color:var(--accent)}
 .audit-btn-delete{color:#e5484d;border-color:#e5484d55}
 .audit-btn-delete:hover{background:#e5484d15}
 </style>"""

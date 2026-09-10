@@ -38,7 +38,15 @@ def session(tmp_path):
 
 
 @pytest.fixture
-def client(session):
+def client(session, tmp_path, monkeypatch):
+    from automation_control import inventory_audit_review
+    from automation_control.config import Settings
+
+    # Without this, the review page's cache file (see inventory_audit_review
+    # .py's _cache_path) resolves to the real scan_media_dir and every test
+    # run would read/write the live production audit cache.
+    monkeypatch.setattr(inventory_audit_review, "get_settings", lambda: Settings(scan_media_dir=str(tmp_path)))
+
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[require_dashboard_user] = lambda: "testuser"
     yield TestClient(app)
@@ -59,7 +67,8 @@ def mismatched_item(session, tmp_path):
     red_whole, red_art = _phashes(red_path)
     blue_whole, blue_art = _phashes(blue_path)
 
-    session.add(CatalogCard(id="card-a", set_id="set1", number="1", name="Card A", phash=red_whole, art_phash=red_art))
+    session.add(CatalogCard(id="card-a", set_id="set1", number="1", name="Card A", phash=red_whole, art_phash=red_art,
+                             image_url="https://cards.example/card-a.jpg"))
     session.add(CatalogCard(id="card-b", set_id="set1", number="2", name="Card B", phash=blue_whole, art_phash=blue_art))
     item = InventoryItem(id="inv1", card_id="card-a", catalog_item_id="card-a",
                           variant=CardVariant.NORMAL, quantity=1, scan_image_path=str(photo_path))
@@ -75,6 +84,29 @@ def test_find_mismatches_flags_a_photo_that_does_not_match_its_filed_card(sessio
     assert mismatches[0]["item_id"] == "inv1"
     assert mismatches[0]["filed_label"] == "set1 #1 Card A"
     assert mismatches[0]["looks_like_label"] == "set1 #2 Card B"
+    assert mismatches[0]["reference_image_url"] == "https://cards.example/card-a.jpg"
+
+
+def test_find_mismatches_omits_reference_image_when_the_catalog_has_no_real_url(session, tmp_path):
+    """catalog_cards.image_url turned out to hold a local scan-ingest cache
+    path for most rows (see storefront/common.py::_is_web_url) -- offering
+    it as a stock-photo replacement would just swap one broken image for
+    another, so it must be filtered the same way the storefront does."""
+    red_path = tmp_path / "card_a_reference.jpg"
+    blue_path = tmp_path / "photo.jpg"
+    _pattern_image(red_path, seed=1)
+    _pattern_image(blue_path, seed=2)
+    red_whole, red_art = _phashes(red_path)
+
+    session.add(CatalogCard(id="card-a", set_id="set1", number="1", name="Card A", phash=red_whole, art_phash=red_art,
+                             image_url="scan_ingest_data/cache/card-a.jpg"))
+    session.add(InventoryItem(id="inv1", card_id="card-a", catalog_item_id="card-a",
+                               variant=CardVariant.NORMAL, quantity=1, scan_image_path=str(blue_path)))
+    session.commit()
+
+    mismatches = find_mismatches(session)
+    assert len(mismatches) == 1
+    assert mismatches[0]["reference_image_url"] is None
 
 
 def test_find_mismatches_ignores_a_photo_that_matches_its_filed_card(session, tmp_path):
@@ -94,6 +126,25 @@ def test_review_page_shows_the_worst_mismatch_first(client, mismatched_item):
     assert response.status_code == 200
     assert "Card A" in response.text
     assert "Card B" in response.text
+
+
+def test_review_page_offers_stock_photo_replacement_when_a_reference_image_exists(client, mismatched_item):
+    response = client.get("/inventory-audit")
+    assert "/inventory-audit/use-stock-photo" in response.text
+    assert "Replace with stock photo" in response.text
+
+
+def test_use_stock_photo_clears_the_local_photo_without_touching_the_item(client, session, mismatched_item):
+    response = client.post("/inventory-audit/use-stock-photo", data={"item_id": "inv1"}, follow_redirects=False)
+    assert response.status_code == 303
+
+    session.expire_all()
+    item = session.get(InventoryItem, "inv1")
+    assert item is not None
+    assert item.scan_image_path is None
+
+    response = client.get("/inventory-audit")
+    assert "Nothing flagged right now" in response.text
 
 
 def test_dismissing_removes_it_from_the_pending_queue(client, session, mismatched_item):
@@ -125,6 +176,43 @@ def test_deleting_removes_the_item_and_its_shop_listing(client, session, mismatc
 
     assert session.get(InventoryItem, "inv1") is None
     assert session.get(ShopListing, "listing1") is None
+
+
+def test_second_page_load_uses_the_cache_instead_of_recomputing(client, session, mismatched_item, monkeypatch):
+    from automation_control import inventory_audit_review
+
+    calls = []
+    real = inventory_audit_review.find_mismatches
+    monkeypatch.setattr(inventory_audit_review, "find_mismatches",
+                         lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+
+    client.get("/inventory-audit")
+    client.get("/inventory-audit")
+    assert len(calls) == 1
+
+
+def test_rescan_forces_a_fresh_computation(client, session, mismatched_item, monkeypatch):
+    from automation_control import inventory_audit_review
+
+    calls = []
+    real = inventory_audit_review.find_mismatches
+    monkeypatch.setattr(inventory_audit_review, "find_mismatches",
+                         lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+
+    client.get("/inventory-audit")
+    response = client.post("/inventory-audit/rescan", follow_redirects=False)
+    assert response.status_code == 303
+    assert len(calls) == 2
+
+
+def test_deleting_the_item_hides_it_even_from_a_stale_cache(client, session, mismatched_item):
+    """The cache can be minutes old; a delete or stock-photo swap must take
+    effect immediately rather than waiting for the next ~30s rescan."""
+    client.get("/inventory-audit")  # populate the cache
+    client.post("/inventory-audit/delete", data={"item_id": "inv1"})
+
+    response = client.get("/inventory-audit")
+    assert "Nothing flagged right now" in response.text
 
 
 def test_review_requires_login():

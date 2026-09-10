@@ -23,6 +23,13 @@ from .scan_ingest.identify import art_phash
 DEFAULT_THRESHOLD = 12
 
 
+def _is_web_url(url: str | None) -> bool:
+    """Mirrors storefront/common.py's guard of the same name: a bare local
+    scan-cache path is not something a browser (or this page's own "use
+    this instead" action) can render as an <img src>."""
+    return bool(url) and (url.startswith("http://") or url.startswith("https://"))
+
+
 def _hashes(path: Path):
     with Image.open(path) as image:
         rgb = image.convert("RGB")
@@ -84,6 +91,10 @@ def find_mismatches(session: Session, threshold: int = DEFAULT_THRESHOLD) -> lis
             "looks_like_label": label(looks_like),
             "own_distance": own,
             "looks_like_distance": int(distances[best]),
+            "reference_image_url": filed.image_url if _is_web_url(filed.image_url) else None,
+            # Stashed so a cached result can be checked against current DB
+            # state without re-hashing anything -- see inventory_audit_review.
+            "_scan_image_path": item.scan_image_path,
         })
 
     mismatches.sort(key=lambda m: -m["own_distance"])
