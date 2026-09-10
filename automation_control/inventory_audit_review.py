@@ -32,7 +32,8 @@ from .auth import require_dashboard_user
 from .config import get_settings
 from .database import get_session
 from .inventory_audit import find_mismatches
-from .models import InventoryItem, PhotoAuditDismissal, ShopListing
+from .models import CardSet, CatalogCard, InventoryItem, PhotoAuditDismissal, ShopListing
+from .scan_ingest.commit import _image_quality, _store_scan_image
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/inventory-audit", tags=["inventory-audit"])
@@ -132,6 +133,18 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
           "onsubmit=\"return confirm('Delete this listing and inventory item? This cannot be undone here.');\">"
         + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
         + "<button class='audit-btn audit-btn-delete' type='submit'>Delete listing &amp; item</button></form>"
+        + "</div>"
+        + "<div class='audit-refile'>"
+        + "<div class='audit-prompt'>Or, if it's the wrong card entirely -- re-file it</div>"
+        + "<form method='post' action='/inventory-audit/refile' class='audit-refile-form'>"
+        + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
+        + "<input name='set_code' placeholder='Set code, e.g. WHT' required>"
+        + "<input name='number' placeholder='Number, e.g. 055' required>"
+        + "<button class='audit-btn audit-btn-refile' type='submit'>Re-file to this card</button>"
+        + "</form>"
+        + "<p class='audit-refile-hint'>Read the set code and number straight off the photo -- "
+          "this drops any listing built for the wrong card and re-owns the item under the right one, "
+          "merging into an existing holding of that card if you already have one.</p>"
         + "</div></div>"
         + _STYLE
     )
@@ -179,6 +192,84 @@ def inventory_audit_use_stock_photo(
         raise HTTPException(status_code=404, detail="inventory item not found")
 
     item.scan_image_path = None
+    dismissal = session.scalar(select(PhotoAuditDismissal).where(PhotoAuditDismissal.inventory_item_id == item_id))
+    if dismissal is not None:
+        session.delete(dismissal)
+    session.commit()
+    return RedirectResponse("/inventory-audit", status_code=303)
+
+
+@router.post("/refile")
+def inventory_audit_refile(
+    item_id: str = Form(...),
+    set_code: str = Form(...),
+    number: str = Form(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    """The photo can be perfectly correct while the *identification* was
+    confidently wrong -- see scripts/audit_inventory_photos.py's own
+    docstring for a prior real case (a Joltik committed as a Gengar). Photo
+    audit's other actions all assume the photo is the problem; this is the
+    one for when the card it's filed under is. Reuses the same
+    merge-or-create logic /foil-review's variant correction already uses:
+    if the correct card is already held in this variant/condition, fold
+    this item's quantity and (if better) photo into it rather than leaving
+    a duplicate row.
+
+    Any listing built for the wrong card is dropped outright rather than
+    silently re-pointed -- its title and price were both set for a
+    different card, so it needs a fresh listing decision, not a patch."""
+    item = session.get(InventoryItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="inventory item not found")
+
+    card_set = session.scalar(select(CardSet).where(CardSet.code == set_code.strip().upper()))
+    if card_set is None:
+        raise HTTPException(status_code=400, detail=f"no set found with code '{set_code}'")
+
+    number = number.strip()
+    correct_card = session.scalar(
+        select(CatalogCard).where(CatalogCard.set_id == card_set.id, CatalogCard.number == number)
+    )
+    if correct_card is None and number.lstrip("0"):
+        correct_card = session.scalar(
+            select(CatalogCard).where(CatalogCard.set_id == card_set.id, CatalogCard.number == number.lstrip("0"))
+        )
+    if correct_card is None:
+        raise HTTPException(status_code=400, detail=f"no card found for {set_code} #{number}")
+
+    for listing in session.scalars(select(ShopListing).where(ShopListing.inventory_item_id == item_id)):
+        session.delete(listing)
+
+    existing = session.scalar(
+        select(InventoryItem).where(
+            InventoryItem.card_id == correct_card.id,
+            InventoryItem.variant == item.variant,
+            InventoryItem.condition == item.condition,
+            InventoryItem.id != item.id,
+        )
+    )
+    media_dir = Path(get_settings().scan_media_dir)
+    set_code_for_filename = card_set.code or card_set.id
+    if existing is not None:
+        existing.quantity += item.quantity
+        if item.scan_image_path and (
+            not existing.scan_image_path
+            or _image_quality(Path(item.scan_image_path)) > _image_quality(Path(existing.scan_image_path))
+        ):
+            stored = _store_scan_image(Path(item.scan_image_path), media_dir, set_code_for_filename,
+                                        correct_card.number, item.variant, item.condition)
+            existing.scan_image_path = str(stored)
+        session.delete(item)
+    else:
+        if item.scan_image_path:
+            stored = _store_scan_image(Path(item.scan_image_path), media_dir, set_code_for_filename,
+                                        correct_card.number, item.variant, item.condition)
+            item.scan_image_path = str(stored)
+        item.card_id = correct_card.id
+        item.catalog_item_id = correct_card.id
+
     dismissal = session.scalar(select(PhotoAuditDismissal).where(PhotoAuditDismissal.inventory_item_id == item_id))
     if dismissal is not None:
         session.delete(dismissal)
@@ -242,4 +333,14 @@ _STYLE = """<style>
 .audit-btn-stock:hover{border-color:var(--accent);color:var(--accent)}
 .audit-btn-delete{color:#e5484d;border-color:#e5484d55}
 .audit-btn-delete:hover{background:#e5484d15}
+
+.audit-refile{border-top:1px solid var(--panel-border);padding-top:14px;margin-top:4px}
+.audit-refile-form{display:flex;gap:8px;flex-wrap:wrap}
+.audit-refile-form input[type=text],.audit-refile-form input:not([type]){
+  flex:1 1 120px;padding:10px 12px;border-radius:8px;border:1px solid var(--panel-border);
+  background:var(--surface-sunken);color:var(--text);font-size:14px;
+}
+.audit-btn-refile{flex:1 1 160px;border-color:var(--accent);color:var(--accent)}
+.audit-btn-refile:hover{background:var(--accent);color:var(--panel)}
+.audit-refile-hint{font-size:12px;color:var(--text-dim);margin:8px 0 0}
 </style>"""

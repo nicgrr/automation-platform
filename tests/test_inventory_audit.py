@@ -10,7 +10,9 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.inventory_audit import find_mismatches
-from automation_control.models import CardVariant, CatalogCard, InventoryItem, PhotoAuditDismissal
+from automation_control.models import (
+    CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem, PhotoAuditDismissal, ShopListing,
+)
 from automation_control.scan_ingest.identify import art_phash
 
 
@@ -213,6 +215,90 @@ def test_deleting_the_item_hides_it_even_from_a_stale_cache(client, session, mis
 
     response = client.get("/inventory-audit")
     assert "Nothing flagged right now" in response.text
+
+
+def test_refile_moves_the_item_to_the_correct_card_with_no_existing_holding(client, session, mismatched_item):
+    """The bug this guards: the photo audit could tell you a photo was
+    wrong but never that the *identification* was wrong -- see
+    scripts/audit_inventory_photos.py's own docstring for a real prior
+    case (a Joltik committed as a Gengar). Delete-or-keep is wrong for
+    that case since the card is still genuinely owned."""
+    session.add(CardSet(id="set1", name="Set One", code="S1"))
+    session.commit()
+
+    response = client.post("/inventory-audit/refile",
+                            data={"item_id": "inv1", "set_code": "S1", "number": "2"},
+                            follow_redirects=False)
+    assert response.status_code == 303
+
+    session.expire_all()
+    item = session.get(InventoryItem, "inv1")
+    assert item is not None
+    assert item.card_id == "card-b"
+    assert item.catalog_item_id == "card-b"
+
+    assert "Nothing flagged right now" in client.get("/inventory-audit").text
+
+
+def test_refile_merges_into_an_existing_holding_of_the_correct_card(client, session, mismatched_item, tmp_path):
+    session.add(CardSet(id="set1", name="Set One", code="S1"))
+    existing_photo = tmp_path / "existing.jpg"
+    _pattern_image(existing_photo, seed=3)
+    session.add(InventoryItem(id="inv-existing", card_id="card-b", catalog_item_id="card-b",
+                               variant=CardVariant.NORMAL, quantity=2, scan_image_path=str(existing_photo)))
+    session.commit()
+
+    client.post("/inventory-audit/refile", data={"item_id": "inv1", "set_code": "S1", "number": "2"})
+
+    session.expire_all()
+    assert session.get(InventoryItem, "inv1") is None
+    assert session.get(InventoryItem, "inv-existing").quantity == 3
+
+
+def test_refile_drops_any_listing_built_for_the_wrong_card(client, session, mismatched_item):
+    session.add(CardSet(id="set1", name="Set One", code="S1"))
+    session.add(CatalogItem(id="card-a", item_type=CatalogItemType.TCG_CARD, name="Card A"))
+    session.add(ShopListing(id="listing1", catalog_item_id="card-a", inventory_item_id="inv1",
+                             title="Card A", price="10.00"))
+    session.commit()
+
+    client.post("/inventory-audit/refile", data={"item_id": "inv1", "set_code": "S1", "number": "2"})
+
+    assert session.get(ShopListing, "listing1") is None
+
+
+def test_refile_rejects_an_unknown_set_code(client, session, mismatched_item):
+    response = client.post("/inventory-audit/refile", data={"item_id": "inv1", "set_code": "NOPE", "number": "2"})
+    assert response.status_code == 400
+    session.expire_all()
+    assert session.get(InventoryItem, "inv1").card_id == "card-a"
+
+
+def test_refile_rejects_an_unknown_number(client, session, mismatched_item):
+    session.add(CardSet(id="set1", name="Set One", code="S1"))
+    session.commit()
+    response = client.post("/inventory-audit/refile", data={"item_id": "inv1", "set_code": "S1", "number": "999"})
+    assert response.status_code == 400
+
+
+def test_refile_tolerates_a_zero_padded_number_from_the_photo(client, session, mismatched_item):
+    """The photo often shows a zero-padded number ("002") while the
+    stored catalogue number is bare ("2")."""
+    session.add(CardSet(id="set1", name="Set One", code="S1"))
+    session.commit()
+
+    response = client.post("/inventory-audit/refile",
+                            data={"item_id": "inv1", "set_code": "s1", "number": "002"},
+                            follow_redirects=False)
+    assert response.status_code == 303
+    session.expire_all()
+    assert session.get(InventoryItem, "inv1").card_id == "card-b"
+
+
+def test_refile_form_is_present_on_the_review_page(client, mismatched_item):
+    response = client.get("/inventory-audit")
+    assert "/inventory-audit/refile" in response.text
+    assert "Re-file to this card" in response.text
 
 
 def test_review_requires_login():
