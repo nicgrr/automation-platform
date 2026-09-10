@@ -21,13 +21,13 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import get_session
 from automation_control.models import (
-    BulkLot, CardSet, CatalogItem, CatalogItemType, SealedProduct, ShippingRate, ShippingZone,
+    BulkLot, CardSet, CatalogCard, CatalogItem, CatalogItemType, SealedProduct, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, TcgCard,
 )
 
 from . import departments, discounts
 from .assets import GAME_LOGOS
-from .photos import router as photo_router
+from .photos import has_own_photo, router as photo_router
 from .brand import logo_lockup, logo_mark
 from .common import (
     CART_COOKIE, MAX_PER_LINE, _art, _is_web_url, _line_art, _money, _reference_image_url, cart_count,
@@ -156,6 +156,129 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     return f"<div class='dept-hero-mark'>{logo_mark(48)}</div>"
 
 
+# Curated, not queried "most expensive in stock" like _dept_hero -- this is
+# a one-time brand statement about what the shop *is* (Pokemon + One Piece
+# singles, collectible figures), not a live merchandising slot, so a
+# specific recognisable print beats whatever happens to be priced highest
+# today. Each falls back to any real print of the same character if this
+# exact one isn't cached yet, so a catalogue refresh can't blank the hero.
+_HERO_TCG_PICKS = [
+    ("sv4pt5-18", "Pikachu"),                  # 151 -- the most recognised modern Pikachu print
+    ("one-piece-op01-024", "Monkey.D.Luffy"),  # OP01's leader card -- One Piece TCG's own card one
+]
+
+
+def _catalog_image_url(session: Session, catalog_item_id: str) -> str | None:
+    """A real, hosted image for a TCG_CARD item, checking both places one
+    can live. CatalogItem.image_url turned out to hold a local scan-ingest
+    cache path for the vast majority of Pokemon rows (see
+    storefront/common.py::_is_web_url) -- the real publisher URL sits on
+    the legacy CatalogCard row instead, which a migrated Pokemon row
+    shares its id with (see CatalogItem's own docstring). One Piece rows
+    were never migrated through that path, so their CatalogItem.image_url
+    is already the real one -- hence checking both rather than assuming
+    either."""
+    item = session.get(CatalogItem, catalog_item_id)
+    if item is not None and _is_web_url(item.image_url):
+        return item.image_url
+    card = session.get(CatalogCard, catalog_item_id)
+    if card is not None and _is_web_url(card.image_url):
+        return card.image_url
+    return None
+
+
+def _any_catalog_image_url(session: Session, name: str) -> str | None:
+    """Fallback for _hero_tcg_art: any real print of this character, in
+    case the specific curated pick isn't cached yet."""
+    item = session.scalar(select(CatalogItem).where(CatalogItem.name == name, CatalogItem.image_url.isnot(None)))
+    if item is not None and _is_web_url(item.image_url):
+        return item.image_url
+    card = session.scalar(select(CatalogCard).where(CatalogCard.name == name, CatalogCard.image_url.isnot(None)))
+    if card is not None and _is_web_url(card.image_url):
+        return card.image_url
+    return None
+
+
+def _hero_tcg_art(session: Session) -> list[tuple[str, str]]:
+    """Real, hosted card art for the homepage's trading card panel.
+    Returns (image_url, alt_text) pairs, skipping any pick with no usable
+    image rather than showing a broken <img>."""
+    art = []
+    for item_id, name in _HERO_TCG_PICKS:
+        url = _catalog_image_url(session, item_id) or _any_catalog_image_url(session, name)
+        if url:
+            art.append((url, name))
+    return art
+
+
+def _hero_collectible_photo(session: Session) -> str | None:
+    """One real seller photo (see storefront/photos.py) from whichever
+    active collectible listing is currently priced highest -- the same
+    "most eye-catching in stock" logic _dept_hero uses for department
+    tiles, just restricted to items with an actual own-photo so the hero
+    never links out to a listing with nothing to show."""
+    rows = session.execute(
+        select(ShopListing)
+        .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
+        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+               CatalogItem.item_type == CatalogItemType.COLLECTIBLE)
+        .order_by(ShopListing.price.desc())
+    ).scalars().all()
+    for listing in rows:
+        if has_own_photo(session, listing.id):
+            return listing.id
+    return None
+
+
+def _hero_split(session: Session) -> str:
+    """The homepage's flagship visual: trading cards on one side, the
+    seller's own collectible photography on the other -- the two halves
+    of what this shop actually stocks, side by side rather than buried
+    under a generic "browse everything" tagline. Each pane degrades to a
+    plain colour panel (see .hero-pane-fallback) if its image isn't
+    available yet, same defensive spirit as _dept_hero's own fallback --
+    a homepage must never break because a catalogue query came back empty.
+    """
+    tcg_art = _hero_tcg_art(session)
+    tcg_cards = "".join(
+        f"<img class='hero-card hero-card-{i}' src='{escape(url)}' alt='{escape(alt)}' loading='eager'>"
+        for i, (url, alt) in enumerate(tcg_art)
+    )
+    tcg_fill = "" if tcg_art else " hero-pane-fallback"
+
+    collectible_listing_id = _hero_collectible_photo(session)
+    if collectible_listing_id:
+        collect_img = (
+            f"<img class='hero-pane-photo' src='/photo/{escape(collectible_listing_id)}' "
+            "alt='A collectible figure from the shop' loading='eager'>"
+        )
+        collect_fill = ""
+    else:
+        collect_img = ""
+        collect_fill = " hero-pane-fallback"
+
+    return (
+        "<div class='hero-split'>"
+        f"<a class='hero-pane hero-pane-tcg{tcg_fill}' href='/browse'>"
+        f"<div class='hero-pane-cards'>{tcg_cards}</div>"
+        "<div class='hero-pane-scrim'></div>"
+        "<div class='hero-pane-copy'>"
+        "<span class='hero-eyebrow'>Pok&eacute;mon &middot; One Piece &middot; more</span>"
+        "<h2>Trading Cards</h2>"
+        "<span class='hero-pane-cta'>Shop singles &rarr;</span>"
+        "</div></a>"
+        f"<a class='hero-pane hero-pane-collect{collect_fill}' href='/shop/collectibles'>"
+        f"{collect_img}"
+        "<div class='hero-pane-scrim'></div>"
+        "<div class='hero-pane-copy'>"
+        "<span class='hero-eyebrow'>Sonny Angel &middot; figures &middot; more</span>"
+        "<h2>Collectibles</h2>"
+        "<span class='hero-pane-cta'>Shop figures &rarr;</span>"
+        "</div></a>"
+        "</div>"
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     stocked = departments.in_stock(session)
@@ -167,6 +290,7 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
         "<a class='btn brass' href='/browse'>Browse the vault</a>"
         f"{social_icons_html(session)}"
         "</div></div>"
+        + (_hero_split(session) if stocked else "")
     )
 
     if not stocked:

@@ -308,11 +308,13 @@ footer a:hover{color:var(--teal-dark)}
 @media (prefers-reduced-motion:reduce){.social-icon{transition:none}}
 
 /* ---- home hero ----
-   A warm colour block instead of a plain white gallery wall -- the
-   wordmark and tagline carry the personality with a bold rounded face
-   instead of relying on background photography (a card showcase here
-   read as clutter -- see git history -- so the colour itself is the
-   visual interest, not a strip of thumbnails). */
+   The wordmark/tagline block below still carries the brand on its own --
+   no photography needed there. A full card showcase used to sit in *this*
+   spot too and got pulled (see git history) for reading as clutter: a
+   strip of small thumbnails competing with the wordmark for attention.
+   What replaced it, 2026-09-10, isn't that -- two large, deliberate
+   panes (trading cards / collectibles), not a strip, so it reads as one
+   curated visual statement rather than more inventory to parse. */
 .hero-banner{background:linear-gradient(180deg,var(--bone) 0%,var(--paper) 100%)}
 .hero-inner{
   max-width:1180px;margin:0 auto;padding:64px 22px 56px;
@@ -336,6 +338,61 @@ footer a:hover{color:var(--teal-dark)}
 
 @media (max-width:560px){
   .hero-inner{padding:44px 22px 40px}
+}
+
+/* ---- home hero: trading cards / collectibles split ---- */
+.hero-split{display:grid;grid-template-columns:1fr 1fr;gap:3px;background:var(--ink)}
+.hero-pane{
+  position:relative;display:block;overflow:hidden;isolation:isolate;
+  min-height:min(58vh,520px);
+}
+.hero-pane-tcg{background:radial-gradient(120% 130% at 20% 15%,var(--brass-lit) 0%,#3a2a10 60%,var(--ink) 100%)}
+.hero-pane-collect{background:radial-gradient(120% 130% at 80% 15%,var(--pink-dark) 0%,#3a1226 60%,var(--ink) 100%)}
+
+.hero-pane-cards{position:absolute;inset:0;display:grid;place-items:center}
+.hero-card{
+  position:absolute;width:min(46%,260px);border-radius:14px;box-shadow:0 22px 50px rgba(0,0,0,.5);
+  object-fit:cover;aspect-ratio:5/7;
+}
+.hero-card-0{transform:rotate(-9deg) translate(-38%,2%);z-index:1}
+.hero-card-1{transform:rotate(7deg) translate(30%,-4%);z-index:2}
+.hero-pane-tcg:hover .hero-card-0{transform:rotate(-13deg) translate(-42%,0)}
+.hero-pane-tcg:hover .hero-card-1{transform:rotate(11deg) translate(34%,-8%)}
+
+.hero-pane-photo{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  transition:transform .7s cubic-bezier(.2,.7,.2,1);
+}
+.hero-pane-collect:hover .hero-pane-photo{transform:scale(1.06)}
+
+.hero-pane-scrim{
+  position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(0,0,0,0) 38%,rgba(0,0,0,.72) 100%);
+}
+.hero-pane-copy{
+  position:absolute;left:0;right:0;bottom:0;padding:26px 28px 30px;color:#fff;
+  display:flex;flex-direction:column;gap:6px;
+}
+.hero-eyebrow{
+  font-family:'Baloo 2',sans-serif;font-weight:700;font-size:12px;letter-spacing:.14em;
+  text-transform:uppercase;opacity:.85;
+}
+.hero-pane-copy h2{margin:0;font-family:'Baloo 2',sans-serif;font-weight:800;font-size:clamp(26px,4vw,38px)}
+.hero-pane-cta{
+  font-weight:800;font-size:14px;margin-top:4px;
+  border-bottom:2px solid rgba(255,255,255,.5);padding-bottom:2px;width:fit-content;
+  transition:border-color .2s ease;
+}
+.hero-pane:hover .hero-pane-cta{border-color:#fff}
+.hero-pane-fallback .hero-pane-copy{position:static;padding:30px 28px;height:100%;justify-content:center}
+.hero-pane-fallback .hero-pane-scrim{display:none}
+
+@media (max-width:760px){
+  .hero-split{grid-template-columns:1fr}
+  .hero-pane{min-height:64vw}
+}
+@media (prefers-reduced-motion:reduce){
+  .hero-card, .hero-pane-photo, .hero-pane-cta{transition:none}
 }
 </style>"""
 
@@ -364,9 +421,11 @@ NAV_SCRIPT = """<script>
 # order, so this is deliberate, not an oversight.
 #
 # Kept to what GSAP is actually good at and no further: a one-time
-# entrance on the hero, and a fade-up the first time a product tile
-# scrolls into view. No bounce, no colour, no looping -- motion here is
-# a courtesy, not a feature, and prefers-reduced-motion skips all of it.
+# entrance on the hero and its two showcase panes, a fade-up the first
+# time a product tile scrolls into view, and a slight parallax drift on
+# the hero panes' own images while they're on screen. No bounce, no
+# looping, nothing that runs forever -- motion here is a courtesy, not a
+# feature, and prefers-reduced-motion skips all of it.
 GSAP_SCRIPT = """<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js'></script>
 <script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js'></script>
 <script>
@@ -379,6 +438,11 @@ GSAP_SCRIPT = """<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5
     gsap.from(hero.children, {opacity: 0, y: 16, duration: 0.6, ease: 'power2.out', stagger: 0.08});
   }
 
+  var panes = gsap.utils.toArray('.hero-pane');
+  if (panes.length) {
+    gsap.from(panes, {opacity: 0, y: 24, duration: 0.7, ease: 'power2.out', stagger: 0.12, delay: 0.15});
+  }
+
   if (typeof ScrollTrigger !== 'undefined') {
     gsap.registerPlugin(ScrollTrigger);
     gsap.utils.toArray('.dept-card, .grid .card').forEach(function(el){
@@ -387,6 +451,14 @@ GSAP_SCRIPT = """<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5
         scrollTrigger: {trigger: el, start: 'top 92%', once: true},
       });
     });
+
+    var heroSplit = document.querySelector('.hero-split');
+    if (heroSplit) {
+      gsap.to('.hero-pane-photo, .hero-pane-cards', {
+        yPercent: 8, ease: 'none',
+        scrollTrigger: {trigger: heroSplit, start: 'top top', end: 'bottom top', scrub: true},
+      });
+    }
   }
 })();
 </script>"""
