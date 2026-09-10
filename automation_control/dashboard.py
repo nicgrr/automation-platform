@@ -216,6 +216,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
       <a href="/scan-ingest">Status &amp; logs</a>
       <a href="/review">Review queue ({review_count})</a>
       <a href="/foil-review">Foil review</a>
+      <a href="/inventory-audit">Photo audit</a>
       <a href="/search">Search catalogue</a>
     </div>
     <div class="quicklink-group">

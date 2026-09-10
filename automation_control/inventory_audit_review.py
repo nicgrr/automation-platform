@@ -1,0 +1,157 @@
+"""Turn scripts/audit_inventory_photos.py's hourly findings into something a
+human actually works through, instead of a log file nobody reads.
+
+That script has been flagging real mismatches (2026-09-10: 237 of 1,619
+items, ~15% of the catalogue) since inventory-audit.timer started running
+it -- confirmed live against a "151 Tangela #178" listing whose stored
+photo was an unrelated, uncropped multi-card sheet. Nothing was surfacing
+that backlog anywhere a person would see it. This page shows the single
+most-confident mismatch, lets a human either confirm it's a false positive
+(a foil or edge-crop that legitimately hashes far from its own reference --
+see that script's docstring) or delete the bad listing/item outright, and
+moves to the next one. Mirrors /foil-review's tap-through shape.
+"""
+
+import uuid
+from html import escape
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .auth import require_dashboard_user
+from .database import get_session
+from .inventory_audit import find_mismatches
+from .models import InventoryItem, PhotoAuditDismissal, ShopListing
+from .ui import brand_header, page
+
+router = APIRouter(prefix="/inventory-audit", tags=["inventory-audit"])
+
+
+def _dismissed_item_ids(session: Session) -> set[str]:
+    return set(session.scalars(select(PhotoAuditDismissal.inventory_item_id)))
+
+
+def _pending(session: Session) -> list[dict]:
+    dismissed = _dismissed_item_ids(session)
+    return [m for m in find_mismatches(session) if m["item_id"] not in dismissed]
+
+
+@router.get("", response_class=HTMLResponse)
+def inventory_audit_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+    pending = _pending(session)
+    dismissed_count = session.query(PhotoAuditDismissal).count()
+
+    header = (
+        brand_header("Inventory photo audit")
+        + "<p class='subtitle'>Items whose stored photo doesn't hash close to the card they're filed under. "
+          "Higher \"d\" means more confident -- shown worst first. Some are genuine mistakes "
+          "(wrong scan, uncropped sheet); some are false positives (a foil or crop that hashes "
+          "oddly against its own reference). Look at the photo before acting.</p>"
+        + "<div class='stat-grid'>"
+        + f"<div class='stat-card'><div class='label'>Flagged, awaiting review</div><div class='value'>{len(pending)}</div></div>"
+        + f"<div class='stat-card'><div class='label'>Dismissed as false positives</div><div class='value'>{dismissed_count}</div></div>"
+        + "</div>"
+    )
+
+    if not pending:
+        body = header + "<div class='panel'><p>Nothing flagged right now.</p></div>"
+        return HTMLResponse(page("EzBay — Inventory photo audit", body + _STYLE))
+
+    m = pending[0]
+    thumb = f"<img src='/inventory-audit/image/{escape(m['item_id'])}' alt='' loading='lazy' decoding='async'>"
+
+    body = (
+        header
+        + "<div class='audit-card'>"
+        + f"<a class='audit-face' href='/inventory-audit/image/{escape(m['item_id'])}' target='_blank' rel='noopener'>{thumb}</a>"
+        + f"<div class='audit-row'><span class='audit-tag'>filed as</span>{escape(m['filed_label'])}"
+          f"<span class='audit-d'>d{m['own_distance']}</span></div>"
+        + f"<div class='audit-row'><span class='audit-tag'>looks like</span>{escape(m['looks_like_label'])}"
+          f"<span class='audit-d'>d{m['looks_like_distance']}</span></div>"
+        + "<div class='audit-prompt'>What should happen to this listing?</div>"
+        + "<div class='audit-actions'>"
+        + "<form method='post' action='/inventory-audit/dismiss'>"
+        + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
+        + f"<input type='hidden' name='own_distance' value='{m['own_distance']}'>"
+        + "<button class='audit-btn audit-btn-keep' type='submit'>Photo's fine, keep it</button></form>"
+        + "<form method='post' action='/inventory-audit/delete' "
+          "onsubmit=\"return confirm('Delete this listing and inventory item? This cannot be undone here.');\">"
+        + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
+        + "<button class='audit-btn audit-btn-delete' type='submit'>Delete listing &amp; item</button></form>"
+        + "</div></div>"
+        + _STYLE
+    )
+    return HTMLResponse(page("EzBay — Inventory photo audit", body))
+
+
+@router.post("/dismiss")
+def inventory_audit_dismiss(
+    item_id: str = Form(...),
+    own_distance: int = Form(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    existing = session.scalar(select(PhotoAuditDismissal).where(PhotoAuditDismissal.inventory_item_id == item_id))
+    if existing is None:
+        session.add(PhotoAuditDismissal(
+            id=str(uuid.uuid4()), inventory_item_id=item_id,
+            own_distance_at_dismissal=own_distance, dismissed_by=user,
+        ))
+        session.commit()
+    return RedirectResponse("/inventory-audit", status_code=303)
+
+
+@router.post("/delete")
+def inventory_audit_delete(
+    item_id: str = Form(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    item = session.get(InventoryItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="inventory item not found")
+
+    for listing in session.scalars(select(ShopListing).where(ShopListing.inventory_item_id == item_id)):
+        session.delete(listing)
+    dismissal = session.scalar(select(PhotoAuditDismissal).where(PhotoAuditDismissal.inventory_item_id == item_id))
+    if dismissal is not None:
+        session.delete(dismissal)
+    session.delete(item)
+    session.commit()
+    return RedirectResponse("/inventory-audit", status_code=303)
+
+
+@router.get("/image/{item_id}")
+def inventory_audit_image(item_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    item = session.get(InventoryItem, item_id)
+    if item is None or not item.scan_image_path:
+        raise HTTPException(status_code=404, detail="no photo for that item")
+    path = Path(item.scan_image_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="photo file missing")
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=300"})
+
+
+_STYLE = """<style>
+.audit-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:16px;
+  padding:20px;display:flex;flex-direction:column;gap:10px;max-width:480px;margin:0 auto}
+.audit-face{display:block;border-radius:12px;overflow:hidden;background:var(--surface-sunken);
+  aspect-ratio:5/7;max-height:56vh;margin:0 auto}
+.audit-face img{width:100%;height:100%;object-fit:contain;display:block}
+.audit-row{display:flex;align-items:center;gap:8px;font-size:14px}
+.audit-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-dim);background:var(--surface-sunken);padding:2px 7px;border-radius:999px;flex-shrink:0}
+.audit-d{margin-left:auto;font-family:monospace;font-size:12px;color:var(--text-dim)}
+.audit-prompt{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);
+  text-align:center;margin-top:6px}
+.audit-actions{display:flex;gap:10px;flex-wrap:wrap}
+.audit-actions form{flex:1 1 140px}
+.audit-btn{width:100%;padding:14px 10px;border-radius:10px;font-size:14px;font-weight:700;
+  cursor:pointer;border:1px solid var(--panel-border);background:none;color:var(--text)}
+.audit-btn-keep:hover{border-color:var(--accent-2);color:var(--accent-2)}
+.audit-btn-delete{color:#e5484d;border-color:#e5484d55}
+.audit-btn-delete:hover{background:#e5484d15}
+</style>"""

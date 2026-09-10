@@ -1321,6 +1321,27 @@ class SocialLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PhotoAuditDismissal(Base):
+    """A human's "this is fine" verdict on a flagged photo/card mismatch.
+
+    scripts/audit_inventory_photos.py's hash comparison is triage, not a
+    verdict (see its own docstring) -- a crop catching the edge of the next
+    card, or a foil, can hash badly against its own reference without being
+    the wrong card. Without this, every /inventory-audit run would re-show
+    the same false positive forever. Recorded per item rather than by
+    silently raising the threshold, since the fix is "a human looked and
+    confirmed" for that one photo, not a global tolerance change.
+    """
+
+    __tablename__ = "photo_audit_dismissals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    inventory_item_id: Mapped[str] = mapped_column(ForeignKey("inventory_items.id"), unique=True, index=True)
+    own_distance_at_dismissal: Mapped[int] = mapped_column(Integer)
+    dismissed_by: Mapped[str] = mapped_column(String(128))
+    dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ContactMessage(Base):
     """A message from the shop's Contact page.
 

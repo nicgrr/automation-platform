@@ -27,6 +27,7 @@ from .deal_check import router as deal_check_router
 from .database import Base, engine, get_session
 from .ebay_oauth import OAuthError, authorization_url, configured, consume_oauth_state, ebay_services, new_oauth_state, store_user_tokens, valid_user_access_token
 from .foil_review import router as foil_review_router
+from .inventory_audit_review import router as inventory_audit_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
 from .market_search import router as market_search_router
@@ -68,6 +69,7 @@ app.include_router(scan_ingest_status_router)
 app.include_router(review_router)
 app.include_router(scan_feed_router)
 app.include_router(foil_review_router)
+app.include_router(inventory_audit_router)
 app.include_router(search_router)
 app.include_router(buying_router)
 app.include_router(commerce_router)
