@@ -9,7 +9,7 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem,
+    CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem,
     Marketplace, PotentialPurchase, PotentialPurchaseStatus, Sale, TcgCard,
 )
 
@@ -70,6 +70,62 @@ def test_inventory_priced_gauge_reflects_real_coverage(client, session):
 
     assert "0%" in response.text  # no CardPrice row exists yet -> 0% priced
     assert "0 of 1 holdings" in response.text
+
+
+def test_priced_gauge_counts_a_holding_with_no_legacy_card_id(client, session):
+    """The bug this guards: One Piece, Personal Collection, and
+    collectible holdings all have card_id=None (only Pokemon's legacy
+    CatalogCard path sets it) and are priced by catalog_item_id -- the
+    gauge used to look prices up by card_id and silently missed every
+    one of them, undercounting real coverage."""
+    session.add(CatalogItem(id="one-piece-op01-1", item_type=CatalogItemType.TCG_CARD, name="Roronoa Zoro"))
+    session.add(TcgCard(catalog_item_id="one-piece-op01-1", game="one_piece", number="1"))
+    session.add(InventoryItem(id="inv1", card_id=None, catalog_item_id="one-piece-op01-1",
+                              variant=CardVariant.NORMAL, quantity=1))
+    session.add(CardPrice(id="p1", card_id="one-piece-op01-1", source="ebay_active_low", price=Decimal("5.00")))
+    session.commit()
+
+    response = client.get("/dashboard")
+
+    assert "100%" in response.text
+    assert "1 of 1 holdings" in response.text
+
+
+def test_priced_gauge_excludes_personal_collection(client, session):
+    """Personal Collection items are held privately, off the shop -- a
+    sales-facing coverage metric shouldn't be diluted by what isn't for
+    sale, priced or not."""
+    from automation_control.models import InventoryStatus
+
+    session.add(CatalogItem(id="item-1", item_type=CatalogItemType.TCG_CARD, name="Kept Card"))
+    session.add(TcgCard(catalog_item_id="item-1", game="pokemon", number="1"))
+    session.add(InventoryItem(id="inv1", card_id=None, catalog_item_id="item-1", variant=CardVariant.NORMAL,
+                              quantity=1, status=InventoryStatus.PERSONAL_COLLECTION))
+    session.commit()
+
+    response = client.get("/dashboard")
+
+    assert "0 of 0 holdings" in response.text
+
+
+def test_collectible_value_is_grouped_by_brand_not_unknown(client, session):
+    """A Sonny Angel figure has no TCG `game` at all -- that's not a data
+    gap, it's a different product type, so it should show up as its own
+    brand in the value breakdown rather than a bare "unknown" bucket that
+    reads as a bug next to "pokemon"/"one_piece"."""
+    from automation_control.models import CollectibleProduct
+
+    session.add(CatalogItem(id="figure-1", item_type=CatalogItemType.COLLECTIBLE, name="Kappa"))
+    session.add(CollectibleProduct(catalog_item_id="figure-1", brand="Sonny Angel"))
+    session.add(InventoryItem(id="inv1", card_id=None, catalog_item_id="figure-1",
+                              variant=CardVariant.NORMAL, quantity=1))
+    session.add(CardPrice(id="p1", card_id="figure-1", source="ebay_active_low", price=Decimal("40.00")))
+    session.commit()
+
+    response = client.get("/dashboard")
+
+    assert "Sonny Angel" in response.text
+    assert "unknown" not in response.text.lower()
 
 
 def test_quick_links_to_every_module_are_present(client):

@@ -22,7 +22,7 @@ from .charts import CHART_STYLE, bar_list, donut_chart, donut_legend, gauge_char
 from .database import get_session
 from .inventory_review import _aud, _latest_ebay_prices, _latest_prices
 from .models import (
-    AuditEvent, CapturedCard, CardCaptureStatus, InventoryItem, Marketplace,
+    AuditEvent, CapturedCard, CardCaptureStatus, CollectibleProduct, InventoryItem, InventoryStatus, Marketplace,
     PendingListing, ListingBuildStatus, PotentialPurchase, PotentialPurchaseStatus,
     PricingStatus, Sale, TcgCard,
 )
@@ -59,23 +59,42 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     catalog_by_game = session.execute(select(TcgCard.game, func.count()).group_by(TcgCard.game)).all()
 
     # -- inventory value + pricing-coverage gauge --
-    items = session.scalars(select(InventoryItem)).all()
-    prices = _latest_prices(session, {i.card_id for i in items})
-    ebay_prices = _latest_ebay_prices(session, {i.card_id for i in items})
+    # Personal Collection is deliberately excluded: those items are held
+    # privately, off the shop, until explicitly promoted (see
+    # personal_collection.py) -- a sales-facing coverage metric measuring
+    # what's actually for sale shouldn't be diluted by what isn't.
+    items = session.scalars(select(InventoryItem).where(InventoryItem.status != InventoryStatus.PERSONAL_COLLECTION)).all()
+    # CardPrice.card_id actually lives in the generic catalog_item_id
+    # id-space (see CardPrice's own docstring and every recent importer --
+    # One Piece, Personal Collection, collectibles all price by
+    # catalog_item_id), not InventoryItem.card_id, which is a Pokemon-only
+    # legacy field left null for anything imported through the newer
+    # generic catalog. Keying this lookup off card_id silently missed
+    # every non-Pokemon-legacy holding's real, already-fetched price --
+    # confirmed: this test showed 100% coverage by catalog_item_id for
+    # the same holdings this dashboard reported at 64%.
+    prices = _latest_prices(session, {i.catalog_item_id for i in items})
+    ebay_prices = _latest_ebay_prices(session, {i.catalog_item_id for i in items})
     market_value = 0.0
     priced_count = 0
     game_values: dict[str, float] = {}
     tcg_games = {row[0]: row[1] for row in session.execute(select(TcgCard.catalog_item_id, TcgCard.game)).all()}
+    # Non-TCG holdings (Sonny Angel and similar figures) have no `game` at
+    # all -- that's not a data gap, they're a genuinely different product
+    # type, but lumping all of them into a bare "unknown" bucket next to
+    # "pokemon"/"one_piece" reads as a bug rather than what it is. Grouped
+    # by brand instead, same as everywhere else these are shown.
+    collectible_brands = {row[0]: row[1] for row in session.execute(select(CollectibleProduct.catalog_item_id, CollectibleProduct.brand)).all()}
     for i in items:
         # falls back to the variant-agnostic eBay figure exactly like
         # /inventory does, so the dashboard's total can't disagree with
         # the page it links to
-        price = prices.get((i.card_id, i.variant)) or ebay_prices.get(i.card_id)
+        price = prices.get((i.catalog_item_id, i.variant)) or ebay_prices.get(i.catalog_item_id)
         value = _aud(price, i.quantity) or 0.0
         if price is not None:
             priced_count += 1
         market_value += value
-        game = tcg_games.get(i.card_id, "unknown")
+        game = tcg_games.get(i.catalog_item_id) or collectible_brands.get(i.catalog_item_id) or "unknown"
         game_values[game] = game_values.get(game, 0.0) + value
     priced_pct = (priced_count / len(items) * 100) if items else 0.0
     scanned_holdings, scanned_copies = len(items), sum(i.quantity for i in items)
