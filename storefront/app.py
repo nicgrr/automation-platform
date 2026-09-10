@@ -287,7 +287,6 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
         "<div class='hero-inner'>"
         f"<h1 class='hero-brand'>{logo_lockup()}</h1>"
         "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
-        "<a class='btn brass' href='/browse'>Browse the vault</a>"
         f"{social_icons_html(session)}"
         "</div></div>"
         + (_hero_split(session) if stocked else "")
