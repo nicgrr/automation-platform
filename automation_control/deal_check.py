@@ -33,10 +33,53 @@ from .card_recognition import ExtractedListingItem, RecognitionError, extract_li
 from .config import get_settings
 from .database import get_session
 from .inventory_review import _aud, _latest_prices
-from .models import CatalogItem, TcgCard
+from .models import CatalogItem, SealedProduct, TcgCard
 from .ui import brand_header, page, pill
 
 router = APIRouter(prefix="/deal-check", tags=["deal-check"])
+
+# Words too generic to count as a real match signal on their own -- every
+# Pokemon listing says "Pokemon" and "TCG", so scoring on raw word overlap
+# would let two unrelated products both called "Pokemon TCG ... Box" match
+# each other.
+_SEALED_STOPWORDS = {
+    "pokemon", "pokémon", "tcg", "one", "piece", "the", "and", "box", "sealed",
+    "new", "factory", "trading", "card", "game", "set",
+}
+
+
+def _sealed_name_tokens(text: str) -> set[str]:
+    return {w for w in "".join(c if c.isalnum() else " " for c in text.lower()).split() if w not in _SEALED_STOPWORDS}
+
+
+def match_sealed_product(session: Session, description: str) -> CatalogItem | None:
+    """Elite Trainer Boxes, booster boxes, displays -- these have no set
+    code or card number to key off (match_listing_item's usual approach),
+    so this matches on the listing's free-text title instead: whichever
+    sealed product shares the most of its own distinctive name-words with
+    the listing wins, as long as it clears a real bar (at least 2 words,
+    and most of the product's own name accounted for) rather than a loose
+    guess. Deliberately conservative -- a wrong sealed-product match would
+    show a shopper someone else's price."""
+    listing_words = _sealed_name_tokens(description)
+    if not listing_words:
+        return None
+
+    best: tuple[float, CatalogItem] | None = None
+    rows = session.execute(select(CatalogItem, SealedProduct).join(SealedProduct, SealedProduct.catalog_item_id == CatalogItem.id))
+    for catalog_item, _sealed in rows:
+        product_words = _sealed_name_tokens(catalog_item.name)
+        if len(product_words) < 2:
+            continue
+        overlap = product_words & listing_words
+        if len(overlap) < 2:
+            continue
+        coverage = len(overlap) / len(product_words)
+        if coverage < 0.6:
+            continue
+        if best is None or coverage > best[0]:
+            best = (coverage, catalog_item)
+    return best[1] if best else None
 
 
 def _normalized_number(raw: str) -> str:
@@ -117,15 +160,39 @@ async def deal_check_extract(
     for item in extracted_items:
         match = match_listing_item(session, item)
         market_value = None
+        market_value_is_rrp = False
         catalog_name = None
         catalog_item_id = None
+        matched_item: CatalogItem | None = None
+
         if match is not None:
-            catalog_item, tcg_card = match
-            catalog_item_id = catalog_item.id
-            catalog_name = catalog_item.name
-            prices = _latest_prices(session, {catalog_item.id})
+            matched_item, _tcg_card = match
+            prices = _latest_prices(session, {matched_item.id})
             price = next(iter(prices.values()), None)
             market_value = _aud(price)
+        else:
+            # No card fields to key off at all (set_code/card_number are
+            # meaningless on a box) -- try matching the listing's title
+            # against sealed products instead. There's no market-price
+            # feed for sealed product yet (see this module's docstring),
+            # so RRP stands in as a labelled reference rather than a bare
+            # "no data" a shopper has nothing to weigh a box deal against.
+            sealed_item = match_sealed_product(session, item.description)
+            if sealed_item is not None:
+                matched_item = sealed_item
+                prices = _latest_prices(session, {sealed_item.id})
+                price = next(iter(prices.values()), None)
+                if price is not None:
+                    market_value = _aud(price)
+                else:
+                    sealed = session.get(SealedProduct, sealed_item.id)
+                    if sealed is not None and sealed.rrp is not None:
+                        market_value = float(sealed.rrp)
+                        market_value_is_rrp = True
+
+        if matched_item is not None:
+            catalog_item_id = matched_item.id
+            catalog_name = matched_item.name
 
         acquisition_pct = (Decimal(str(item.asking_price)) / Decimal(str(market_value)) * 100) if market_value else None
         kind, label = traffic_light(acquisition_pct, config)
@@ -133,8 +200,9 @@ async def deal_check_extract(
         results.append({
             "description": item.description, "set_code": item.set_code, "card_number": item.card_number,
             "condition": item.condition, "asking_price": item.asking_price if "asking_price" not in item.unreadable_fields else None,
-            "matched": match is not None, "catalog_item_id": catalog_item_id, "catalog_name": catalog_name,
-            "market_value": market_value, "verdict": label, "verdict_kind": kind,
+            "matched": matched_item is not None, "catalog_item_id": catalog_item_id, "catalog_name": catalog_name,
+            "market_value": market_value, "market_value_is_rrp": market_value_is_rrp,
+            "verdict": label, "verdict_kind": kind,
         })
 
     record_event(session, actor_type="user", actor_id=user, action="deal_check.extract", resource_type="deal_check", resource_id=None, outcome="success", correlation_id=str(uuid.uuid4()), details={"count": len(results), "matched": sum(1 for r in results if r["matched"])})
@@ -225,7 +293,9 @@ _SCRIPT = """<script>
           var code = document.createElement('span');
           code.className = 'dc-code';
           code.setAttribute('data-label', 'Set/No.');
-          code.textContent = (item.set_code || '?') + '-' + (item.card_number || '?');
+          code.textContent = (item.set_code || item.card_number)
+            ? (item.set_code || '?') + '-' + (item.card_number || '?')
+            : (item.catalog_name || 'no card no.');
           row.appendChild(code);
 
           var asking = document.createElement('span');
@@ -235,7 +305,9 @@ _SCRIPT = """<script>
 
           var market = document.createElement('span');
           market.setAttribute('data-label', 'Market');
-          market.textContent = item.market_value != null ? '$' + item.market_value.toFixed(2) : 'no data';
+          market.textContent = item.market_value != null
+            ? '$' + item.market_value.toFixed(2) + (item.market_value_is_rrp ? ' (RRP)' : '')
+            : 'no data';
           row.appendChild(market);
 
           var verdict = document.createElement('span');

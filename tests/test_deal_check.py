@@ -12,7 +12,7 @@ from automation_control.auth import require_dashboard_user
 from automation_control.card_recognition import ExtractedListingItem
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    BuyThresholdConfig, CardPrice, CardVariant, CatalogItem, CatalogItemType, TcgCard,
+    BuyThresholdConfig, CardPrice, CardVariant, CatalogItem, CatalogItemType, SealedProduct, TcgCard,
 )
 
 
@@ -47,6 +47,12 @@ def _seed_priced_pokemon_card(session, catalog_item_id="pikachu-58", price=100):
 def _seed_unpriced_one_piece_card(session, catalog_item_id="op17-062"):
     session.add(CatalogItem(id=catalog_item_id, item_type=CatalogItemType.TCG_CARD, name="Kaido"))
     session.add(TcgCard(catalog_item_id=catalog_item_id, game="one_piece", set_code="OP17", number="062"))
+    session.commit()
+
+
+def _seed_sealed_product(session, catalog_item_id, name, rrp=None, game="pokemon"):
+    session.add(CatalogItem(id=catalog_item_id, item_type=CatalogItemType.SEALED_PRODUCT, name=name))
+    session.add(SealedProduct(catalog_item_id=catalog_item_id, game=game, product_type="etb", rrp=rrp))
     session.commit()
 
 
@@ -166,3 +172,91 @@ def test_page_results_table_is_responsive_on_narrow_screens(client):
     resp = client.get("/deal-check")
     assert "@media (max-width: 640px)" in resp.text
     assert "data-label" in resp.text
+
+
+# --- sealed products: ETBs, booster boxes -- no set code/card number ------
+
+def test_sealed_product_matches_by_title_and_falls_back_to_rrp(client, session):
+    """Regression: an ETB/booster box listing has no set code or card
+    number to key match_listing_item's usual lookup off, and there's no
+    live market-price feed for sealed product yet -- both used to mean a
+    bare "no data", with nothing for a shopper to weigh the deal against."""
+    _seed_sealed_product(session, "sv6pt5-etb", "Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",
+                          rrp=Decimal("84.95"))
+    fake = ExtractedListingItem(
+        description="POKÉMON TCG Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",
+        set_code="", card_number="", condition="new", asking_price=135.0,
+        unreadable_fields=["set_code", "card_number"],
+    )
+    with patch("automation_control.deal_check.extract_listing_items", return_value=[fake]):
+        resp = client.post("/deal-check/extract", data={"text": "shrouded fable etb $135"})
+
+    result = resp.json()["results"][0]
+    assert result["matched"] is True
+    assert result["catalog_name"] == "Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box"
+    assert result["market_value"] == pytest.approx(84.95)
+    assert result["market_value_is_rrp"] is True
+
+
+def test_sealed_product_prefers_a_real_market_price_over_rrp(client, session):
+    _seed_sealed_product(session, "sv6pt5-etb", "Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",
+                          rrp=Decimal("84.95"))
+    session.add(CardPrice(card_id="sv6pt5-etb", variant=CardVariant.NORMAL, source="test", price=110, currency="AUD"))
+    session.commit()
+    fake = ExtractedListingItem(
+        description="Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",
+        set_code="", card_number="", condition="new", asking_price=135.0, unreadable_fields=["set_code", "card_number"],
+    )
+    with patch("automation_control.deal_check.extract_listing_items", return_value=[fake]):
+        resp = client.post("/deal-check/extract", data={"text": "shrouded fable etb $135"})
+
+    result = resp.json()["results"][0]
+    assert result["market_value"] == pytest.approx(110.0)
+    assert result["market_value_is_rrp"] is False
+
+
+def test_sealed_product_matching_distinguishes_between_two_similar_boxes(client, session):
+    _seed_sealed_product(session, "sv5-etb", "Pokemon Scarlet & Violet 5 Temporal Forces Elite Trainer Box",
+                          rrp=Decimal("79.95"))
+    _seed_sealed_product(session, "sv6pt5-etb", "Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",
+                          rrp=Decimal("84.95"))
+    fake = ExtractedListingItem(
+        description="Pokemon Scarlet & Violet 5 Temporal Forces Elite Trainer Box",
+        set_code="", card_number="", condition="new", asking_price=100.0, unreadable_fields=["set_code", "card_number"],
+    )
+    with patch("automation_control.deal_check.extract_listing_items", return_value=[fake]):
+        resp = client.post("/deal-check/extract", data={"text": "temporal forces etb $100"})
+
+    result = resp.json()["results"][0]
+    assert result["catalog_name"] == "Pokemon Scarlet & Violet 5 Temporal Forces Elite Trainer Box"
+
+
+def test_sealed_product_matching_requires_more_than_generic_words(client, session):
+    """"Pokemon", "TCG", and "box" appear on nearly every sealed-product
+    listing -- matching on those alone would confidently match the wrong
+    product just as often as the right one."""
+    _seed_sealed_product(session, "sv6pt5-etb", "Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",
+                          rrp=Decimal("84.95"))
+    fake = ExtractedListingItem(
+        description="Pokemon TCG mystery box", set_code="", card_number="", condition="new",
+        asking_price=20.0, unreadable_fields=["set_code", "card_number"],
+    )
+    with patch("automation_control.deal_check.extract_listing_items", return_value=[fake]):
+        resp = client.post("/deal-check/extract", data={"text": "pokemon tcg mystery box $20"})
+
+    assert resp.json()["results"][0]["matched"] is False
+
+
+def test_one_piece_sealed_product_also_matches(client, session):
+    _seed_sealed_product(session, "op11-box", "One Piece OP11 A Fist of Divine Speed Booster Box",
+                          rrp=Decimal("144.00"), game="one_piece")
+    fake = ExtractedListingItem(
+        description="One Piece OP11 A Fist of Divine Speed Booster Box", set_code="", card_number="",
+        condition="new", asking_price=180.0, unreadable_fields=["set_code", "card_number"],
+    )
+    with patch("automation_control.deal_check.extract_listing_items", return_value=[fake]):
+        resp = client.post("/deal-check/extract", data={"text": "op11 booster box $180"})
+
+    result = resp.json()["results"][0]
+    assert result["matched"] is True
+    assert result["market_value"] == pytest.approx(144.0)
