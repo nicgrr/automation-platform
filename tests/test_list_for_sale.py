@@ -67,6 +67,28 @@ def test_the_floor_applies_after_the_margin_flag_not_instead_of_it(session):
     assert listing.price == Decimal("88.00")  # +10%, well above the floor either way
 
 
+def test_a_very_cheap_item_is_capped_at_2x_market_instead_of_the_flat_floor(session):
+    """The profit floor is a flat dollar amount from shop costs, not scaled
+    to the item's own value -- a genuinely tiny market value could
+    otherwise be raised many multiples over it (confirmed live 2026-09-11:
+    bulk commons worth ~$1 listed at $3.99-$14.99 under an earlier, higher
+    cost config). Capped at 2x market instead, even though that leaves
+    this specific listing below the shop's own computed break-even."""
+    add_inventory(session, "Common", price="0.50")
+    main(["--min-price", "0", "--activate"])
+
+    listing = session.scalars(select(ShopListing)).one()
+    assert listing.price == Decimal("1.00")  # 2x market, not the $1.24 floor
+
+
+def test_the_cap_does_not_touch_an_item_the_floor_already_clears(session):
+    add_inventory(session, "Common", price="1.00")
+    main(["--min-price", "0", "--activate"])
+
+    listing = session.scalars(select(ShopListing)).one()
+    assert listing.price == Decimal("1.24")  # the pre-existing floor case, unaffected by the cap
+
+
 def test_missing_cost_config_still_produces_a_safe_floor(tmp_path, monkeypatch):
     """default_costs() has to fall back cleanly -- pricing must never
     silently fail because the config row is missing."""

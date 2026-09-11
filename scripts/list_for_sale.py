@@ -19,6 +19,15 @@ proxy-priced match undersells the real item. Bulk lots already worked
 this way (build_bulk_lots.py); this was the one pricing path in the shop
 that didn't, which meant nothing guaranteed a single actually made money.
 
+The floor is capped at MAX_MARKUP times the market signal, in the other
+direction: a real case (2026-09-11) found bulk commons worth ~$1 each
+floored up to $3.99-$14.99 under an earlier, higher ShopCostConfig --
+technically break-even, but a 10x markup on a $1 card reads as a scam
+regardless of the fulfilment maths behind it. Below-floor-but-under-cap
+listings are a deliberate loss on paper rather than a listing nobody
+would buy; a card this cheap likely belongs in a bulk lot instead of an
+individual listing at all.
+
     # see what would be listed, write nothing
     .venv/bin/python -m scripts.list_for_sale --min-price 5 --dry-run
 
@@ -46,6 +55,7 @@ from automation_control.models import (
 from automation_control.shop_pricing import default_costs, price_floor
 
 PREFERRED_SOURCES = ["ebay_active_low", "optcgapi_market", "pokemonpricetracker_market"]
+MAX_MARKUP = Decimal("2")
 
 
 def best_price(session: Session, catalog_item_id: str) -> tuple[Decimal, str] | None:
@@ -108,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"profit floor: ${floor_model.floor} (break-even ${floor_model.break_even} "
               f"+ {floor_model.margin_pct}% margin, customer pays postage)\n")
 
-        created = skipped_cheap = skipped_unpriced = skipped_existing = raised_to_floor = 0
+        created = skipped_cheap = skipped_unpriced = skipped_existing = raised_to_floor = capped_below_floor = 0
         min_price = Decimal(str(args.min_price))
         multiplier = Decimal("1") + Decimal(str(args.margin)) / Decimal("100")
         status = ShopListingStatus.ACTIVE if args.activate else ShopListingStatus.DRAFT
@@ -136,10 +146,14 @@ def main(argv: list[str] | None = None) -> int:
             card = session.get(CatalogCard, item.catalog_item_id)
 
             market_price = _round(market * multiplier)
-            price = max(market_price, floor_model.floor)
-            floored = price > market_price
+            cap_price = _round(market * MAX_MARKUP)
+            price = min(max(market_price, floor_model.floor), cap_price)
+            floored = market_price < price == floor_model.floor
+            capped = price == cap_price and cap_price < floor_model.floor
             if floored:
                 raised_to_floor += 1
+            if capped:
+                capped_below_floor += 1
 
             title = catalog_item.name
             if card is not None and card.number:
@@ -147,7 +161,12 @@ def main(argv: list[str] | None = None) -> int:
             variant = item.variant.value.replace("_", " ").title() if item.variant else None
             condition = " · ".join(part for part in [item.condition, variant] if part)
 
-            note = f" [raised to profit floor, market said ${market_price}]" if floored else ""
+            if capped:
+                note = f" [capped at {MAX_MARKUP}x market -- below the ${floor_model.floor} profit floor]"
+            elif floored:
+                note = f" [raised to profit floor, market said ${market_price}]"
+            else:
+                note = ""
             print(f"  {'would list' if args.dry_run else 'listed'}: {title} — ${price} (from {source}){note}")
             created += 1
             if args.dry_run:
@@ -166,7 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     verb = "would create" if args.dry_run else "created"
     print(
         f"\n{verb} {created} listing(s) as {status.value}"
-        f"{f', {raised_to_floor} raised to the profit floor' if raised_to_floor else ''}. "
+        f"{f', {raised_to_floor} raised to the profit floor' if raised_to_floor else ''}"
+        f"{f', {capped_below_floor} capped at {MAX_MARKUP}x market instead' if capped_below_floor else ''}. "
         f"Skipped: {skipped_cheap} under ${args.min_price}, {skipped_unpriced} with no price on file, "
         f"{skipped_existing} already listed."
     )
