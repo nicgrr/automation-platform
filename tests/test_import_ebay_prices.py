@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from automation_control.config import Settings
 from automation_control.database import Base
 from automation_control.models import (
-    CollectibleProduct,
+    CollectibleProduct, SealedProduct,
     CardPrice, CardVariant, CatalogItem, CatalogItemType, InventoryItem, TcgCard,
 )
 from scripts import import_ebay_prices as script
@@ -206,6 +206,75 @@ def test_all_flag_prices_unowned_catalogue_cards_too(patched):
 
     with Session(engine) as session:
         assert session.query(CardPrice).count() == 2
+
+
+def test_build_query_uses_the_catalog_name_directly_for_sealed_products():
+    item = CatalogItem(id="etb1", item_type=CatalogItemType.SEALED_PRODUCT, name="Pokemon TCG 151 Elite Trainer Box")
+    sealed = SealedProduct(catalog_item_id="etb1", game="pokemon", product_type="etb")
+    assert script.build_query(item, None, sealed=sealed) == (
+        "Pokemon TCG 151 Elite Trainer Box", "Pokemon TCG 151 Elite Trainer Box",
+    )
+
+
+def test_sealed_flag_prices_catalogue_sealed_products_even_if_unowned(patched):
+    """Sealed products are reference data, not owned stock the normal
+    inventory-only default would find -- same reasoning as --collectibles."""
+    engine = patched
+    with Session(engine) as session:
+        session.add(CatalogItem(id="etb1", item_type=CatalogItemType.SEALED_PRODUCT,
+                                name="Pokemon TCG 151 Elite Trainer Box"))
+        session.add(SealedProduct(catalog_item_id="etb1", game="pokemon", product_type="etb"))
+        session.commit()
+
+    listings = _listings(80, 90, title="Pokemon TCG 151 Elite Trainer Box")
+    with patch.object(script.EbaySandboxReadAdapter, "search_market", new=AsyncMock(return_value=listings)):
+        assert script.main(["--sealed"]) == 0
+
+    with Session(engine) as session:
+        prices = {p.source: p for p in session.query(CardPrice).all()}
+        assert prices["ebay_active_low"].card_id == "etb1"
+        assert prices["ebay_active_low"].price == Decimal("80")
+
+
+def test_sealed_flag_does_not_also_price_regular_cards(patched):
+    engine = patched
+    with Session(engine) as session:
+        _seed(session, owned=False)
+        session.add(CatalogItem(id="etb1", item_type=CatalogItemType.SEALED_PRODUCT,
+                                name="Pokemon TCG 151 Elite Trainer Box"))
+        session.add(SealedProduct(catalog_item_id="etb1", game="pokemon", product_type="etb"))
+        session.commit()
+
+    listings = _listings(80, title="Pokemon TCG 151 Elite Trainer Box")
+    with patch.object(script.EbaySandboxReadAdapter, "search_market", new=AsyncMock(return_value=listings)):
+        assert script.main(["--sealed"]) == 0
+
+    with Session(engine) as session:
+        priced_ids = {p.card_id for p in session.query(CardPrice).all()}
+        assert priced_ids == {"etb1"}
+
+
+def test_multi_box_bundles_are_excluded_from_sealed_product_pricing():
+    """Confirmed live (2026-09-11): a real, single-box Scarlet & Violet
+    Base ETB listing sits around $205-330 AUD now that the set is out of
+    print -- genuine appreciation, not noise. What does skew the number
+    is a seller bundling multiple boxes into one listing at roughly
+    multiple-unit price ("ETB PAIR", "Both Miraidon & Koraidon")."""
+    listings = [
+        {"title": "Pokemon TCG Scarlet & Violet Base Elite Trainer Box Sealed", "price": "230.00"},
+        {"title": "Pokemon Scarlet and Violet Base Elite Trainer Box PAIR (NEW & SEALED)", "price": "589.00"},
+        {"title": "Scarlet & Violet Base Set Elite Trainer Box Both Miraidon & Koraidon NEW", "price": "563.13"},
+        {"title": "Pokemon TCG Scarlet & Violet Base Elite Trainer Box Lot of 3", "price": "820.00"},
+    ]
+    values = script._price_values(listings, "Pokemon TCG Scarlet & Violet Base Elite Trainer Box", exclude_multiples=True)
+    assert values == [Decimal("230.00")]
+
+
+def test_multi_box_exclusion_is_off_by_default_for_cards():
+    """Cards don't have this problem -- a listing is one card or a lot,
+    and lots read differently -- so the filter is opt-in, not global."""
+    listings = [{"title": "Divine Departure OP13-076 Lot of 3", "price": "50.00"}]
+    assert script._price_values(listings, "Divine Departure") == [Decimal("50.00")]
 
 
 def test_unconfigured_ebay_exits_with_a_clear_message(monkeypatch, engine):

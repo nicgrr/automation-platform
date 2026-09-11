@@ -40,6 +40,8 @@ source it first, or the script will correctly refuse to run:
     .venv/bin/python -m scripts.import_ebay_prices --all --limit 500
     .venv/bin/python -m scripts.import_ebay_prices --brand "Sonny Angel"
     .venv/bin/python -m scripts.import_ebay_prices --status personal_collection
+    .venv/bin/python -m scripts.import_ebay_prices --sealed
+    .venv/bin/python -m scripts.import_ebay_prices --sealed --game one_piece
 """
 
 import argparse
@@ -57,7 +59,8 @@ from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import OAuthError, configured, ebay_services
 from automation_control.models import (
-    CardPrice, CardSet, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem, InventoryStatus, TcgCard,
+    CardPrice, CardSet, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem, InventoryStatus,
+    SealedProduct, TcgCard,
 )
 
 DEFAULT_LIMIT = 200
@@ -65,7 +68,8 @@ CALL_DELAY_SECONDS = 0.4
 COMMIT_EVERY = 25
 
 
-def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = None, collectible: CollectibleProduct | None = None) -> tuple[str, str]:
+def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = None,
+                collectible: CollectibleProduct | None = None, sealed: SealedProduct | None = None) -> tuple[str, str]:
     """(search query, token that must appear in a result's title).
 
     A bare catalogue name is far too vague to price against: this app owns
@@ -78,7 +82,12 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
       Pokémon     set name + number  ("Tangela Steam Siege 1") -- these
                   rows have set_id/card_sets rather than a set_code
       Collectible brand + name       ("Sonny Angel Hamburger")
+      Sealed      catalogue name as-is ("Pokemon TCG 151 Elite Trainer
+                  Box") -- already specific enough on its own; nothing
+                  else to append the way a card gets a set code or number.
     """
+    if sealed is not None:
+        return item.name, item.name
     if collectible is not None and collectible.brand:
         # a secret/chase figure sells well above the regular version of the
         # same character, so pricing one against the other understates it.
@@ -115,7 +124,18 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
     return item.name, item.name
 
 
-def _price_values(listings: list[dict], must_contain: str | None = None) -> list[Decimal]:
+# Confirmed live pricing sealed product (2026-09-11): a genuine, single-box
+# Scarlet & Violet Base ETB listing sits around $205-330 AUD now that the
+# set is out of print -- real appreciation, not noise. What *does* skew
+# the number is a seller bundling multiple boxes into one listing ("ETB
+# PAIR", "Both Miraidon & Koraidon", "Lot of 3") at roughly multiple-unit
+# price; averaging that in alongside single-box listings overstates a
+# single box's value. Cards don't have this problem (a listing is one
+# card or it's a lot, and lots read differently), so this is opt-in.
+_MULTIPLE_UNIT_MARKERS = ("pair", "bundle", "lot of", "both ", " x2", " x3", " x4", " x5", "case of", "2x ", "3x ")
+
+
+def _price_values(listings: list[dict], must_contain: str | None = None, exclude_multiples: bool = False) -> list[Decimal]:
     """Prices of the listings that actually look like the thing we asked
     for. eBay's search is fuzzy and happily returns adjacent products, so
     a title that doesn't even mention the item is dropped rather than
@@ -133,7 +153,10 @@ def _price_values(listings: list[dict], must_contain: str | None = None) -> list
     needle = (must_contain or "").lower().strip()
     needle = needle.replace("♀", "").replace("♂", "").strip()
     for listing in listings:
-        if needle and needle not in (listing.get("title") or "").lower():
+        title = (listing.get("title") or "").lower()
+        if needle and needle not in title:
+            continue
+        if exclude_multiples and any(marker in title for marker in _MULTIPLE_UNIT_MARKERS):
             continue
         raw = listing.get("price")
         if raw is None:
@@ -148,21 +171,29 @@ def _price_values(listings: list[dict], must_contain: str | None = None) -> list
 
 
 def _targets(session, *, price_all: bool, game: str | None, limit: int,
-             collectibles: bool = False, brand: str | None = None, status: str | None = None):
+             collectibles: bool = False, brand: str | None = None, status: str | None = None,
+             sealed: bool = False):
     query = (
-        select(CatalogItem, TcgCard, CardSet.name, CollectibleProduct)
+        select(CatalogItem, TcgCard, CardSet.name, CollectibleProduct, SealedProduct)
         .join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id, isouter=True)
         .join(CardSet, CardSet.id == TcgCard.set_id, isouter=True)
         .join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id, isouter=True)
+        .join(SealedProduct, SealedProduct.catalog_item_id == CatalogItem.id, isouter=True)
     )
-    # Collectibles are targeted by *catalogue* rather than by ownership.
-    # The default (owned only) is right for 22k TCG rows, but a seeded
-    # Sonny Angel series isn't owned yet and is exactly what you want a
-    # market price for -- that's how you decide whether to buy it.
+    # Collectibles and sealed products are both targeted by *catalogue*
+    # rather than by ownership. The default (owned only) is right for 22k
+    # TCG rows, but a seeded Sonny Angel series or ETB isn't owned stock --
+    # it's a reference product you want a market price for regardless, to
+    # decide whether to buy it or to check a deal against (see
+    # deal_check.py's sealed-product matching).
     if collectibles or brand:
         query = query.where(CatalogItem.item_type == CatalogItemType.COLLECTIBLE)
         if brand:
             query = query.where(CollectibleProduct.brand.ilike(brand))
+    elif sealed:
+        query = query.where(CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT)
+        if game:
+            query = query.where(SealedProduct.game == game)
     elif status:
         owned_ids = (
             select(InventoryItem.catalog_item_id)
@@ -173,16 +204,20 @@ def _targets(session, *, price_all: bool, game: str | None, limit: int,
     elif not price_all:
         owned_ids = select(InventoryItem.catalog_item_id).where(InventoryItem.catalog_item_id.isnot(None)).distinct()
         query = query.where(CatalogItem.id.in_(owned_ids))
-    if game:
+    if game and not sealed:
+        # Sealed rows have no tcg_cards join at all (they're not cards),
+        # so filtering on TcgCard.game here would zero them all out --
+        # the sealed branch above already applied its own game filter.
         query = query.where(TcgCard.game == game)
     return session.execute(query.limit(limit)).all()
 
 
-async def _price_one(adapter, item: CatalogItem, tcg: TcgCard | None, set_name: str | None, collectible: CollectibleProduct | None, marketplace: str) -> tuple[list[Decimal], str | None, int]:
-    query, must_contain = build_query(item, tcg, set_name, collectible)
+async def _price_one(adapter, item: CatalogItem, tcg: TcgCard | None, set_name: str | None, collectible: CollectibleProduct | None,
+                     marketplace: str, sealed: SealedProduct | None = None) -> tuple[list[Decimal], str | None, int]:
+    query, must_contain = build_query(item, tcg, set_name, collectible, sealed)
     payload = await adapter.search_market(query, limit=20, marketplace=marketplace)
     listings = normalize_market(payload)
-    values = _price_values(listings, must_contain)
+    values = _price_values(listings, must_contain, exclude_multiples=sealed is not None)
     currency = next((listing.get("currency") for listing in listings if listing.get("currency")), None)
     return values, currency, len(listings)
 
@@ -208,16 +243,16 @@ async def run(args) -> int:
     priced = skipped = failed = 0
     with SessionLocal() as session:
         targets = _targets(session, price_all=args.all, game=args.game, limit=args.limit,
-                           collectibles=args.collectibles, brand=args.brand, status=args.status)
+                           collectibles=args.collectibles, brand=args.brand, status=args.status, sealed=args.sealed)
         if not targets:
             print("no matching cards to price.")
             return 0
         print(f"pricing {len(targets)} card(s) against eBay {settings.ebay_env} ({args.marketplace})...\n")
 
-        for index, (item, tcg, set_name, collectible) in enumerate(targets):
-            query, _ = build_query(item, tcg, set_name, collectible)
+        for index, (item, tcg, set_name, collectible, sealed) in enumerate(targets):
+            query, _ = build_query(item, tcg, set_name, collectible, sealed)
             try:
-                values, currency, seen = await _price_one(adapter, item, tcg, set_name, collectible, args.marketplace)
+                values, currency, seen = await _price_one(adapter, item, tcg, set_name, collectible, args.marketplace, sealed)
             except (EbayApiError, OAuthError) as exc:
                 print(f"  fail  {query}: {exc}")
                 failed += 1
@@ -267,6 +302,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="price every collectible in the catalogue, owned or not")
     parser.add_argument("--brand", help="only price this collectible brand, e.g. 'Sonny Angel'")
     parser.add_argument("--status", help="only price owned items with this InventoryStatus, e.g. personal_collection")
+    parser.add_argument("--sealed", action="store_true",
+                        help="price sealed products (ETBs, booster boxes) by catalogue, not just what you own")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"max cards to price this run (default {DEFAULT_LIMIT})")
     parser.add_argument("--marketplace", default="EBAY_AU", help="eBay marketplace id (default EBAY_AU)")
     args = parser.parse_args(argv)
