@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # public URL to register -- unset, the endpoint just 503s.
     stripe_webhook_secret: str | None = None
     anthropic_api_key: str | None = None
+    # Reverse image search for a captured collectible photo (see
+    # reverse_image_search.py) -- a real Google Lens actor run on Apify's
+    # cloud, not a local tool. Unset, that button just 503s with a clear
+    # message rather than pretending the feature doesn't exist.
+    apify_token: str | None = None
+    apify_google_lens_actor_id: str = "borderline~google-lens"
     captured_cards_dir: str = "captured_cards"
     pokemontcg_api_key: str | None = None
     # pokemonpricetracker.com -- real TCGPlayer market + eBay sold-comp

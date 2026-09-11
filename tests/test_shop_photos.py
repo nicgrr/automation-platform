@@ -158,6 +158,23 @@ def test_a_listing_with_only_a_scan_still_falls_back_to_it(client, session, medi
     assert "/photo/l1" in body and "Actual card" in body
 
 
+def test_a_collectibles_own_photo_says_actual_item_not_actual_card(client, session, media_root):
+    """Regression: a Sonny Angel figure isn't a card -- the badge was
+    hardcoded to say "Actual card" regardless of item type."""
+    _, photo = media_root
+    item = CatalogItem(id="ci1", item_type=CatalogItemType.COLLECTIBLE, name="Skunk")
+    inv = InventoryItem(id="inv1", catalog_item_id="ci1", quantity=1, scan_image_path=str(photo))
+    listing = ShopListing(id="l1", catalog_item_id="ci1", inventory_item_id="inv1",
+                          title="Skunk", price=Decimal("28.99"), currency="AUD",
+                          quantity=1, status=ShopListingStatus.ACTIVE)
+    session.add_all([item, inv, listing])
+    session.commit()
+    body = client.get("/item/l1").text
+    assert "/photo/l1" in body
+    assert "Actual item" in body
+    assert "Actual card" not in body
+
+
 # --- a second legitimate photo source: AI-captured collectibles ------------
 
 @pytest.fixture

@@ -127,7 +127,9 @@ def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None
     from .photos import has_own_photo
 
     if session is not None and has_own_photo(session, listing.id):
-        tag = "<span class='art-tag own'>Actual card</span>" if show_tag else ""
+        is_card = item is not None and item.item_type in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD)
+        label = "Actual card" if is_card else "Actual item"
+        tag = f"<span class='art-tag own'>{label}</span>" if show_tag else ""
         return f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
     return "<span class='noart'>no image</span>"
 

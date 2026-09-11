@@ -12,6 +12,7 @@ the same figure -- restocking the same item as a second, separate purchase
 is a real future need but out of scope here.
 """
 
+import json
 import mimetypes
 import uuid
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from .config import get_settings
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card, remove_background
 from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
+from .reverse_image_search import ReverseImageSearchError, search_image
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["collectibles"])
@@ -588,8 +590,11 @@ def collectible_review_form(capture_id: str, filled: str = Query(""), problem: s
         + (f"<p class='linkfill-note {escape(fill_kind)}'>{escape(fill_note)}</p>" if fill_note else "")
         + f"<form method='post' action='/collectibles/review/{escape(capture_id)}/from-link' class='linkfill'>"
           "<label>Fill from a product or listing link"
-          f"<input name='url' type='url' placeholder='https://... the shop page for this figure' required></label>"
+          f"<input id='linkfill-url' name='url' type='url' placeholder='https://... the shop page for this figure' required></label>"
           "<button type='submit' class='ghost'>Fill fields</button></form>"
+        + f"<form method='post' action='/collectibles/review/{escape(capture_id)}/reverse-image-search' class='linkfill'>"
+          "<button type='submit' class='ghost'>Search with Google Lens</button></form>"
+        + _lens_results_html(capture_id)
         + f"<form method='post' action='/collectibles/review/{escape(capture_id)}' class='calc-form'>"
         + field("brand", "Brand", capture.brand)
         + field("series", "Series", capture.series)
@@ -691,6 +696,82 @@ def collectible_review_from_link(
     return back(filled=", ".join(applied))
 
 
+def _lens_cache_path(settings, capture_id: str) -> Path:
+    directory = Path(settings.captured_cards_dir) / "lens_results"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{capture_id}.json"
+
+
+def _lens_results_html(capture_id: str) -> str:
+    """Renders whatever the last Google Lens run for this capture found,
+    if anything -- a plain results list, not an auto-fill: Lens returns a
+    page title and link, not structured brand/series/character fields, so
+    the human picks the right match and pastes its link into the existing
+    "Fill from a product or listing link" extractor above rather than this
+    trying to parse a Lens title into fields itself."""
+    cache_path = _lens_cache_path(get_settings(), capture_id)
+    if not cache_path.exists():
+        return ""
+    try:
+        payload = json.loads(cache_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    if payload.get("error"):
+        return f"<p class='linkfill-note bad'>Google Lens search failed: {escape(payload['error'])}</p>"
+
+    items = payload.get("items", [])
+    if not items:
+        return "<p class='linkfill-note'>Google Lens found nothing usable for this photo.</p>"
+
+    rows = "".join(
+        "<li class='lens-result'>"
+        + (f"<img src='{escape(item['thumbnail'])}' alt='' loading='lazy'>" if item.get("thumbnail") else "")
+        + "<div class='lens-result-body'>"
+        + f"<a href='{escape(item['link'])}' target='_blank' rel='noopener'>{escape(item.get('title') or item['link'])}</a>"
+        + f"<button type='button' class='ghost lens-use' data-url='{escape(item['link'])}'>Use this link</button>"
+        + "</div></li>"
+        for item in items if item.get("link")
+    )
+    return f"<ul class='lens-results'>{rows}</ul>" if rows else "<p class='linkfill-note'>Google Lens found nothing usable for this photo.</p>"
+
+
+@router.post("/collectibles/review/{capture_id}/reverse-image-search")
+async def collectible_review_reverse_image_search(
+    capture_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+):
+    """Runs a real Google Lens search (via Apify -- see
+    reverse_image_search.py) against this capture's photo and caches the
+    results for the review page to render. Writes nothing to the
+    catalogue: exactly as non-destructive as the from-link fill above,
+    just a different source for the human to read from.
+    """
+    capture = session.get(CapturedCollectible, capture_id)
+    if capture is None:
+        raise HTTPException(status_code=404, detail="capture not found")
+
+    settings = get_settings()
+    cache_path = _lens_cache_path(settings, capture_id)
+    if not settings.apify_token:
+        cache_path.write_text(json.dumps({"error": "Apify is not configured (APIFY_TOKEN missing)"}))
+        return RedirectResponse(f"/collectibles/review/{capture_id}", status_code=303)
+
+    try:
+        raw_items = await search_image(Path(capture.image_path), settings.apify_token, settings.apify_google_lens_actor_id)
+    except ReverseImageSearchError as exc:
+        cache_path.write_text(json.dumps({"error": str(exc)}))
+        record_event(session, actor_type="user", actor_id=user, action="collectible.reverse_image_search", resource_type="captured_collectible", resource_id=capture_id, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc)})
+        return RedirectResponse(f"/collectibles/review/{capture_id}", status_code=303)
+
+    items = [
+        {"title": item.get("title"), "link": item.get("link") or item.get("url"), "thumbnail": item.get("thumbnail") or item.get("thumbnailUrl")}
+        for item in raw_items
+    ]
+    cache_path.write_text(json.dumps({"items": items}))
+    record_event(session, actor_type="user", actor_id=user, action="collectible.reverse_image_search", resource_type="captured_collectible", resource_id=capture_id, outcome="success", correlation_id=str(uuid.uuid4()), details={"count": len(items)})
+    return RedirectResponse(f"/collectibles/review/{capture_id}", status_code=303)
+
+
 @router.post("/collectibles/review/{capture_id}")
 def collectible_review_submit(
     capture_id: str,
@@ -788,10 +869,25 @@ _REVIEW_STYLE = """<style>
 .linkfill-note{margin:0 0 12px;padding:10px 13px;border-radius:8px;font-size:13.5px}
 .linkfill-note.ok{background:var(--success-bg);color:var(--success)}
 .linkfill-note.bad{background:var(--warning-bg);color:var(--warning)}
+.lens-results{list-style:none;margin:0 0 16px;padding:0;display:flex;flex-direction:column;gap:8px}
+.lens-result{display:flex;gap:10px;align-items:center;padding:8px;border:1px solid var(--panel-border);
+  border-radius:8px;background:var(--surface-sunken)}
+.lens-result img{width:48px;height:48px;object-fit:cover;border-radius:6px;flex:none}
+.lens-result-body{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+.lens-result-body a{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lens-use{align-self:flex-start;font-size:12px;padding:4px 10px}
 @media (max-width:720px){.review-one{grid-template-columns:1fr}
   .revshot{max-width:260px;margin:0 auto}}
 @media (prefers-reduced-motion:reduce){.revbar span{transition:none}}
-</style>"""
+</style>
+<script>
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('.lens-use');
+  if (!btn) return;
+  var input = document.getElementById('linkfill-url');
+  if (input) { input.value = btn.dataset.url; input.focus(); }
+});
+</script>"""
 
 _STYLE = """<style>
 .calc-form{display:flex;flex-direction:column;gap:12px;max-width:420px}
