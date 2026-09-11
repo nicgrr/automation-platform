@@ -468,7 +468,21 @@ def process_sheet(
 
     api_key = settings.anthropic_api_key
     misshapen = set(detection.misshapen)
+    undersized = set(detection.undersized)
     for index, crop_path in enumerate(detection.crop_paths, start=1):
+        if index in undersized:
+            # Genuinely missing content (see detect.DetectionResult
+            # .undersized), not just an odd shape -- unlike an ordinary
+            # misshapen crop, a successful vision guess here would still
+            # mean committing a known-truncated image as the item's
+            # permanent photo, so this always sets aside rather than
+            # trying to identify, in both interactive and unattended runs.
+            saved_to = _set_aside_for_review(
+                crop_path, Path(settings.scan_media_dir), sheet_path.name, index, label="truncated-crop",
+            )
+            prompter.notify(f"  Card {index}: shorter than its row-mates, likely truncated -- set aside for review: {saved_to}")
+            outcome.set_aside += 1
+            continue
         if unattended and index in misshapen:
             # A misshapen crop's own pHash is exactly the signal the shape
             # check calls into doubt, so identify_card isn't worth trying

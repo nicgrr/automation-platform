@@ -123,6 +123,23 @@ QUAD_MIN_AREA_RATIO = 0.35
 QUAD_MIN_BAND_RATIO = 0.6
 QUAD_MAX_BAND_RATIO = 1.4
 
+# A card's height should roughly match its row-mates': all cards in the same
+# physical row sit on the same flatbed, so a real gap between rows is
+# consistent across every column, and a genuine card is never radically
+# shorter than its neighbours in the same row. Confirmed against a real
+# sheet (2026-09-11): one column's variance-based gap detector mistook a
+# Stage 2 card's Ability-box/footer -- plain background, low contrast
+# against the surrounding artwork -- for empty bed, splitting that one
+# physical card into a half-height band with the rest of its content
+# swallowed into the false "gap". QUAD_MAX_BAND_RATIO above then capped how
+# far `_find_card_quad` could grow to recover it (1.4x a band that's
+# already less than half the true height isn't enough), and the resulting
+# half-card quad still passed the aspect-ratio check by coincidence -- a
+# card cropped in half can still numerically resemble a whole one. This
+# catches what that check missed, by comparing a card against its siblings
+# instead of judging its shape alone.
+ROW_HEIGHT_MIN_RATIO = 0.75
+
 # Output crop size for each card -- matches the 63:88mm ratio
 # (750/1050 = 0.7143) at a resolution that's already good enough to use
 # directly as an eBay listing photo, per the spec.
@@ -188,6 +205,14 @@ class DetectionResult:
     # failure already does per-card -- see `structural_issue` for when that
     # isn't safe.
     misshapen: list[int] = field(default_factory=list)
+    # 1-indexed positions genuinely missing content -- shorter than their
+    # row-mates by more than ROW_HEIGHT_MIN_RATIO (see
+    # `_undersized_for_its_row`). Distinct from `misshapen`: a crop in here
+    # is known-incomplete, not just oddly shaped, so it must never be
+    # allowed to commit on the strength of a lucky vision guess the way an
+    # ordinary misshapen crop can -- the caller should always set these
+    # aside rather than trying to identify and commit them.
+    undersized: list[int] = field(default_factory=list)
     # True when the grid itself looks wrong -- no cards found, the count
     # doesn't match what was expected or physically fits, or cards had to be
     # split out of an oversized band -- as opposed to `misshapen`, where the
@@ -627,6 +652,23 @@ def _reading_order(cards: list[DetectedCard]) -> list[DetectedCard]:
     return ordered
 
 
+def _undersized_for_its_row(cards: list[DetectedCard]) -> list[DetectedCard]:
+    """Cards significantly shorter than the median height of other cards
+    sharing their `row` -- see ROW_HEIGHT_MIN_RATIO. A row with only one
+    card (a single-column sheet, or a partly-filled one) has nothing to
+    compare against and is never flagged here."""
+    heights_by_row: dict[int, list[float]] = {}
+    for card in cards:
+        heights_by_row.setdefault(card.row, []).append(card.size[1])
+    medians = {row: float(np.median(hs)) for row, hs in heights_by_row.items()}
+    return [
+        card for card in cards
+        if len(heights_by_row[card.row]) > 1
+        and medians[card.row] > 0
+        and card.size[1] / medians[card.row] < ROW_HEIGHT_MIN_RATIO
+    ]
+
+
 def _crop_card(sheet: np.ndarray, card: DetectedCard, post_rotation_degrees: int = 0) -> np.ndarray:
     if card.quad is not None:
         # Warp the card's true corners flat, which simultaneously squares up
@@ -731,6 +773,11 @@ def detect_cards(
     misshapen = [index + 1 for index, card in enumerate(cards) if not (MIN_ASPECT_RATIO <= card.aspect_ratio <= MAX_ASPECT_RATIO)]
     if misshapen:
         warnings.append(f"card(s) {misshapen} are not card-shaped -- possibly two cards touching, or a mis-split")
+    undersized_ids = {id(card) for card in _undersized_for_its_row(cards)}
+    undersized = [index + 1 for index, card in enumerate(cards) if id(card) in undersized_ids]
+    if undersized:
+        warnings.append(f"card(s) {undersized} are shorter than their row-mates -- likely a truncated crop "
+                        "(a low-contrast section of the card mistaken for the gap between rows), not a genuine card")
     if expected_count is not None and len(cards) != expected_count:
         warnings.append(f"expected {expected_count} cards, found {len(cards)}")
         structural_issue = True
@@ -756,5 +803,5 @@ def detect_cards(
         crop_paths=crop_paths, cards=cards, rows=max_rows, cols=len(columns),
         count=len(cards), expected_count=expected_count, needs_review=needs_review,
         warnings=warnings, overlay_path=overlay_path,
-        misshapen=misshapen, structural_issue=structural_issue,
+        misshapen=misshapen, undersized=undersized, structural_issue=structural_issue,
     )

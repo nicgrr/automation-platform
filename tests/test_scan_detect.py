@@ -2,7 +2,9 @@ import cv2
 import numpy as np
 import pytest
 
-from automation_control.scan_ingest.detect import OUTPUT_HEIGHT, OUTPUT_WIDTH, detect_cards
+from automation_control.scan_ingest.detect import (
+    OUTPUT_HEIGHT, OUTPUT_WIDTH, DetectedCard, _undersized_for_its_row, detect_cards,
+)
 
 # Cards on a real flatbed sit close together with thin, near-uniform gaps
 # between them; the detector separates them by pixel variance, so a
@@ -549,3 +551,65 @@ def test_predict_card_width_refuses_to_guess_without_support(tmp_path):
     assert _predict_card_width([200, 210], median_height=1000) is None
     # ...and a supported prediction is returned
     assert _predict_card_width([1400, 1390], median_height=1000) is not None
+
+
+# --- a card truncated by its own low-contrast footer, not touching or merged ---
+
+def _card_with_flat_bottom(seed: int, cut_at: float = 0.45) -> np.ndarray:
+    """A textured card whose bottom portion is flat, bed-like colour --
+    standing in for a real card's plain Ability-box/footer text area,
+    which a variance-based gap detector can mistake for empty bed."""
+    card = _textured_card(seed)
+    cut = int(CARD_H * cut_at)
+    card[cut:, :] = BG_COLOR
+    return card
+
+
+def test_undersized_for_its_row_flags_a_card_shorter_than_its_row_mates():
+    full = DetectedCard(row=0, col=0, x1=0, y1=0, x2=100, y2=460)
+    truncated = DetectedCard(row=0, col=1, x1=200, y1=0, x2=300, y2=210)  # < 75% of 460
+
+    flagged = _undersized_for_its_row([full, truncated])
+
+    assert flagged == [truncated]
+
+
+def test_undersized_for_its_row_ignores_a_row_with_only_one_card():
+    """Nothing to compare against -- a partly-filled sheet or a
+    single-column scan must never be flagged just for being short."""
+    lone = DetectedCard(row=0, col=0, x1=0, y1=0, x2=100, y2=210)
+    other_row = DetectedCard(row=1, col=0, x1=0, y1=300, x2=100, y2=760)
+
+    assert _undersized_for_its_row([lone, other_row]) == []
+
+
+def test_detect_cards_flags_a_card_truncated_by_its_own_footer(tmp_path):
+    """The real failure this guards against (confirmed live, 2026-09-11): a
+    Stage 2 card's Ability-box/footer -- plain background, low contrast
+    against the surrounding artwork -- got mistaken for the gap between
+    rows, splitting one physical card into a half-height band with the
+    rest of its content lost. The resulting crop still passed the
+    aspect-ratio check by coincidence, so this must be caught by comparing
+    against row-mates, not by the shape of the crop alone."""
+    width = CARD_W * 2 + MARGIN * 3
+    height = CARD_H * 2 + MARGIN * 3
+    sheet = np.full((height, width, 3), BG_COLOR, dtype=np.uint8)
+
+    left_x, right_x = MARGIN, MARGIN * 2 + CARD_W
+    row0_y = MARGIN
+    row1_y = MARGIN * 2 + CARD_H
+    _place_card(sheet, 1, left_x, row0_y)
+    _place_card(sheet, 2, right_x, row0_y)
+    _place_card(sheet, 3, left_x, row1_y)
+    # right column's row 1: only the top ~45% is real card content
+    sheet[row1_y : row1_y + CARD_H, right_x : right_x + CARD_W] = _card_with_flat_bottom(4)
+
+    sheet_path = tmp_path / "sheet.png"
+    cv2.imwrite(str(sheet_path), sheet)
+
+    result = detect_cards(sheet_path, tmp_path / "out")
+
+    assert not result.ok
+    assert result.undersized, "the truncated card should be flagged, not silently accepted"
+    # its row-mate (card 3, same row, full height) must NOT also be flagged
+    assert len(result.undersized) == 1

@@ -544,6 +544,43 @@ def test_unattended_uses_vision_to_resolve_a_misshapen_card(db, settings, monkey
     assert list((Path(settings.scan_media_dir) / "needs_review").glob("*.jpg")) == []
 
 
+def test_unattended_always_sets_aside_an_undersized_card_even_when_vision_can_read_it(db, settings, monkeypatch):
+    """The bug this guards against (confirmed live, 2026-09-11): an
+    undersized crop is known to be missing real content (see
+    detect.DetectionResult.undersized), not just oddly shaped -- unlike an
+    ordinary misshapen crop, a card name Claude can still read off the
+    truncated top half is not permission to commit that truncated image as
+    the item's permanent photo. Must always set aside, even with vision
+    available and confident.
+    """
+    sheet_path = _make_sheet(Path(settings.scan_watch_dir) / "s.png", [1, 2], rows=2, cols=1)
+    detection = detect_cards(sheet_path, Path(settings.scan_media_dir) / "work" / "probe")
+    detection.undersized = [2]
+    detection.structural_issue = False
+    detection.needs_review = True
+    detection.warnings = ["card(s) [2] are shorter than their row-mates -- likely a truncated crop"]
+    monkeypatch.setattr(session_mod, "detect_cards", lambda *a, **k: detection)
+
+    settings.anthropic_api_key = "fake-key"
+    _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])
+    monkeypatch.setattr(
+        session_mod, "identify_card_via_vision",
+        lambda crop, refs, api_key: Identification("xy11-2", "2", "Card 2", Source.VISION, 0.90),
+    )
+
+    prompter = ScriptedPrompter()
+    scan_session = run_session(db, "xy11", settings, prompter, max_sheets=1, max_wait=0.5, poll_interval=0.01, unattended=True)
+
+    assert scan_session.cards_committed == 1  # only the good card
+    items = db.scalars(select(InventoryItem)).all()
+    assert len(items) == 1 and items[0].card_id == "xy11-1"
+
+    set_aside_dir = Path(settings.scan_media_dir) / "needs_review"
+    saved = list(set_aside_dir.glob("*.jpg"))
+    assert len(saved) == 1
+    assert "truncated-crop" in saved[0].name
+
+
 def test_unattended_uses_vision_as_a_second_opinion_when_phash_fails(db, settings, monkeypatch):
     """A crop OCR and pHash both give up on (an uncached printing, a low-DPI
     scan) gets one more shot from vision before it costs a human's
