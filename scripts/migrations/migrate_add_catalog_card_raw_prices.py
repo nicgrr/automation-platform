@@ -12,7 +12,7 @@ pricing data backfilled into (no image re-download needed, but this does
 re-hit the API for the card list).
 
 Run from the automation-platform directory:
-    .venv/bin/python scripts/migrate_add_catalog_card_raw_prices.py
+    .venv/bin/python scripts/migrations/migrate_add_catalog_card_raw_prices.py
 """
 
 import sqlite3

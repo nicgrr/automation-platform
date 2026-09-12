@@ -10,7 +10,7 @@ Adding the column does not populate it. Follow with:
     .venv/bin/python -m scripts.backfill_art_phash
 
 Run from the automation-platform directory:
-    .venv/bin/python scripts/migrate_add_catalog_card_art_phash.py
+    .venv/bin/python scripts/migrations/migrate_add_catalog_card_art_phash.py
 """
 
 import sqlite3

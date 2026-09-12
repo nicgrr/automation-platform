@@ -3,9 +3,11 @@
 SQLite (`automation.db`, ~25MB), accessed exclusively through SQLAlchemy models in
 `automation_control/models.py`. No raw SQL migrations exist yet — tables are created
 via `Base.metadata.create_all(engine)` at app startup, which only adds missing
-*tables*, never alters existing ones. The four `scripts/migrate_add_*.py` files show
+*tables*, never alters existing ones. The sixteen already-applied scripts in `scripts/migrations/` show
 the existing convention for column additions: a small script that does the `ALTER
-TABLE` by hand and is run once, manually.
+TABLE` by hand and is run once, manually. They were moved out of `scripts/` itself
+(2026-09-12) so the handful of `run-*.sh`/`start-*.sh` entry points that are used
+day to day aren't buried among one-shots; see `scripts/migrations/README.md`.
 
 This document supersedes `docs/database-schema.md`, which only covers the six
 original Phase 1A tables and is now a small subset of the 22 tables that actually
@@ -49,7 +51,7 @@ needs to close.
 
 ## Modules 1–2 — Generic catalogue + inventory extension (done, 2026-09-07)
 
-Implemented by `scripts/migrate_add_catalog_items.py`, run against production data:
+Implemented by `scripts/migrations/migrate_add_catalog_items.py`, run against production data:
 
 ```
 catalog_items      20,479 rows -- one per existing catalog_cards row, item_type=TCG_CARD,
@@ -216,7 +218,7 @@ Originally catalogue-only, same boundary as Module 11's sealed products,
 because `inventory_items.card_id` was a NOT NULL foreign key into
 `catalog_cards` specifically (a leftover from before the generic catalogue
 existed) -- there was no way to record "I own 3 of this Sonny Angel" at all.
-Closed by `scripts/migrate_relax_inventory_card_id.py` (below): the manual
+Closed by `scripts/migrations/migrate_relax_inventory_card_id.py` (below): the manual
 "Add a collectible" form and the AI-capture confirm page (Module 19) both
 now take a quantity and create a real `InventoryItem` (`card_id=None`,
 `catalog_item_id` set) when it's nonzero. Not retroactive -- catalogue
@@ -226,7 +228,7 @@ its own new row rather than incrementing an existing one for a repeat
 purchase of the same figure -- a real future need, out of scope here.
 
 ### `inventory_items.card_id` made nullable (done, 2026-09-07)
-`scripts/migrate_relax_inventory_card_id.py` -- SQLite can't `ALTER` a
+`scripts/migrations/migrate_relax_inventory_card_id.py` -- SQLite can't `ALTER` a
 NOT NULL column away, so this rebuilds the table: rename aside, drop its
 named indexes (renaming a table doesn't rename them, and SQLite's own
 DDL isn't reliably transactional through this driver, so a caught mid-way
@@ -269,7 +271,7 @@ best-channel/open-pipeline-filter logic specifically since those are
 the parts most likely to silently miscount.
 
 ### Module 19 — AI photo recognition for collectibles (done, 2026-09-07)
-Implemented by `scripts/migrate_add_collectibles_capture.py`, run against
+Implemented by `scripts/migrations/migrate_add_collectibles_capture.py`, run against
 production data (0 rows, brand new table -- no backfill needed):
 ```
 captured_collectibles   id, image_path, brand, series, character, variant,
@@ -304,7 +306,7 @@ deploy (no test data leaked in this time).
 2. Take a fresh `sqlite3 automation.db ".backup '...'"` snapshot immediately before
    running any migration script (see `OPERATIONS.md`) — in addition to, not instead
    of, the nightly restic backup.
-3. Each migration is a standalone script under `scripts/migrate_*.py`, matching the
+3. Each migration is a standalone script under `scripts/migrations/migrate_*.py`, matching the
    existing convention (`migrate_add_pricing_columns.py` etc.) — run once, by hand,
    logged in `CHANGELOG.md`.
 4. Backfill new nullable FK columns (`inventory_items.catalog_item_id`, etc.) in the

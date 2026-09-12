@@ -22,7 +22,6 @@ current state; `docs/scan-ingest.md` for the day-to-day scanning workflow.
 
 - `automation_control`: control-plane API, persistence models, permissions, and jobs
 - `automation_control.adapters`: read-only grocery and eBay clients
-- `automation_control.docker_broker`: narrow Docker metadata/log broker
 - `tests`: policy, persistence, adapter, and API tests
 
 ## Safety properties

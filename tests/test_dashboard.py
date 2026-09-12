@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.api import app
+from automation_control.ui import ADMIN_NAV
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
@@ -128,12 +129,51 @@ def test_collectible_value_is_grouped_by_brand_not_unknown(client, session):
     assert "unknown" not in response.text.lower()
 
 
-def test_quick_links_to_every_module_are_present(client):
+def test_quick_links_are_rendered_from_the_shared_nav(client):
+    """The dashboard used to hand-maintain its own copy of the nav, and the
+    two drifted: photo audit reached only from here, eight links reachable
+    only from the drawer. Both now come from ui.ADMIN_NAV, so the real
+    invariant is that they agree -- not that a hardcoded list is present."""
+    response = client.get("/dashboard")
+    # scoped to the quicklinks block -- the drawer is on every page and
+    # carries every link, including the collapsed ones
+    quicklinks = response.text.split("class='quicklinks'")[1]
+    for _title, links, collapsed in ADMIN_NAV:
+        for href, _label in links:
+            if collapsed:
+                # "Not set up yet" is deliberately absent here: there's no
+                # disclosure to fold it into on the dashboard. It stays
+                # reachable from the drawer and the Ctrl-K palette.
+                assert f"href='{href}'" not in quicklinks, href
+            else:
+                assert f"href='{href}'" in quicklinks, href
+
+
+def test_every_module_stays_reachable_from_the_drawer(client):
+    """Nothing may be built and then be unreachable. This is what actually
+    went wrong before: the live collectibles capture and review pages were
+    in neither the drawer nor the dashboard, so the only way to them was
+    typing the URL."""
     response = client.get("/dashboard")
     for path in ["/purchase-lots", "/potential-stock", "/sales", "/customers", "/suppliers",
                  "/goals", "/release-calendar", "/sealed-products", "/collectibles", "/whatnot",
-                 "/search", "/inventory", "/feed", "/export", "/market-search", "/deal-check"]:
-        assert f'href="{path}"' in response.text, path
+                 "/search", "/inventory", "/feed", "/export", "/market-search", "/deal-check",
+                 "/collectibles/capture", "/collectibles/review", "/inventory-audit",
+                 "/cards/capture", "/foil-review", "/analytics"]:
+        assert f"data-nav-href='{path}'" in response.text, path
+
+
+def test_review_queues_carry_a_count_badge(client):
+    response = client.get("/dashboard")
+    for path in ["/review", "/foil-review", "/inventory-audit", "/collectibles/review"]:
+        assert f"data-count-for='{path}'" in response.text, path
+
+
+def test_jump_to_palette_lists_every_destination(client):
+    response = client.get("/dashboard")
+    for _title, links, _collapsed in ADMIN_NAV:
+        for href, _label in links:
+            assert f"data-href='{href}'" in response.text, href
 
 
 def test_topbar_search_has_autocomplete_wiring(client):

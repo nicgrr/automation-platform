@@ -1,6 +1,6 @@
 """Sonny Angel, Smiski, and other blind-box collectibles -- Module 12.
 
-Ownership tracking (`scripts/migrate_relax_inventory_card_id.py`): a real
+Ownership tracking (`scripts/migrations/migrate_relax_inventory_card_id.py`): a real
 InventoryItem row (card_id=None, catalog_item_id set) is created whenever a
 collectible is added here with a nonzero quantity -- either through the
 manual form or through confirming an AI photo capture. This only covers
@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -32,9 +32,11 @@ from .card_recognition import extract_collectible_details
 from .config import get_settings
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card, remove_background
+from .images import serve_image
 from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .reverse_image_search import ReverseImageSearchError, search_image
-from .ui import brand_header, page, pill
+from . import vocabulary
+from .ui import brand_header, page, photo_field, pill
 
 router = APIRouter(tags=["collectibles"])
 
@@ -263,7 +265,7 @@ def collectible_capture_page(user: str = Depends(require_dashboard_user)) -> HTM
           "character/variant as a suggestion. Nothing is added to the catalogue until you confirm it on the "
           "review queue.</p>"
         + "<div class='panel'><form method='post' action='/collectibles/capture' enctype='multipart/form-data' class='calc-form'>"
-        + "<label>Photo<input type='file' name='photo' accept='image/*' required></label>"
+        + photo_field("photo", "Photo", required=True, hint="the figure, well lit, front on")
         + "<button type='submit'>Capture &amp; identify</button>"
         + "</form></div>"
         + "<p><a href='/collectibles/capture/bulk'>Bulk upload multiple figures instead</a></p>"
@@ -399,7 +401,7 @@ def collectible_capture_bulk_page(user: str = Depends(require_dashboard_user)) -
           "Processing happens in the background, so you can close this page after submitting and check back "
           "on the status page later.</p>"
         + "<div class='panel'><form method='post' action='/collectibles/capture/bulk' enctype='multipart/form-data' class='calc-form'>"
-        + "<label>Photos<input type='file' name='photos' accept='image/*' multiple required></label>"
+        + photo_field("photos", "Photos", required=True, multiple=True, hint="one figure per photo")
         + "<button type='submit'>Identify all</button>"
         + "</form></div>"
         + _STYLE
@@ -557,10 +559,18 @@ def collectible_review_form(capture_id: str, filled: str = Query(""), problem: s
     fill_note = problem or (f"Filled from the link: {filled}." if filled else "")
     fill_kind = "bad" if problem else "ok"
 
-    def field(name: str, label: str, value: str | None, autofocus: bool = False) -> str:
+    def field(name: str, label: str, value: str | None, autofocus: bool = False, options: list[str] | None = None) -> str:
         safe_value = escape(value or "")
         focus = " autofocus" if autofocus else ""
-        return f"<label>{label}<input name='{name}' value='{safe_value}'{focus}></label>"
+        # A datalist, not a select: Sonny Angel ships several series a year,
+        # so one the sheet hasn't caught up with must stay typeable.
+        listing = ""
+        if options:
+            listing = f"<datalist id='{name}-options'>" + "".join(
+                f"<option value='{escape(option)}'></option>" for option in options
+            ) + "</datalist>"
+        attrs = f" list='{name}-options'" if options else ""
+        return f"<label>{label}<input id='field-{name}' name='{name}' value='{safe_value}'{focus}{attrs}></label>{listing}"
 
     # Position in the queue, so a run of forty has a visible end.
     queue = _pending(session)
@@ -594,14 +604,15 @@ def collectible_review_form(capture_id: str, filled: str = Query(""), problem: s
           "<button type='submit' class='ghost'>Fill fields</button></form>"
         + f"<form method='post' action='/collectibles/review/{escape(capture_id)}/reverse-image-search' class='linkfill'>"
           "<button type='submit' class='ghost'>Search with Google Lens</button></form>"
-        + _lens_results_html(capture_id)
+        + _lens_results_html(capture_id, capture.brand)
         + f"<form method='post' action='/collectibles/review/{escape(capture_id)}' class='calc-form'>"
         + field("brand", "Brand", capture.brand)
-        + field("series", "Series", capture.series)
-        + field("character", "Character", capture.character, autofocus=focus_character)
+        + field("series", "Series", capture.series, options=vocabulary.series_names(capture.brand))
+        + field("character", "Character", capture.character, autofocus=focus_character,
+                options=vocabulary.character_names(capture.brand))
         + field("variant", "Variant", capture.variant)
         + field("blind_box_series", "Blind box series", capture.blind_box_series)
-        + f"<label><input name='is_secret' type='checkbox' value='true' style='width:auto'{' checked' if capture.is_secret else ''}> Secret / chase figure</label>"
+        + f"<label><input id='field-is_secret' name='is_secret' type='checkbox' value='true' style='width:auto'{' checked' if capture.is_secret else ''}> Secret / chase figure</label>"
         + "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='1'></label>"
         + "<div class='revactions'>"
         + "<button name='action' value='confirm'>Confirm &amp; next</button>"
@@ -702,7 +713,46 @@ def _lens_cache_path(settings, capture_id: str) -> Path:
     return directory / f"{capture_id}.json"
 
 
-def _lens_results_html(capture_id: str) -> str:
+def _lens_consensus(items: list[dict], brand: str | None) -> str:
+    """What the Lens matches agree the series is.
+
+    The series is the field a photo can't answer -- it's printed nowhere on
+    most figures -- so it's the one worth reading off the matches. Shows
+    the count behind each candidate rather than asserting a winner: thirty
+    listings saying Flower Series is an answer, one saying it is a
+    coincidence, and only the human can see which this is.
+
+    Fills the form field on click and nothing more. Same rule as the rest
+    of this route -- a Lens result never writes to the capture row.
+    """
+    ranked = vocabulary.suggest([item.get("title") or "" for item in items], brand)
+    if not ranked:
+        return ""
+    chips = "".join(
+        "<button type='button' class='ghost lens-series'"
+        + (f" data-series='{escape(entry.series)}'" if entry.series else "")
+        + (f" data-character='{escape(entry.name)}'" if entry.kind == vocabulary.CHARACTER else "")
+        + (f" data-series='{escape(entry.name)}'" if entry.kind == vocabulary.SERIES and not entry.series else "")
+        + (" data-secret='1'" if entry.is_secret else "")
+        + f">{escape(entry.name)}"
+        + ("<span class='lens-secret'>secret</span>" if entry.is_secret else "")
+        + f" <span class='lens-tally'>{count}</span></button>"
+        for entry, count in ranked
+    )
+    leader = ranked[0][1]
+    runner_up = ranked[1][1] if len(ranked) > 1 else 0
+    note = (
+        "Strong agreement -- click to use it."
+        if leader >= 3 and leader >= runner_up * 2
+        else "Weak agreement, so check the matches below before trusting it."
+    )
+    return (
+        f"<div class='lens-consensus'><p>Named by these matches <span class='muted'>&mdash; {note}</span></p>"
+        f"<div class='lens-chips'>{chips}</div></div>"
+    )
+
+
+def _lens_results_html(capture_id: str, brand: str | None = None) -> str:
     """Renders whatever the last Google Lens run for this capture found,
     if anything -- a plain results list, not an auto-fill: Lens returns a
     page title and link, not structured brand/series/character fields, so
@@ -724,16 +774,20 @@ def _lens_results_html(capture_id: str) -> str:
     if not items:
         return "<p class='linkfill-note'>Google Lens found nothing usable for this photo.</p>"
 
+    consensus = _lens_consensus(items, brand)
     rows = "".join(
         "<li class='lens-result'>"
         + (f"<img src='{escape(item['thumbnail'])}' alt='' loading='lazy'>" if item.get("thumbnail") else "")
         + "<div class='lens-result-body'>"
         + f"<a href='{escape(item['link'])}' target='_blank' rel='noopener'>{escape(item.get('title') or item['link'])}</a>"
+        + (f"<span class='lens-source'>{escape(item['source'])}" + (f" &middot; {escape(item['price'])}" if item.get("price") else "") + "</span>" if item.get("source") else "")
         + f"<button type='button' class='ghost lens-use' data-url='{escape(item['link'])}'>Use this link</button>"
         + "</div></li>"
         for item in items if item.get("link")
     )
-    return f"<ul class='lens-results'>{rows}</ul>" if rows else "<p class='linkfill-note'>Google Lens found nothing usable for this photo.</p>"
+    if not rows:
+        return "<p class='linkfill-note'>Google Lens found nothing usable for this photo.</p>"
+    return consensus + f"<ul class='lens-results'>{rows}</ul>"
 
 
 @router.post("/collectibles/review/{capture_id}/reverse-image-search")
@@ -763,12 +817,10 @@ async def collectible_review_reverse_image_search(
         record_event(session, actor_type="user", actor_id=user, action="collectible.reverse_image_search", resource_type="captured_collectible", resource_id=capture_id, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc)})
         return RedirectResponse(f"/collectibles/review/{capture_id}", status_code=303)
 
-    items = [
-        {"title": item.get("title"), "link": item.get("link") or item.get("url"), "thumbnail": item.get("thumbnail") or item.get("thumbnailUrl")}
-        for item in raw_items
-    ]
-    cache_path.write_text(json.dumps({"items": items}))
-    record_event(session, actor_type="user", actor_id=user, action="collectible.reverse_image_search", resource_type="captured_collectible", resource_id=capture_id, outcome="success", correlation_id=str(uuid.uuid4()), details={"count": len(items)})
+    # search_image already normalises and caps these -- re-mapping the
+    # fields here is what dropped them on the floor before.
+    cache_path.write_text(json.dumps({"items": raw_items}))
+    record_event(session, actor_type="user", actor_id=user, action="collectible.reverse_image_search", resource_type="captured_collectible", resource_id=capture_id, outcome="success", correlation_id=str(uuid.uuid4()), details={"count": len(raw_items)})
     return RedirectResponse(f"/collectibles/review/{capture_id}", status_code=303)
 
 
@@ -831,9 +883,13 @@ def collectible_review_submit(
 @router.get("/collectibles/capture/image/{capture_id}")
 def collectible_capture_image(capture_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     capture = session.get(CapturedCollectible, capture_id)
-    if capture is None:
-        raise HTTPException(status_code=404, detail="capture not found")
-    return FileResponse(capture.image_path)
+    # was FileResponse(capture.image_path) with no existence check, so a
+    # photo moved or deleted off disk raised a 500 rather than a 404
+    return serve_image(
+        capture.image_path if capture else None,
+        unset="capture not found",
+        missing="photo file missing",
+    )
 
 
 _COLLECTIBLE_LIST_STYLE = """<style>
@@ -875,6 +931,13 @@ _REVIEW_STYLE = """<style>
 .lens-result img{width:48px;height:48px;object-fit:cover;border-radius:6px;flex:none}
 .lens-result-body{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
 .lens-result-body a{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lens-source{font-size:11.5px;color:var(--text-dim)}
+.lens-consensus{margin:0 0 10px}
+.lens-consensus p{margin:0 0 6px;font-size:13px}
+.lens-chips{display:flex;flex-wrap:wrap;gap:6px}
+.lens-series{font-size:12px;padding:5px 10px}
+.lens-tally{opacity:.6;font-variant-numeric:tabular-nums}
+.lens-secret{margin-left:5px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;opacity:.75}
 .lens-use{align-self:flex-start;font-size:12px;padding:4px 10px}
 @media (max-width:720px){.review-one{grid-template-columns:1fr}
   .revshot{max-width:260px;margin:0 auto}}
@@ -883,9 +946,20 @@ _REVIEW_STYLE = """<style>
 <script>
 document.addEventListener('click', function(e){
   var btn = e.target.closest('.lens-use');
-  if (!btn) return;
-  var input = document.getElementById('linkfill-url');
-  if (input) { input.value = btn.dataset.url; input.focus(); }
+  if (btn) {
+    var input = document.getElementById('linkfill-url');
+    if (input) { input.value = btn.dataset.url; input.focus(); }
+    return;
+  }
+  var pick = e.target.closest('.lens-series');
+  if (!pick) return;
+  var series = document.getElementById('field-series');
+  if (series && pick.dataset.series) { series.value = pick.dataset.series; }
+  var character = document.getElementById('field-character');
+  if (character && pick.dataset.character) { character.value = pick.dataset.character; }
+  var secret = document.getElementById('field-is_secret');
+  if (secret && pick.dataset.secret) { secret.checked = true; }
+  (character && pick.dataset.character ? character : series || character).focus();
 });
 </script>"""
 

@@ -22,6 +22,7 @@ from .collectibles import router as collectibles_router
 from .commerce import router as commerce_router
 from .config import Settings, get_settings
 from .dashboard import router as dashboard_router
+from .nav_counts import router as nav_counts_router
 from .data_export import router as data_export_router
 from .deal_check import router as deal_check_router
 from .database import Base, engine, get_session
@@ -82,6 +83,7 @@ app.include_router(contact_messages_router)
 app.include_router(whatnot_router)
 app.include_router(price_history_router)
 app.include_router(dashboard_router)
+app.include_router(nav_counts_router)
 app.include_router(data_export_router)
 app.include_router(quick_price_router)
 app.include_router(market_search_router)

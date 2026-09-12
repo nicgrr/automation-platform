@@ -698,3 +698,34 @@ def test_a_series_that_says_nothing_becomes_none():
 
     for value in ["", "   ", None, "Unknown", "n/a", "-"]:
         assert normalise_series(value) is None, value
+
+
+def test_capture_image_404_when_file_is_gone(client, session, tmp_path):
+    """Was a 500: the handler passed image_path straight to FileResponse
+    with no existence check, so a photo moved or deleted off disk raised
+    an unhandled error instead of a missing image. Every other image
+    endpoint in the app already checked; this one didn't."""
+    capture = CapturedCollectible(
+        id="gone-1",
+        image_path=str(tmp_path / "never-written.jpg"),
+        status=CardCaptureStatus.PENDING_REVIEW,
+    )
+    session.add(capture)
+    session.commit()
+
+    assert client.get("/collectibles/capture/image/gone-1").status_code == 404
+
+
+def test_capture_image_is_privately_cached(client, session, tmp_path):
+    """These sit behind dashboard auth, so a shared proxy must not be
+    allowed to keep a copy."""
+    photo = tmp_path / "figure.jpg"
+    photo.write_bytes(b"\xff\xd8\xff\xd9")
+    session.add(CapturedCollectible(
+        id="have-1", image_path=str(photo), status=CardCaptureStatus.PENDING_REVIEW,
+    ))
+    session.commit()
+
+    resp = client.get("/collectibles/capture/image/have-1")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"].startswith("private")

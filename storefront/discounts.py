@@ -9,7 +9,7 @@ entirely: a lot already IS a whole set in one line, so discounting it
 against itself has no meaning.
 
 Tiers live in the set_discount_tiers table (see
-scripts/migrate_add_set_discount_tiers.py) rather than as constants here,
+scripts/migrations/migrate_add_set_discount_tiers.py) rather than as constants here,
 same reasoning as ShippingRate: the numbers should be tunable without a
 redeploy.
 """

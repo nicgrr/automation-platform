@@ -24,13 +24,14 @@ from html import escape
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
 from .config import get_settings
 from .database import get_session
+from .images import serve_image
 from .models import CardSet, CardVariant, CatalogCard, FoilLabel, InventoryItem
 from .scan_ingest.commit import _image_quality, _store_scan_image
 from .scan_ingest.foil import assess_foil
@@ -255,12 +256,11 @@ def foil_review_decide(
 @router.get("/image/{item_id}")
 def foil_review_image(item_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     item = session.get(InventoryItem, item_id)
-    if item is None or not item.scan_image_path:
-        raise HTTPException(status_code=404, detail="no photo for that item")
-    path = Path(item.scan_image_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="photo file missing")
-    return FileResponse(path, headers={"Cache-Control": "private, max-age=300"})
+    return serve_image(
+        item.scan_image_path if item else None,
+        unset="no photo for that item",
+        missing="photo file missing",
+    )
 
 
 _STYLE = """<style>

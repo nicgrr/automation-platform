@@ -6,7 +6,7 @@ etc), so schema changes to an already-live table need an explicit ALTER
 TABLE step like this rather than just editing the SQLAlchemy model.
 
 Run from the automation-platform directory:
-    .venv/bin/python scripts/migrate_add_pricing_columns.py
+    .venv/bin/python scripts/migrations/migrate_add_pricing_columns.py
 """
 
 import sqlite3

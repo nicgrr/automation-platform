@@ -50,7 +50,7 @@ def test_migration_rebuilds_table_with_nullable_card_id_and_preserves_data(tmp_p
     import automation_control.database as database_module
     monkeypatch.setattr(database_module, "engine", engine)
 
-    from scripts import migrate_relax_inventory_card_id
+    from scripts.migrations import migrate_relax_inventory_card_id
     monkeypatch.setattr(migrate_relax_inventory_card_id, "engine", engine)
 
     result = migrate_relax_inventory_card_id.main([])
@@ -76,7 +76,7 @@ def test_migration_is_idempotent_when_already_nullable(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite+pysqlite:///{db_path}")
     Base.metadata.create_all(engine)  # current models.py already has card_id nullable
 
-    from scripts import migrate_relax_inventory_card_id
+    from scripts.migrations import migrate_relax_inventory_card_id
     monkeypatch.setattr(migrate_relax_inventory_card_id, "engine", engine)
 
     result = migrate_relax_inventory_card_id.main([])

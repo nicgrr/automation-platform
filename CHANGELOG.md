@@ -3,6 +3,132 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-12 — The vocabulary goes multi-brand
+
+Pop Mart arrived, and with it the problem that makes brand scoping
+mandatory rather than tidy: **Sonny Angel's Snack Series has a Mustard,
+and so does Pop Mart's Twinkle Twinkle Create Your Taste.** Matching a
+Lens title on that name without knowing the brand is a coin toss between
+two companies' figures, and the loser gets priced against the wrong one.
+
+`sonny_angel_series.py` is now `vocabulary.py`, keyed by brand. The two
+brands need different shapes, so the loaders are separate and only the
+output is common:
+
+- **Sonny Angel** stays series-level — nobody sells one random Animal
+  Series 4 figure — and still parses the raw spreadsheet export verbatim,
+  so refreshing it is re-exporting the sheet.
+- **Pop Mart** is figure-level, because a set page names all twelve and
+  marks its chases. Twinkle Twinkle ships with 9 regular figures and its
+  three secrets (Lemon, Milk, Chili Sauce) flagged.
+
+`match()` and `suggest()` take a brand, and the review page passes the one
+on the capture row. Its datalists are scoped the same way, so a Pop Mart
+capture is never offered Sonny Angel's series.
+
+- A character beats the series it belongs to, regardless of name length.
+  Naming the figure tells you its series as well, so it's strictly the
+  better answer — matching "Twinkle Twinkle Chili Sauce" to the set rather
+  than the figure threw away the half that mattered, including its secret
+  flag.
+- A matched chase figure now ticks the Secret box, and a matched character
+  fills the Character field, alongside the series that was already there.
+  Still click-to-fill in the browser: the Lens route writes nothing to the
+  capture, and a test holds that line.
+- Aliases are brand-scoped too, so Sonny Angel's `Fast Food` can't resolve
+  for Pop Mart.
+- CRYBABY followed, once two live captures came back with no consensus
+  for exactly one reason: Lens had named them correctly both times and the
+  app had no vocabulary to read it with. Crying Again (12 + 3 secrets) and
+  Crying For Love (12 + 2) are in, read off Pop Mart's own product pages.
+  CRYBABY turns out to be the character line, not the series -- the series
+  sits under it -- so listings that drop the prefix are aliased.
+- A variant beats the figure it varies: "The Robber Red Ver." is a secret
+  and "The Robber" is not, and they price accordingly.
+- 17 new tests. Full suite (1260) green.
+
+Not done, and worth knowing: `scripts/import_sonny_angel_series.py` still
+carries its own hardcoded list of 11 series, which the vocabulary now
+contradicts (it has 65, and the seed's two hipper names are wrong). Left
+alone deliberately — pointing it at the vocabulary changes what it seeds,
+which needs the per-series secret data first.
+
+## 2026-09-12 — Google Lens was working; the app threw its results away
+
+Reverse image search on a collectible capture reported "Google Lens found
+nothing usable for this photo" on every run. The runs were all succeeding:
+one real Sonny Angel search had matched the figure correctly and returned
+56 results, top of list a Flower Series listing naming the exact figure.
+
+The actor writes **one dataset item per image searched**, not one per
+match, with the matches nested under the key named by that item's own
+`searchType`:
+
+    {"searchType": "visual-match",
+     "visual-match": {"inputUrl": "base64:0", "results": [{...}, ...]}}
+
+Both call sites read a dataset item as if it were a match, so every
+`title`/`link`/`thumbnail` came back `None`, the link-less row was filtered
+out, and the page reported nothing found. Flattening now happens once in
+`reverse_image_search.py`, which both callers share.
+
+- Every existing test mocked `search_image` with a flat
+  `[{"title": ..., "link": ...}]` — a shape the actor never returns. The
+  mock encoded the wrong assumption, so the suite stayed green while the
+  feature was dead. New tests assert against a dataset item copied
+  verbatim from a real run.
+- `source` and `price` were being dropped on the floor; the review row now
+  shows them, because "ebay.com · $24.00" is most of what picking the
+  right match depends on.
+- Results are capped at 30. Thumbnails arrive as inline base64 of 4–15 KB
+  each, so 56 matches was ~500 KB of page and cache per capture, and past
+  the first couple of dozen they're reposts and lookalikes.
+- Only `http(s)` links survive. These titles and links are scraped from
+  third-party pages and go straight into an `href`.
+
+## 2026-09-12 — The series field gets a vocabulary
+
+`series` was free text, and the catalogue had drifted accordingly: 16 of
+47 Sonny Angel rows named a series that doesn't exist. `Animal Series`
+seven times over, with four numbered ones to choose from and no way back
+to which. `Animals Series 2`. `Hippers Animal Series`, for a line actually
+called `Animal Hippers`. The eBay pricer builds its query from this field,
+so each of those was quietly pricing a figure against the wrong
+comparables.
+
+Nic's master list now ships as `automation_control/data/` — parsed, not
+retyped, so refreshing it is re-exporting the sheet. 65 series against the
+11 the seed script knew: 10 regular (it was missing Snack Series), 46
+limited (it had none), 6 hippers, 3 gifts.
+
+- The review form offers them as a `<datalist>`, never a `<select>` —
+  Sonny Angel ships several series a year, so one the sheet hasn't caught
+  up with has to stay typeable.
+- A series also isn't only sold under its sheet name. The catalogue's
+  `Fast Food Series` rows turned out to be Snack Series figures (confirmed
+  by Nic, not inferred), and that's the name sellers use — so matching
+  canonical names alone missed every title for the Hamburger secret, the
+  most valuable figure in the catalogue. Aliases resolve to the canonical
+  name, and never become the stored one.
+- Lens matches are read for a series and ranked by how many agree, with
+  the tally shown. On the real Flower Series capture that's 6 against 1,
+  1, 1. Consensus is the signal; one listing naming a series is a
+  coincidence, and the page says which it's looking at.
+- Clicking a suggestion fills the form field in the browser. It stays a
+  suggestion — the Lens route still writes nothing to the capture row, and
+  a test holds that line.
+- `match_series` refuses to guess. A title saying only "Animal Series"
+  matches nothing, because a wrong series gets priced whereas a blank one
+  gets typed.
+- Matching is word-order sensitive, and checking the live catalogue caught
+  what that costs: this app's own `Hippers Animal Series` resolved to the
+  bare `Hippers` line rather than `Animal Hippers`, which prices
+  differently. Aliased, with the rest.
+- Of the 16 drifted catalogue rows, 9 now resolve automatically. The other
+  8 can't be recovered from the row at all — `Animal Series` seven times
+  with four numbered ones to choose from, and one `Animals Series 2`.
+- 27 new tests. Full suite (1243) green.
+
 ## 2026-09-08 — Navigation drawer on the admin app too
 
 The shop got a drawer; the admin didn't have one, and it needed it more.

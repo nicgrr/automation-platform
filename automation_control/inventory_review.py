@@ -35,8 +35,8 @@ from sqlalchemy.orm import Session
 
 from .audit import record_event
 from .auth import require_dashboard_user
-from .config import get_settings
 from .database import get_session
+from .images import serve_image, serve_thumb
 from .models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem
 from .scan_ingest import fx
 from .ui import brand_header, page
@@ -564,34 +564,10 @@ def inventory_adjust(
 
 # --- images ----------------------------------------------------------------
 
-def _thumb_dir() -> Path:
-    directory = Path(get_settings().scan_media_dir) / "thumbs"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
-
-
 def _serve_thumb(source: Path, cache_name: str) -> FileResponse:
-    """Resize once to THUMB_WIDTH and cache on disk.
-
-    Every tile in a grid is the same width regardless of whether it came
-    from a 750x1050 scan or 245x342 reference art, and a page of them costs
-    kilobytes rather than megabytes. Never fails the page: an unreadable
-    source falls back to serving the original.
-    """
-    thumb = _thumb_dir() / cache_name
-    if not thumb.exists() or thumb.stat().st_mtime < source.stat().st_mtime:
-        try:
-            from PIL import Image
-
-            with Image.open(source) as image:
-                image = image.convert("RGB")
-                height = round(image.height * (THUMB_WIDTH / image.width))
-                image.resize((THUMB_WIDTH, height), Image.LANCZOS).save(
-                    thumb, "JPEG", quality=THUMB_QUALITY, optimize=True
-                )
-        except Exception:
-            return FileResponse(source, headers={"Cache-Control": "public, max-age=86400"})
-    return FileResponse(thumb, headers={"Cache-Control": "public, max-age=604800"})
+    """Reference art and own-scan tiles, at THUMB_WIDTH. Same cache
+    directory as before, so nothing already generated is invalidated."""
+    return serve_thumb(source, cache_name, THUMB_WIDTH)
 
 
 @router.get("/card-thumb/{card_id}")
@@ -622,12 +598,7 @@ def inventory_thumb(item_id: str, user: str = Depends(require_dashboard_user), s
 @router.get("/image/{item_id}")
 def inventory_image(item_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     item = session.get(InventoryItem, item_id)
-    if not item or not item.scan_image_path:
-        raise HTTPException(status_code=404, detail="no image for this item")
-    path = Path(item.scan_image_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="image file missing")
-    return FileResponse(path, headers={"Cache-Control": "public, max-age=604800"})
+    return serve_image(item.scan_image_path if item else None)
 
 
 _STYLE = """<style>

@@ -11,7 +11,7 @@ Adding the columns does not populate them. Follow with:
     .venv/bin/python -m scripts.backfill_set_artwork
 
 Run from the automation-platform directory:
-    .venv/bin/python scripts/migrate_add_card_set_artwork.py
+    .venv/bin/python scripts/migrations/migrate_add_card_set_artwork.py
 """
 
 import sqlite3

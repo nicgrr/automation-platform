@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from .auth import require_dashboard_user
 from .config import get_settings
+from .images import serve_thumb
 from .scan_ingest_status import _parse_sheets, _service_state, _tail_log
 from .ui import brand_header, page, pill
 
@@ -41,25 +42,11 @@ THUMB_QUALITY = 78
 
 
 def _thumb(source: Path, cache_name: str, width: int) -> FileResponse:
-    """Resize once and cache. An archived sheet is a ~70MB PNG -- serving
-    those raw would make the feed unusable on a phone, which is the one
-    place it's actually read."""
-    cache_dir = Path(get_settings().scan_media_dir) / "thumbs" / "feed"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    thumb = cache_dir / cache_name
-    if not thumb.exists() or thumb.stat().st_mtime < source.stat().st_mtime:
-        try:
-            from PIL import Image
-
-            with Image.open(source) as image:
-                image = image.convert("RGB")
-                height = round(image.height * (width / image.width))
-                image.resize((width, height), Image.LANCZOS).save(
-                    thumb, "JPEG", quality=THUMB_QUALITY, optimize=True
-                )
-        except Exception:
-            return FileResponse(source, headers={"Cache-Control": "public, max-age=3600"})
-    return FileResponse(thumb, headers={"Cache-Control": "public, max-age=604800"})
+    """An archived sheet is a ~70MB PNG -- serving those raw would make
+    the feed unusable on a phone, which is the one place it's actually
+    read. Own cache subdirectory, so feed thumbs and inventory thumbs
+    can't collide on a name."""
+    return serve_thumb(source, cache_name, width, subdir="feed")
 
 
 def _safe_stem(stem: str) -> str:

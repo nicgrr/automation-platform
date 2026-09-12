@@ -5,7 +5,7 @@ from html import escape
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,8 +14,9 @@ from .auth import require_dashboard_user
 from .card_recognition import extract_card_details
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card
+from .images import serve_image
 from .models import CaptureBatch, CaptureBatchStatus, CapturedCard, CardCaptureStatus
-from .ui import brand_header, page
+from .ui import brand_header, page, photo_field
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -167,10 +168,13 @@ def _run_capture_batch(batch_id: str, saved_photos: list[tuple[Path, Path | None
 def capture_page(user: str = Depends(require_dashboard_user)) -> str:
     body = (
         brand_header("Capture a card")
-        + "<p class='subtitle'>Photograph the front (back optional), then submit for AI identification.</p>"
+        + "<p class='subtitle'>Photograph the front (back optional), then submit for AI identification. "
+          "Built for finds away from the desk -- \u201cTake photo\u201d opens the camera straight away; "
+          "for a pile at home the flatbed scanner is faster (see "
+          "<a href='/feed'>Scan feed</a>).</p>"
         + "<div class='panel'><form method='post' action='/cards/capture' enctype='multipart/form-data'>"
-        + "<label>Front photo <input type='file' name='front' accept='image/*' required></label>"
-        + "<label>Back photo (optional) <input type='file' name='back' accept='image/*'></label>"
+        + photo_field("front", "Front photo", required=True, hint="fills the frame, face up")
+        + photo_field("back", "Back photo", hint="optional \u2014 needed for a graded slab's cert label")
         + "<button>Identify card</button>"
         + "</form></div>"
         + "<p><a href='/cards/capture/bulk'>Bulk upload multiple cards instead</a></p>"
@@ -206,7 +210,7 @@ def capture_bulk_page(user: str = Depends(require_dashboard_user)) -> str:
         brand_header("Bulk capture")
         + "<p class='subtitle'>Select multiple front photos at once -- each becomes its own card, front-only (no back). Processing happens in the background, so you can close this page after submitting and check back on the status page later. Use single capture instead if you need a back photo, e.g. for a graded slab's certification label.</p>"
         + "<div class='panel'><form method='post' action='/cards/capture/bulk' enctype='multipart/form-data'>"
-        + "<label>Front photos <input type='file' name='photos' accept='image/*' multiple required></label>"
+        + photo_field("photos", "Front photos", required=True, multiple=True, hint="one card per photo")
         + "<button>Identify all cards</button>"
         + "</form></div>"
     )
@@ -391,9 +395,4 @@ def card_image(card_id: str, side: str, user: str = Depends(require_dashboard_us
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
     raw_path = card.front_image_path if side == "front" else card.back_image_path
-    if not raw_path:
-        raise HTTPException(status_code=404, detail="no photo for this side")
-    path = Path(raw_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="image file missing")
-    return FileResponse(path)
+    return serve_image(raw_path, unset="no photo for this side")

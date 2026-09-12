@@ -9,7 +9,6 @@ class Settings(BaseSettings):
 
     automation_database_url: str = "sqlite:///./automation.db"
     grocery_base_url: str = "http://grocery-web:8000"
-    docker_broker_url: str = "http://docker-broker:8081"
     app_bind_host: str = "127.0.0.1"
     app_bind_port: int = 8080
     app_public_base_url: str | None = None

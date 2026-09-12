@@ -595,7 +595,7 @@ class CatalogItem(Base):
     A CatalogCard row is migrated into this as item_type=TCG_CARD reusing
     the *same* id -- so inventory_items.card_id, foil_labels.card_id, and
     everything else already pointing at a CatalogCard.id keeps resolving
-    without being rewritten. See scripts/migrate_add_catalog_items.py.
+    without being rewritten. See scripts/migrations/migrate_add_catalog_items.py.
     """
 
     __tablename__ = "catalog_items"
@@ -1001,13 +1001,13 @@ class InventoryItem(Base):
 
     `catalog_item_id` / `storage_location_id` / `status` / `allocated_cost_basis`
     / `grading_company` / `certification_number` were added by
-    scripts/migrate_add_catalog_items.py, backfilled from the existing
+    scripts/migrations/migrate_add_catalog_items.py, backfilled from the existing
     `card_id` -- nullable and additive, so nothing reading only the
     original columns breaks. `card_id` stays the source of truth for the
     live scan-ingest pipeline until every reader is moved over to
     `catalog_item_id` in a later, separate change.
 
-    `card_id` was made nullable by scripts/migrate_relax_inventory_card_id.py
+    `card_id` was made nullable by scripts/migrations/migrate_relax_inventory_card_id.py
     (a full table rebuild -- SQLite can't ALTER a NOT NULL away) so a
     non-TCG collectible (Sonny Angel, Smiski -- no catalog_cards row at all)
     can have real ownership: an InventoryItem with card_id=None and

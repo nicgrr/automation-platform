@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from automation_control import inventory_review
+from automation_control import images, inventory_review
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
@@ -257,8 +257,11 @@ def test_thumb_is_generated_smaller_than_the_original(client, session, tmp_path,
     thumbnails made the page load dominated by images."""
     from PIL import Image
 
+    # resize-and-cache moved to automation_control.images (shared with
+    # scan_feed, which had its own near-identical copy), so that's where
+    # the thumb cache directory is now resolved
     monkeypatch.setattr(
-        inventory_review, "get_settings",
+        images, "get_settings",
         lambda: type("S", (), {"scan_media_dir": str(tmp_path / "media")})(),
     )
     item, image_path = _seed_with_image(session, tmp_path)
@@ -274,8 +277,11 @@ def test_thumb_is_generated_smaller_than_the_original(client, session, tmp_path,
 def test_thumb_falls_back_to_the_original_when_resizing_fails(client, session, tmp_path, monkeypatch):
     """A broken thumbnail must never take the page down -- the card still
     has to render, just without the size win."""
+    # resize-and-cache moved to automation_control.images (shared with
+    # scan_feed, which had its own near-identical copy), so that's where
+    # the thumb cache directory is now resolved
     monkeypatch.setattr(
-        inventory_review, "get_settings",
+        images, "get_settings",
         lambda: type("S", (), {"scan_media_dir": str(tmp_path / "media")})(),
     )
     session.add(CardSet(id="xy11", name="Steam Siege", printed_total=114))
@@ -404,8 +410,11 @@ def test_card_thumb_is_resized_to_the_shared_width(client, session, tmp_path, mo
     from PIL import Image
     import io
 
+    # resize-and-cache moved to automation_control.images (shared with
+    # scan_feed, which had its own near-identical copy), so that's where
+    # the thumb cache directory is now resolved
     monkeypatch.setattr(
-        inventory_review, "get_settings",
+        images, "get_settings",
         lambda: type("S", (), {"scan_media_dir": str(tmp_path / "media")})(),
     )
     ref = tmp_path / "ref.png"

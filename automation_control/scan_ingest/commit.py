@@ -95,7 +95,7 @@ def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str,
 def commit_card(
     session: Session,
     identification: Identification,
-    scan_image: Path,
+    scan_image: Path | None,
     media_dir: Path,
     variant: CardVariant = CardVariant.NORMAL,
     condition: str = "Near Mint",
@@ -110,6 +110,12 @@ def commit_card(
     Refuses anything still needing confirmation unless `allow_unconfirmed`
     is set -- which callers use only *after* a human has confirmed the
     identification, since confirming is precisely what clears the flag.
+
+    `scan_image` is the crop that becomes the listing's "actual card" photo,
+    and can be None when the only crop on hand is known-bad (e.g. a
+    truncated card) -- committing without one leaves `scan_image_path`
+    unset, which the storefront already renders as a clearly-labelled stock
+    photo rather than passing off a broken crop as a photo of this copy.
     """
     if identification.card_id is None:
         raise CommitRefused("cannot commit an unidentified card")
@@ -137,21 +143,23 @@ def commit_card(
     if existing:
         existing.quantity += 1
         # Keep the better photo: a later rescan at higher resolution should
-        # win, since this image is what ends up in a listing.
-        if existing.scan_image_path and _image_quality(scan_image) > _image_quality(Path(existing.scan_image_path)):
-            stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
-            existing.scan_image_path = str(stored)
-            image_replaced = True
-        elif not existing.scan_image_path:
-            stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
-            existing.scan_image_path = str(stored)
+        # win, since this image is what ends up in a listing. No image on
+        # hand at all (scan_image is None) just means "don't touch it".
+        if scan_image is not None:
+            if existing.scan_image_path and _image_quality(scan_image) > _image_quality(Path(existing.scan_image_path)):
+                stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
+                existing.scan_image_path = str(stored)
+                image_replaced = True
+            elif not existing.scan_image_path:
+                stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
+                existing.scan_image_path = str(stored)
         item = existing
         created = False
     else:
-        stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
+        stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition) if scan_image is not None else None
         item = InventoryItem(
             id=str(uuid.uuid4()), card_id=card.id, variant=variant, condition=condition,
-            quantity=1, scan_image_path=str(stored),
+            quantity=1, scan_image_path=str(stored) if stored else None,
             session_id=scan_session.id if scan_session else None, notes=notes,
         )
         session.add(item)

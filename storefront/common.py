@@ -209,7 +209,7 @@ _DEFAULT_SOCIAL_ICON = (
 def _active_social_links(session: Session) -> list[SocialLink]:
     """Only platforms with a real url configured ever render. A row can
     exist as a placeholder (seeded with url=None, see
-    scripts/migrate_add_social_and_contact.py) without ever showing as a
+    scripts/migrations/migrate_add_social_and_contact.py) without ever showing as a
     broken or empty link."""
     return session.scalars(
         select(SocialLink)

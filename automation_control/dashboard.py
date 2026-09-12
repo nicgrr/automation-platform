@@ -10,7 +10,6 @@ markup and styling as page-specific `_STYLE`.
 
 from datetime import UTC, datetime
 from html import escape
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -22,11 +21,11 @@ from .charts import CHART_STYLE, bar_list, donut_chart, donut_legend, gauge_char
 from .database import get_session
 from .inventory_review import _aud, _latest_ebay_prices, _latest_prices
 from .models import (
-    AuditEvent, CapturedCard, CardCaptureStatus, CollectibleProduct, InventoryItem, InventoryStatus, Marketplace,
-    PendingListing, ListingBuildStatus, PotentialPurchase, PotentialPurchaseStatus,
-    PricingStatus, Sale, TcgCard,
+    AuditEvent, CollectibleProduct, InventoryItem, InventoryStatus, Marketplace,
+    PotentialPurchase, PotentialPurchaseStatus, Sale, TcgCard,
 )
-from .ui import page
+from .nav_counts import queue_counts
+from .ui import ADMIN_NAV, page
 
 router = APIRouter(tags=["dashboard"])
 
@@ -36,11 +35,37 @@ OPEN_POTENTIAL_STATUSES = {
 }
 
 
-def _review_queue_size(settings) -> int:
-    """How many crops the scanner set aside. A plain directory count -- the
-    queue is files on disk, not a table."""
-    directory = Path(settings.scan_media_dir) / "needs_review"
-    return len(list(directory.glob("*.jpg"))) if directory.exists() else 0
+def _quicklinks_html(counts: dict[str, int | None], storefront_url: str) -> str:
+    """Rendered from ui.ADMIN_NAV rather than hand-written here.
+
+    This block used to be a hardcoded copy of the nav drawer's list, and
+    the two had already drifted in both directions: photo audit was only
+    ever reachable from the dashboard, while analytics, shop orders, shop
+    pricing, shop listings, personal collection, contact messages and
+    identify-from-a-link were only ever in the drawer. Same source now, so
+    that can't recur -- adding a module to ADMIN_NAV puts it in both.
+
+    The collapsed group ("Not set up yet") is skipped: on the dashboard
+    there's no disclosure to hide it behind, and a column of nine empty
+    features is exactly the noise the regrouping set out to remove.
+    """
+    columns = []
+    for title, links, collapsed in ADMIN_NAV:
+        if collapsed:
+            continue
+        rows = []
+        for href, label in links:
+            n = counts.get(href)
+            suffix = f" <span class='ql-count'>{n}</span>" if n else ""
+            rows.append(f"<a href='{href}'>{escape(label)}{suffix}</a>")
+        columns.append(
+            f"<div class='quicklink-group'><h4>{escape(title)}</h4>{''.join(rows)}</div>"
+        )
+    columns.append(
+        "<div class='quicklink-group'><h4>Storefront</h4>"
+        f"<a href='{storefront_url}' target='_blank' rel='noopener'>NL Vault shop &#8599;</a></div>"
+    )
+    return f"<div class='quicklinks'>{''.join(columns)}</div>"
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -51,11 +76,16 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     # locally without another setting to keep in sync
     storefront_url = f"{request.url.scheme}://{request.url.hostname}:8444/"
 
-    # -- pipeline counts, unchanged from before --
-    pending_review_count = len(session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW)).all())
-    pending_price_count = len(session.scalars(select(CapturedCard).where(CapturedCard.pricing_status == PricingStatus.PENDING_PRICE_REVIEW)).all())
-    pending_listing_count = len(session.scalars(select(PendingListing).where(PendingListing.status == ListingBuildStatus.DRAFT)).all())
-    review_count = _review_queue_size(settings)
+    # -- pipeline counts --
+    # From nav_counts.queue_counts so the Operations widget, the
+    # quicklinks below and the nav drawer's badges can't disagree about
+    # how much work is waiting; it also covers foil and photo audit,
+    # which this handler never counted at all.
+    counts = queue_counts(session, settings)
+    pending_review_count = counts["/cards/review"]
+    pending_price_count = counts["/cards/pricing"]
+    pending_listing_count = counts["/listings/review"]
+    review_count = counts["/review"]
     catalog_by_game = session.execute(select(TcgCard.game, func.count()).group_by(TcgCard.game)).all()
 
     # -- inventory value + pricing-coverage gauge --
@@ -200,48 +230,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
   </div>
   <div class="widget-grid">{grid}</div>
 
-  <div class="quicklinks">
-    <div class="quicklink-group">
-      <h4>Card capture &amp; listings</h4>
-      <a href="/cards/capture">Capture new card</a>
-      <a href="/cards/capture/bulk">Bulk upload</a>
-      <a href="/cards/review">Review queue ({pending_review_count})</a>
-      <a href="/cards/pricing">Price review ({pending_price_count})</a>
-      <a href="/listings/review">Listing review ({pending_listing_count})</a>
-    </div>
-    <div class="quicklink-group">
-      <h4>Bulk scan &amp; catalogue</h4>
-      <a href="/inventory">Inventory ({scanned_holdings} distinct)</a>
-      <a href="/feed">Scan feed</a>
-      <a href="/scan-ingest">Status &amp; logs</a>
-      <a href="/review">Review queue ({review_count})</a>
-      <a href="/foil-review">Foil review</a>
-      <a href="/inventory-audit">Photo audit</a>
-      <a href="/search">Search catalogue</a>
-    </div>
-    <div class="quicklink-group">
-      <h4>Buying &amp; selling</h4>
-      <a href="/buying-calculator">Buying calculator</a>
-      <a href="/purchase-lots">Purchase lots</a>
-      <a href="/potential-stock">Potential stock</a>
-      <a href="/market-search">Market search</a>
-      <a href="/deal-check">Deal check</a>
-      <a href="/sales">Sales</a>
-      <a href="/whatnot">Whatnot shows</a>
-      <a href="/marketplaces">Marketplaces</a>
-    </div>
-    <div class="quicklink-group">
-      <h4>Business</h4>
-      <a href="/customers">Customers</a>
-      <a href="/suppliers">Suppliers</a>
-      <a href="/goals">Goals</a>
-      <a href="/release-calendar">Release calendar</a>
-      <a href="/sealed-products">Sealed products</a>
-      <a href="/collectibles">Collectibles</a>
-      <a href="/export">Export data</a>
-      <a href="{storefront_url}" target="_blank" rel="noopener">NL Vault shop &#8599;</a>
-    </div>
-  </div>"""
+  {_quicklinks_html(counts, storefront_url)}"""
     return HTMLResponse(page("EzBay — Dashboard", body, head_extra=f"<style>{_STYLE}{CHART_STYLE}</style>"))
 
 
@@ -253,38 +242,41 @@ _STYLE = """
 @media (max-width:980px){.widget-grid{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:640px){.widget-grid{grid-template-columns:1fr}}
 
-.widget{background:#fff;border:1px solid #e5e7ee;border-radius:14px;padding:18px 20px;
-  box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.widget{background:var(--panel);border:1px solid var(--panel-border);border-radius:14px;padding:18px 20px;
+  box-shadow:var(--shadow)}
 .widget-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px}
 .widget-head h3{margin:0;font-size:14px;font-weight:700}
-.widget-sub{font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em}
+.widget-sub{font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em}
 .widget-link{font-size:12px;font-weight:600}
 
 .widget-table{width:100%;border-collapse:collapse;font-size:13px}
-.widget-table th{text-align:left;color:#9ca3af;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
-  font-weight:600;padding:0 0 8px;border-bottom:1px solid #eef0f5}
-.widget-table td{padding:8px 0;border-bottom:1px solid #f4f5f8}
+.widget-table th{text-align:left;color:var(--text-faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+  font-weight:600;padding:0 0 8px;border-bottom:1px solid var(--panel-border)}
+.widget-table td{padding:8px 0;border-bottom:1px solid var(--panel-border)}
 .widget-table tr:last-child td{border-bottom:none}
 
 .gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
-.gauge-caption{font-size:12px;color:#6b7280;text-align:center}
+.gauge-caption{font-size:12px;color:var(--text-dim);text-align:center}
 
 .value-donut-row{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 .big-number{font-size:26px;font-weight:800;letter-spacing:-.02em}
-.big-number-sub{font-size:12px;font-weight:500;color:#6b7280;margin-top:4px}
+.big-number-sub{font-size:12px;font-weight:500;color:var(--text-dim);margin-top:4px}
 
 .ops-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:14px}
-.ops-label{font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em}
+.ops-label{font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em}
 .ops-value{font-size:20px;font-weight:700}
-.ops-catalog{font-size:12px;color:#6b7280;margin:0 0 10px}
+.ops-catalog{font-size:12px;color:var(--text-dim);margin:0 0 10px}
 .ops-events{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;
-  font-size:11.5px;color:#6b7280;max-height:110px;overflow-y:auto}
+  font-size:11.5px;color:var(--text-dim);max-height:110px;overflow-y:auto}
 
 .quicklinks{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:26px;
-  padding-top:22px;border-top:1px solid #e5e7ee}
+  padding-top:22px;border-top:1px solid var(--panel-border)}
 @media (max-width:780px){.quicklinks{grid-template-columns:repeat(2,1fr)}}
-.quicklink-group h4{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin:0 0 10px}
+.quicklink-group h4{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin:0 0 10px}
 .quicklink-group{display:flex;flex-direction:column;gap:7px}
-.quicklink-group a{font-size:13px;color:#374151}
-.quicklink-group a:hover{color:#0891b2}
+.quicklink-group a{font-size:13px;color:var(--text)}
+.quicklink-group a:hover{color:var(--accent)}
+.ql-count{display:inline-block;min-width:18px;padding:0 6px;margin-left:4px;border-radius:999px;
+  font-size:11px;font-weight:700;background:var(--warning-bg);color:var(--warning);
+  font-variant-numeric:tabular-nums}
 """

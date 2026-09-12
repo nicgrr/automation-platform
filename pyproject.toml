@@ -34,6 +34,12 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<1"]
 [tool.setuptools.packages.find]
 include = ["automation_control*"]
 
+# Non-Python files the package reads at runtime. Editable installs find
+# these in the source tree regardless, so a missing entry here only bites
+# on a real build -- which is exactly when it would be hardest to spot.
+[tool.setuptools.package-data]
+automation_control = ["data/*.csv", "listing_pipeline/templates/*.j2"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # The project root, so tests can import both automation_control (installed
