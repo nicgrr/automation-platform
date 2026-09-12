@@ -304,6 +304,32 @@ def test_a_lens_series_suggestion_still_writes_nothing_to_the_capture(client, se
     assert session.get(CapturedCollectible, capture_id).series is None
 
 
+def test_a_character_and_its_own_series_count_as_one_answer(client, session, tmp_path):
+    """Taken separately, "CRYBABY Crying Again Series" and "The Robber"
+    look like a 7-6 split. They are the same answer at two levels of
+    detail, and calling that weak sends you to re-check a correct call."""
+    app.state.settings.apify_token = "fake-token"
+    (tmp_path / "p.jpg").write_bytes(b"x")
+    session.add(CapturedCollectible(id="cap-fam", image_path=str(tmp_path / "p.jpg"),
+                                    status=CardCaptureStatus.PENDING_REVIEW, brand="POP MART"))
+    session.commit()
+
+    fake_items = [{"title": t, "link": f"https://example.test/{i}"} for i, t in enumerate([
+        "Crybaby Crying Again Series blind box",
+        "POP MART Crybaby Crying Again Series",
+        "popmart crying again series figures",
+        "Crybaby Crying Again Series The Robber",
+        "Crybaby The Robber figure",
+        "crying again the robber popmart",
+    ])]
+    with patch("automation_control.collectibles.search_image", new=AsyncMock(return_value=fake_items)):
+        client.post("/collectibles/review/cap-fam/reverse-image-search")
+
+    page = client.get("/collectibles/review/cap-fam")
+    assert "Strong agreement" in page.text
+    assert "data-character='The Robber'" in page.text
+
+
 def test_weak_agreement_is_labelled_as_weak(client, session, tmp_path):
     """One match naming a series is a coincidence, and the page should say
     so rather than dressing it up as an identification."""

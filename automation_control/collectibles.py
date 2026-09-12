@@ -739,8 +739,16 @@ def _lens_consensus(items: list[dict], brand: str | None) -> str:
         + f" <span class='lens-tally'>{count}</span></button>"
         for entry, count in ranked
     )
-    leader = ranked[0][1]
-    runner_up = ranked[1][1] if len(ranked) > 1 else 0
+    # A character and the series it belongs to are not competing answers --
+    # "CRYBABY Crying Again Series" 7 and "The Robber" 6 is thirteen matches
+    # agreeing, not a close-run thing. Group by series before judging, or a
+    # confident identification gets labelled weak and second-guessed.
+    families: dict[str, int] = {}
+    for entry, count in ranked:
+        families[entry.series or entry.name] = families.get(entry.series or entry.name, 0) + count
+    totals = sorted(families.values(), reverse=True)
+    leader = totals[0]
+    runner_up = totals[1] if len(totals) > 1 else 0
     note = (
         "Strong agreement -- click to use it."
         if leader >= 3 and leader >= runner_up * 2
