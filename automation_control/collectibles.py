@@ -728,15 +728,32 @@ def _lens_consensus(items: list[dict], brand: str | None) -> str:
     ranked = vocabulary.suggest([item.get("title") or "" for item in items], brand)
     if not ranked:
         return ""
+
+    # A picture of each candidate, taken from the highest-ranked match that
+    # named it. Lens already returns a thumbnail per match and they're
+    # sitting in the cache, so this costs nothing and -- unlike a name --
+    # it can be checked against the figure in your hand. "Milk Biscuit or
+    # Milk?" is a question two photos answer in a second and two words
+    # don't answer at all.
+    thumbnails: dict[str, str] = {}
+    for item in items:
+        found = vocabulary.match(item.get("title") or "", brand)
+        thumbnail = item.get("thumbnail")
+        if found is not None and thumbnail and found.name not in thumbnails:
+            thumbnails[found.name] = thumbnail
+
     chips = "".join(
-        "<button type='button' class='ghost lens-series'"
+        "<button type='button' class='lens-series'"
         + (f" data-series='{escape(entry.series)}'" if entry.series else "")
         + (f" data-character='{escape(entry.name)}'" if entry.kind == vocabulary.CHARACTER else "")
         + (f" data-series='{escape(entry.name)}'" if entry.kind == vocabulary.SERIES and not entry.series else "")
         + (" data-secret='1'" if entry.is_secret else "")
-        + f">{escape(entry.name)}"
+        + ">"
+        + (f"<img src='{escape(thumbnails[entry.name])}' alt='' loading='lazy'>"
+           if entry.name in thumbnails else "<span class='lens-noshot'>no image</span>")
+        + f"<span class='lens-cand-name'>{escape(entry.name)}</span>"
         + ("<span class='lens-secret'>secret</span>" if entry.is_secret else "")
-        + f" <span class='lens-tally'>{count}</span></button>"
+        + f"<span class='lens-tally'>{count} match{'es' if count != 1 else ''}</span></button>"
         for entry, count in ranked
     )
     # A character and the series it belongs to are not competing answers --
@@ -755,7 +772,7 @@ def _lens_consensus(items: list[dict], brand: str | None) -> str:
         else "Weak agreement, so check the matches below before trusting it."
     )
     return (
-        f"<div class='lens-consensus'><p>Named by these matches <span class='muted'>&mdash; {note}</span></p>"
+        f"<div class='lens-consensus'><p>Could be &mdash; compare with the photo above. <span class='muted'>{note}</span></p>"
         f"<div class='lens-chips'>{chips}</div></div>"
     )
 
@@ -942,9 +959,16 @@ _REVIEW_STYLE = """<style>
 .lens-source{font-size:11.5px;color:var(--text-dim)}
 .lens-consensus{margin:0 0 10px}
 .lens-consensus p{margin:0 0 6px;font-size:13px}
-.lens-chips{display:flex;flex-wrap:wrap;gap:6px}
-.lens-series{font-size:12px;padding:5px 10px}
-.lens-tally{opacity:.6;font-variant-numeric:tabular-nums}
+.lens-chips{display:flex;flex-wrap:wrap;gap:8px}
+.lens-series{display:flex;flex-direction:column;align-items:center;gap:4px;width:104px;padding:8px 6px;
+  background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:10px;color:var(--text);
+  cursor:pointer;font:inherit;font-size:12px;text-align:center}
+.lens-series:hover{border-color:var(--accent)}
+.lens-series img{width:76px;height:76px;object-fit:cover;border-radius:8px;background:var(--panel-border)}
+.lens-noshot{width:76px;height:76px;border-radius:8px;background:var(--panel-border);display:flex;
+  align-items:center;justify-content:center;font-size:10px;color:var(--text-dim)}
+.lens-cand-name{overflow-wrap:anywhere;line-height:1.25}
+.lens-tally{opacity:.6;font-variant-numeric:tabular-nums;font-size:11px}
 .lens-secret{margin-left:5px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;opacity:.75}
 .lens-use{align-self:flex-start;font-size:12px;padding:4px 10px}
 @media (max-width:720px){.review-one{grid-template-columns:1fr}

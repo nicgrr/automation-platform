@@ -3,6 +3,25 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-12 — Candidates you can look at, not just read
+
+The suggestion panel listed names. "Milk Biscuit 4, Milk 3" is not a
+question two words can settle -- it needed a picture, which is exactly the
+pair that had already been called wrong once.
+
+Each candidate now shows a photo, taken from the highest-ranked Lens match
+that named it. Lens returns a thumbnail per match and they were already
+cached, so this costs no extra fetching and no new runs: the pictures were
+sitting in files the page was reading anyway. Laid out as cards beside the
+capture photo, so confirming is a glance rather than a name lookup.
+
+- Every candidate across all five pending captures resolved to a picture.
+  A match without a thumbnail falls back to a placeholder rather than
+  dropping the candidate.
+- Clicking still only fills the form. Nothing about this writes.
+- Review page with 6 candidates and 30 results comes to 223 KB.
+- 2 new tests. Full suite (1271) green.
+
 ## 2026-09-12 — Flower Series, and the weak capture answers itself
 
 Nic confirmed capture fd0da650 is a Flower Series figure, so its line-up

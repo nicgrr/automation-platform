@@ -246,7 +246,7 @@ def test_review_page_shows_what_the_lens_matches_agree_the_series_is(client, ses
         client.post(f"/collectibles/review/{capture_id}/reverse-image-search")
 
     page = client.get(f"/collectibles/review/{capture_id}")
-    assert "Named by these matches" in page.text
+    assert "compare with the photo above" in page.text
     assert "data-series='Flower Series'" in page.text
     assert "Strong agreement" in page.text
     # Ranked, so the agreed series comes before the lone dissenter.
@@ -288,6 +288,51 @@ def test_the_datalist_is_scoped_to_the_captures_brand(client, session, tmp_path)
     page = client.get("/collectibles/review/cap-sa")
     assert "Flower Series" in page.text
     assert "Twinkle Twinkle" not in page.text
+
+
+def test_each_candidate_carries_a_picture_from_the_match_that_named_it(client, session, tmp_path):
+    """Two names can't settle "Milk Biscuit or Milk?" and two photos can.
+    Lens already returns a thumbnail per match, so the candidate takes the
+    one from the highest-ranked match that named it -- no extra fetching."""
+    app.state.settings.apify_token = "fake-token"
+    (tmp_path / "p.jpg").write_bytes(b"x")
+    session.add(CapturedCollectible(id="cap-img", image_path=str(tmp_path / "p.jpg"),
+                                    status=CardCaptureStatus.PENDING_REVIEW, brand="Pop Mart"))
+    session.commit()
+
+    fake_items = [
+        {"title": "Twinkle Twinkle Milk Biscuit", "link": "https://example.test/1",
+         "thumbnail": "https://cdn.test/biscuit.jpg"},
+        {"title": "Twinkle Twinkle Milk secret", "link": "https://example.test/2",
+         "thumbnail": "https://cdn.test/milk.jpg"},
+    ]
+    with patch("automation_control.collectibles.search_image", new=AsyncMock(return_value=fake_items)):
+        client.post("/collectibles/review/cap-img/reverse-image-search")
+
+    page = client.get("/collectibles/review/cap-img")
+    assert "https://cdn.test/biscuit.jpg" in page.text
+    assert "https://cdn.test/milk.jpg" in page.text
+    # Still a picker, not a claim: clicking is what fills the fields.
+    assert "data-character='Milk Biscuit'" in page.text
+    assert "data-character='Milk'" in page.text
+
+
+def test_a_candidate_with_no_thumbnail_still_renders(client, session, tmp_path):
+    """A match can come back without one, and a missing picture must not
+    cost you the candidate."""
+    app.state.settings.apify_token = "fake-token"
+    (tmp_path / "p.jpg").write_bytes(b"x")
+    session.add(CapturedCollectible(id="cap-noimg", image_path=str(tmp_path / "p.jpg"),
+                                    status=CardCaptureStatus.PENDING_REVIEW, brand="Pop Mart"))
+    session.commit()
+
+    fake_items = [{"title": "Twinkle Twinkle Baguette", "link": "https://example.test/1"}]
+    with patch("automation_control.collectibles.search_image", new=AsyncMock(return_value=fake_items)):
+        client.post("/collectibles/review/cap-noimg/reverse-image-search")
+
+    page = client.get("/collectibles/review/cap-noimg")
+    assert "data-character='Baguette'" in page.text
+    assert "no image" in page.text
 
 
 def test_a_lens_series_suggestion_still_writes_nothing_to_the_capture(client, session, tmp_path):
