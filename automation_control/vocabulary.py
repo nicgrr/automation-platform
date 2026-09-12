@@ -76,6 +76,7 @@ def _normalise(text: str) -> str:
 # --- Sonny Angel: the master list spreadsheet ------------------------------
 
 SONNY_ANGEL_PATH = DATA_DIR / "sonny_angel_series.csv"
+SONNY_ANGEL_FIGURES_PATH = DATA_DIR / "sonny_angel_figures.csv"
 
 # Read by the sheet's own column headings rather than by position -- a
 # re-export that adds a column shouldn't silently reclassify everything.
@@ -155,6 +156,21 @@ def _load_sonny_angel() -> list[Entry]:
             seen.add(key)
             entries.append(Entry(brand=SONNY_ANGEL, name=name, kind=SERIES,
                                  category=_sa_category(category, key), year=year))
+
+    # Figures, for the series whose line-ups we have. The master list stops
+    # at the series, so this is the half that lets a Sonny Angel capture
+    # name the actual figure the way a Pop Mart one already does.
+    known = {e.name for e in entries}
+    figures = _load_figures(SONNY_ANGEL_FIGURES_PATH, SONNY_ANGEL)
+    for figure in figures:
+        if figure.series not in known:
+            # A figure filed under a series the sheet doesn't have is a
+            # typo, and it would match while reporting a series that can
+            # never be selected from the datalist.
+            raise ValueError(
+                f"{SONNY_ANGEL_FIGURES_PATH.name}: {figure.name!r} names series "
+                f"{figure.series!r}, which is not in the master list")
+    entries.extend(figures)
     return entries
 
 
@@ -163,28 +179,34 @@ def _load_sonny_angel() -> list[Entry]:
 POP_MART_PATH = DATA_DIR / "popmart_figures.csv"
 
 
-def _load_pop_mart() -> list[Entry]:
+def _load_figures(path: Path, brand: str) -> list[Entry]:
     """One row per figure, secrets included and flagged.
 
-    Transcribed from the brand's own set pages -- Twinkle Twinkle Create
-    Your Taste came from
-    popmart.com/AU/pop-now/box-set/twinkle-twinkle-create-your-taste-series-figures
-    -- which name every figure in the set and mark the chases, so this is
-    read off a source rather than recalled.
+    Always read off a source that names the whole set rather than recalled
+    -- Pop Mart's own box-set pages, and for Sonny Angel a retailer
+    line-up cross-checked against a second source before it lands here. A
+    figure list that is quietly missing an entry is a figure that silently
+    stops matching, so partial lists are worse than absent ones.
     """
     entries: list[Entry] = []
-    with POP_MART_PATH.open(newline="", encoding="utf-8-sig") as handle:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
         for row in csv.DictReader(handle):
             character = (row.get("character") or "").strip()
             series = (row.get("series") or "").strip()
             if not character or not series:
                 continue
             entries.append(Entry(
-                brand=POP_MART, name=character, kind=CHARACTER, series=series,
+                brand=brand, name=character, kind=CHARACTER, series=series,
                 is_secret=(row.get("is_secret") or "").strip().lower() in {"yes", "true", "1"},
             ))
+    return entries
+
+
+def _load_pop_mart() -> list[Entry]:
+    entries = _load_figures(POP_MART_PATH, POP_MART)
     # The series itself is worth matching too: plenty of listings name the
-    # set without naming which figure is in it.
+    # set without naming which figure is in it. Sonny Angel needs no
+    # equivalent -- its series come from the master list spreadsheet.
     for series in dict.fromkeys(entry.series for entry in entries):
         entries.append(Entry(brand=POP_MART, name=series, kind=SERIES, series=series))
     return entries
@@ -221,6 +243,11 @@ _ALIASES: dict[str, tuple[str, str]] = {
     "crying again": (POP_MART, "CRYBABY Crying Again Series"),
     "crying for love series": (POP_MART, "CRYBABY Crying For Love Series"),
     "crying for love": (POP_MART, "CRYBABY Crying For Love Series"),
+    # The sheet calls the 2026 release "SUMMER VACATION"; everyone selling
+    # it uses the edition name, which is how it reached the catalogue as
+    # "Summer Vacation Series - Sun-Kissed Style".
+    "sun kissed style": (SONNY_ANGEL, "Summer Vacation"),
+    "summer vacation series sun kissed style": (SONNY_ANGEL, "Summer Vacation"),
 }
 
 _LOADERS = {SONNY_ANGEL: _load_sonny_angel, POP_MART: _load_pop_mart}
@@ -297,10 +324,26 @@ def match(text: str, brand: str | None = None) -> Entry | None:
     if not text:
         return None
     haystack = _normalise(text)
+    best_character = best_series = None
     for needle, entry in _needles(brand):
-        if needle and re.search(rf"\b{re.escape(needle)}\b", haystack):
-            return entry
-    return None
+        if not needle or not re.search(rf"\b{re.escape(needle)}\b", haystack):
+            continue
+        if entry.kind == CHARACTER:
+            best_character = best_character or entry
+        else:
+            best_series = best_series or entry
+        if best_character and best_series:
+            break
+
+    # A character only wins if the text doesn't name a *different* series.
+    # Figure lists are per-series and arrive one series at a time, so a
+    # generic name -- Rabbit, Shark, Cherry -- exists in series we haven't
+    # loaded yet. Without this, "Animal Series 4 Rabbit" matches the one
+    # Rabbit we happen to know and reports the wrong series, which is
+    # worse than reporting only the series the title actually named.
+    if best_character and best_series and best_character.series != best_series.name:
+        return best_series
+    return best_character or best_series
 
 
 def suggest(titles: list[str], brand: str | None = None) -> list[tuple[Entry, int]]:

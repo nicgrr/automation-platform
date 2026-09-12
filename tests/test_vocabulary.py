@@ -7,6 +7,7 @@ than silently narrowing the vocabulary.
 """
 
 import pytest
+from pathlib import Path
 
 from automation_control.vocabulary import (
     CHARACTER,
@@ -303,3 +304,63 @@ def test_suggest_is_brand_scoped_too():
 def test_both_brands_load():
     brands = {e.brand for e in all_entries()}
     assert brands == {SONNY_ANGEL, POP_MART}
+
+
+# --- Sonny Angel figures, arriving one series at a time --------------------
+
+def test_sonny_angel_summer_vacation_figures_are_loaded():
+    """Cross-checked against a second source before landing: 8 types, 6
+    regular and 2 secret."""
+    figures = [e for e in entries_for(SONNY_ANGEL)
+               if e.kind == CHARACTER and e.series == "Summer Vacation"]
+    assert {e.name for e in figures if not e.is_secret} == {
+        "Rabbit", "Manatee", "Octopus", "Pineapple", "Shell", "Shark"}
+    assert {e.name for e in figures if e.is_secret} == {"Unicorn", "Flamingo Robby Angel"}
+
+
+def test_the_edition_name_resolves_to_the_master_list_series():
+    """The sheet says "SUMMER VACATION"; everyone selling it says
+    "Sun-Kissed Style", which is how the catalogue ended up with
+    "Summer Vacation Series - Sun-Kissed Style"."""
+    found = match("Sonny Angel Summer Vacation Sun-Kissed Style Octopus", SONNY_ANGEL)
+    assert found.name == "Octopus"
+    assert found.series == "Summer Vacation"
+
+
+def test_a_character_never_overrides_a_different_series_named_in_the_title():
+    """Figure lists arrive one series at a time, so a generic name exists
+    in series not loaded yet. Matching the one Rabbit we happen to know
+    would report Summer Vacation for an Animal Series figure -- worse than
+    reporting only the series the title actually named."""
+    found = match("Sonny Angel Animal Series 4 Rabbit figure", SONNY_ANGEL)
+    assert found.kind == SERIES
+    assert found.name == "Animal Series 4"
+
+
+def test_the_character_still_wins_within_its_own_series():
+    """The guard must not cost us the Pop Mart behaviour it was added
+    around."""
+    assert match("Twinkle Twinkle Chili Sauce super secret", POP_MART).name == "Chili Sauce"
+    assert match("Crybaby Crying Again Series The Robber", POP_MART).name == "The Robber"
+    assert match("Sonny Angel Sun Kissed Style Shark", SONNY_ANGEL).name == "Shark"
+
+
+def test_a_figure_filed_under_an_unknown_series_is_rejected_outright():
+    """A typo here would match while reporting a series that can never be
+    picked from the datalist, so it fails loudly at load instead."""
+    import automation_control.vocabulary as vocab
+
+    original = vocab.SONNY_ANGEL_FIGURES_PATH
+    bad = Path(__file__).parent / "_bad_figures.csv"
+    bad.write_text("series,character,is_secret,secret_label\nNo Such Series,Ghost,no,\n")
+    vocab.SONNY_ANGEL_FIGURES_PATH = bad
+    vocab.all_entries.cache_clear()
+    vocab._needles.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="not in the master list"):
+            vocab.all_entries()
+    finally:
+        vocab.SONNY_ANGEL_FIGURES_PATH = original
+        bad.unlink()
+        vocab.all_entries.cache_clear()
+        vocab._needles.cache_clear()

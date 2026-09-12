@@ -3,6 +3,30 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-12 — Sonny Angel figures, and a guard for partial figure lists
+
+Summer Vacation's line-up went in from a retailer page, cross-checked
+against a second source and Sonny Angel's own release post first: 8 types,
+6 regular and 2 secret (Unicorn, Flamingo Robby Angel). The sheet calls
+the 2026 release "SUMMER VACATION" and everyone selling it says
+"Sun-Kissed Style", which is how the catalogue acquired
+`Summer Vacation Series - Sun-Kissed Style` -- aliased.
+
+Adding figures for one series of many exposed a real hazard in the
+character-beats-series rule. Sonny Angel figure names are generic and
+recur across series, so "Animal Series 4 Rabbit" matched the single Rabbit
+we happen to know and reported **Summer Vacation** -- a confidently wrong
+series, on a field that becomes an eBay query.
+
+A character now only wins when the title doesn't name a *different*
+series. Reporting just the series a title actually named beats reporting a
+figure from one it didn't. Pop Mart is unaffected: its figure sets are
+complete per series, so the character and the series always agree.
+
+- A figure filed under a series the master list doesn't have now fails at
+  load rather than matching and reporting an unpickable series.
+- 6 new tests. Full suite (1266) green.
+
 ## 2026-09-12 — The vocabulary goes multi-brand
 
 Pop Mart arrived, and with it the problem that makes brand scoping
