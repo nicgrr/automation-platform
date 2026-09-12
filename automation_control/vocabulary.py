@@ -248,6 +248,9 @@ _ALIASES: dict[str, tuple[str, str]] = {
     # "Summer Vacation Series - Sun-Kissed Style".
     "sun kissed style": (SONNY_ANGEL, "Summer Vacation"),
     "summer vacation series sun kissed style": (SONNY_ANGEL, "Summer Vacation"),
+    # Retailers split on the plural. Matching is exact on word boundaries,
+    # so "Cherry Blossoms" would otherwise miss the singular entry entirely.
+    "cherry blossoms": (SONNY_ANGEL, "Cherry Blossom"),
 }
 
 _LOADERS = {SONNY_ANGEL: _load_sonny_angel, POP_MART: _load_pop_mart}

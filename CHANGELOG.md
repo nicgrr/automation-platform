@@ -3,6 +3,29 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-12 — Flower Series, and the weak capture answers itself
+
+Nic confirmed capture fd0da650 is a Flower Series figure, so its line-up
+went in: 12 regular and 3 secrets. Two fetched sources agreed on the
+twelve; an earlier search summary had claimed a Dandelion that neither
+page lists, which is why nothing lands here without a second source.
+
+The payoff is that no new Lens run was needed. Re-reading the **same
+cached matches** for that capture, the suggestion goes from a weak
+"Flower Series 5" to **Lily Bell, 8** -- the evidence was always in the
+titles, and the vocabulary was the only thing missing.
+
+- Two Flower Series figures share a name with a limited series of their
+  own: Cactus, and Cherry Blossom. The cross-series guard already handles
+  it -- "Cactus Series 2020" resolves to the series, "Flower Series Cactus"
+  to the figure.
+- Retailers split on "Cherry Blossom" vs "Cherry Blossoms", and matching
+  is exact on word boundaries, so the plural is aliased.
+- Three earlier tests asserted that a Sonny Angel title could only ever
+  resolve to a series. That was a limitation, not a rule, and it no longer
+  holds -- updated rather than worked around.
+- 6 new tests. Full suite (1269) green.
+
 ## 2026-09-12 — Sonny Angel figures, and a guard for partial figure lists
 
 Summer Vacation's line-up went in from a retailer page, cross-checked

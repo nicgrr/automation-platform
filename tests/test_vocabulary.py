@@ -103,7 +103,7 @@ def test_year_prefixes_become_data_and_leave_the_name():
 # --- matching a series out of free text ------------------------------------
 
 @pytest.mark.parametrize("title,expected", [
-    ("Sonny Angel Flower Series Lily Bell Figure- US Selller", "Flower Series"),
+    ("Sonny Angel Marine Series Dolphin", "Marine Series"),
     ("Sonny Angel Animal Series 4 secret", "Animal Series 4"),
     ("sonny angel summer vacation blind box", "Summer Vacation"),
     ("Sonny Angel Birthday Gift Bear", "Birthday Gift Bear"),
@@ -187,16 +187,16 @@ def test_suggest_series_ranks_by_how_many_matches_agree():
     These counts are the real numbers from the Lens run on capture
     fd0da650 -- a Flower Series figure, correctly identified."""
     titles = [
-        "Sonny Angel Flower Series Lily Bell Figure",
-        "Sonny Angel Flower Series Figures, Blind Box",
-        "Sonny Angel Flower Series secret",
+        "Sonny Angel Fruit Series Peach",
+        "Sonny Angel Fruit Series Figures, Blind Box",
+        "Sonny Angel Fruit Series secret",
         "Sonny Angel Marine Series Dolphin",
         "dreaming elephant hipper",
         "Sonny Angel Handmade Outfit Sets - Blues - Etsy",
     ]
     ranked = suggest_series(titles)
 
-    assert ranked[0][0].name == "Flower Series"
+    assert ranked[0][0].name == "Fruit Series"
     assert ranked[0][1] == 3
     assert ranked[1][1] == 1  # Marine Series, the lone dissenter
     # Titles naming no series are simply absent rather than counted.
@@ -297,7 +297,7 @@ def test_a_brand_only_sees_its_own_aliases():
 
 def test_suggest_is_brand_scoped_too():
     titles = ["Sonny Angel Flower Series Lily Bell", "Twinkle Twinkle Baguette"]
-    assert [e.name for e, _ in suggest(titles, SONNY_ANGEL)] == ["Flower Series"]
+    assert [e.name for e, _ in suggest(titles, SONNY_ANGEL)] == ["Lily Bell"]
     assert [e.name for e, _ in suggest(titles, POP_MART)] == ["Baguette"]
 
 
@@ -364,3 +364,28 @@ def test_a_figure_filed_under_an_unknown_series_is_rejected_outright():
         bad.unlink()
         vocab.all_entries.cache_clear()
         vocab._needles.cache_clear()
+
+
+def test_flower_series_figures_turn_a_series_guess_into_a_figure():
+    """The real cached Lens run on capture fd0da650 could only manage a
+    weak "Flower Series 5" while the vocabulary stopped at the series. The
+    same titles now name the figure."""
+    found = match("Sonny Angel Flower Series Lily Bell Figure- US Selller", SONNY_ANGEL)
+    assert found.name == "Lily Bell"
+    assert found.series == "Flower Series"
+    assert found.kind == CHARACTER
+
+
+def test_a_figure_name_that_is_also_a_series_name_does_not_hijack_it():
+    """Cactus is a Flower Series figure and Cactus Series is a limited
+    series of its own; Cherry Blossom is both a figure and a series."""
+    assert match("Sonny Angel Cactus Series 2020", SONNY_ANGEL).name == "Cactus Series"
+    assert match("Sonny Angel Flower Series Cactus", SONNY_ANGEL).name == "Cactus"
+    assert match("Sonny Angel Cherry Blossom Series", SONNY_ANGEL).name == "Cherry Blossom Series"
+
+
+def test_the_plural_spelling_of_cherry_blossom_still_matches():
+    """Retailers split on it, and matching is exact on word boundaries."""
+    found = match("Sonny Angel Flower Series Cherry Blossoms", SONNY_ANGEL)
+    assert found.name == "Cherry Blossom"
+    assert found.series == "Flower Series"
