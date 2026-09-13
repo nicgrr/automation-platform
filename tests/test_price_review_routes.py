@@ -530,3 +530,41 @@ def test_a_crash_in_the_refresh_is_recorded_not_swallowed(client, session):
     events = session.scalars(select(AuditEvent).where(AuditEvent.action == "inventory.price_refresh")).all()
     assert [e.outcome for e in events] == ["failed"]
     assert "TypeError: boom" in events[0].details["error"]
+
+
+def test_the_page_shows_the_ebay_signal_gap(client, session):
+    """ebay_active_low is what list_for_sale prices from, so a held card
+    without one is priced off a weaker source."""
+    from automation_control.models import CardPrice, CardVariant, InventoryItem
+
+    session.add_all([InventoryItem(card_id="xy11-1", variant=CardVariant.NORMAL),
+                     InventoryItem(card_id="xy11-2", variant=CardVariant.NORMAL)])
+    session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL,
+                          source="ebay_active_low", price=Decimal("5.00"), currency="AUD"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "eBay market signal" in page
+    assert "1 held card has no eBay asking-price signal" in page
+    assert "Refresh eBay prices" in page
+
+
+def test_refresh_ebay_runs_the_import_script(client, session):
+    with patch("scripts.import_ebay_prices.main", return_value=0) as import_prices:
+        resp = client.post("/cards/pricing/refresh-ebay", follow_redirects=False)
+
+    assert resp.status_code == 303
+    import_prices.assert_called_once_with([])
+
+
+def test_a_crash_in_the_ebay_refresh_is_recorded(client, session):
+    from automation_control.models import AuditEvent
+
+    with patch("scripts.import_ebay_prices.main", side_effect=RuntimeError("no token")):
+        client.post("/cards/pricing/refresh-ebay")
+
+    events = session.scalars(
+        select(AuditEvent).where(AuditEvent.action == "inventory.ebay_price_refresh")).all()
+    assert [e.outcome for e in events] == ["failed"]
+    assert "RuntimeError: no token" in events[0].details["error"]

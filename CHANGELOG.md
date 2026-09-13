@@ -3,6 +3,35 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-13 — eBay prices get a button too, and they are the ones that matter
+
+`import_ebay_prices` had no timer and no trigger of any kind. The last run
+was 11 September, by hand. That is the more expensive of the two gaps:
+`list_for_sale` builds every listing price from `ebay_active_low` as its
+conservative figure, so a stale eBay signal moves real money in a way a
+missing pokemonpricetracker row does not.
+
+163 of 1,343 held cards have no eBay signal at all. A new **eBay market
+signal** panel says so and runs the import.
+
+The two sources have opposite shapes, so they get separate panels rather
+than one "refresh prices" button:
+
+- pokemonpricetracker is 100 credits/day at 3 a search -- about 25 cards,
+  so its panel reports a backlog it chips away at.
+- eBay Browse is ~5,000 calls/day at one per card, so the whole held set
+  fits in a single run. This is the one that genuinely can be
+  "everything".
+
+Confirmed working against production on three cards before wiring it up,
+and it prices collectibles as well as cards -- Sonny Angel Polar Bear came
+back at a $25.32 low against a $36.05 median.
+
+- Still no timer for it. The button is currently the only thing that runs
+  it; a daily unit alongside pokemonpricetracker-backfill.timer is the
+  obvious next step and needs a root change.
+- 3 new tests. Full suite (1313) green.
+
 ## 2026-09-13 — The nightly price backfill had been dead for six days
 
 The audit's headline complaint was "no button to check prices for

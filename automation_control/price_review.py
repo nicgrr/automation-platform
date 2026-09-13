@@ -182,6 +182,38 @@ def _inventory_price_backlog(session: Session) -> int:
     return len(set(held) - set(session.execute(priced).all()))
 
 
+def _ebay_price_gap(session: Session) -> int:
+    """Held cards with no eBay active-listing signal at all.
+
+    Tracked separately from the pokemonpricetracker backlog because the two
+    sources have opposite shapes. eBay's Browse quota is ~5,000 calls a day
+    at one per card, so the whole held set fits in a single run -- this is
+    the source that genuinely can be "everything". `list_for_sale` also
+    prefers `ebay_active_low` as its conservative figure, which makes a
+    stale one the more expensive gap of the two.
+    """
+    held = {row[0] for row in session.execute(
+        select(InventoryItem.card_id).where(InventoryItem.card_id.isnot(None)).distinct())}
+    priced = {row[0] for row in session.execute(
+        select(CardPrice.card_id).where(CardPrice.source == "ebay_active_low").distinct())}
+    return len(held - priced)
+
+
+def _run_ebay_price_refresh(user: str) -> None:
+    from scripts.import_ebay_prices import main as import_prices
+
+    outcome, details = "success", {}
+    try:
+        details["exit_code"] = import_prices([])
+    except Exception as exc:
+        outcome, details = "failed", {"error": f"{type(exc).__name__}: {exc}"}
+    with SessionLocal() as session:
+        record_event(session, actor_type="user", actor_id=user,
+                     action="inventory.ebay_price_refresh", resource_type="inventory_item",
+                     resource_id=None, outcome=outcome,
+                     correlation_id=_correlation_id(), details=details)
+
+
 def _run_inventory_price_refresh(user: str) -> None:
     """One day's worth of the nightly backfill, on demand.
 
@@ -245,6 +277,7 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
     failed_before = len(retryable) - never_checked
 
     backlog = _inventory_price_backlog(session)
+    ebay_gap = _ebay_price_gap(session)
     head_extra = "<meta http-equiv='refresh' content='4'>" if request.query_params.get("checking") else ""
     checking_note = "<p class='subtitle'>Checking prices in the background -- this page refreshes automatically.</p>" if request.query_params.get("checking") else ""
 
@@ -288,6 +321,16 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
         + ("<form method='post' action='/cards/pricing/refresh-inventory'>"
            "<button>Price the next 25</button></form>" if backlog else "")
         + "</div>"
+        + "<div class='panel'><h2>eBay market signal</h2>"
+        + (f"<p class='subtitle'>{ebay_gap:,} held "
+           f"{'cards have' if ebay_gap != 1 else 'card has'} no eBay "
+           "asking-price signal. This is the figure listing prices are built from, and eBay's quota "
+           "is high enough to refresh the whole held set in one run.</p>"
+           if ebay_gap else
+           "<p class='subtitle'>Every held card has an eBay signal. Re-run to refresh it &mdash; "
+           "asking prices move.</p>")
+        + "<form method='post' action='/cards/pricing/refresh-ebay'>"
+          "<button>Refresh eBay prices</button></form></div>"
     )
     return HTMLResponse(page("EzBay — Price review", body, head_extra=head_extra))
 
@@ -318,6 +361,20 @@ def pricing_refresh_inventory(background_tasks: BackgroundTasks,
     how much is left.
     """
     background_tasks.add_task(_run_inventory_price_refresh, user)
+    return RedirectResponse("/cards/pricing?checking=1", status_code=303)
+
+
+@router.post("/refresh-ebay")
+def pricing_refresh_ebay(background_tasks: BackgroundTasks,
+                         user: str = Depends(require_dashboard_user)) -> RedirectResponse:
+    """Re-price held inventory against eBay active listings.
+
+    Unlike the pokemonpricetracker backfill this has no daily timer, so
+    until one exists this button is the only thing that runs it -- the
+    prices behind every listing decision were last refreshed whenever
+    someone last remembered to open a terminal.
+    """
+    background_tasks.add_task(_run_ebay_price_refresh, user)
     return RedirectResponse("/cards/pricing?checking=1", status_code=303)
 
 
