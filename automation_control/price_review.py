@@ -15,8 +15,9 @@ from .adapters.pokemontcg import PriceLookupError, PriceNotFound, lookup_price
 from .audit import record_event
 from .auth import require_dashboard_user
 from .classification import classify_pending_cards, load_pipeline_config
+from .scan_ingest.pricing import POKEMONPRICETRACKER_SOURCE_NAME
 from .database import SessionLocal, get_session
-from .models import CapturedCard, CardCaptureStatus, PricingStatus
+from .models import CapturedCard, CardCaptureStatus, CardPrice, InventoryItem, PricingStatus
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/cards/pricing", tags=["pricing"])
@@ -164,6 +165,45 @@ def _run_price_check(api_key: str | None, user: str, include_blocked: bool = Fal
         _finish_price_check(run_id)
 
 
+def _inventory_price_backlog(session: Session) -> int:
+    """Held card+variant pairs with no pokemonpricetracker.com price yet.
+
+    The number the "check prices for everything" button can't make go away
+    in one click: the free tier is 100 credits a day and a search costs 3,
+    so a run covers ~25 cards. Showing the backlog is the honest version of
+    that button -- it says how far through you are rather than implying the
+    job finishes when the page reloads.
+    """
+    priced = select(CardPrice.card_id, CardPrice.variant).where(
+        CardPrice.source == POKEMONPRICETRACKER_SOURCE_NAME)
+    held = session.execute(
+        select(InventoryItem.card_id, InventoryItem.variant)
+        .where(InventoryItem.card_id.isnot(None)).distinct()).all()
+    return len(set(held) - set(session.execute(priced).all()))
+
+
+def _run_inventory_price_refresh(user: str) -> None:
+    """One day's worth of the nightly backfill, on demand.
+
+    Runs the same script the systemd timer runs rather than a second
+    implementation -- that timer spent six days failing on a TypeError
+    nobody saw, and two copies of this logic would double the odds of it
+    happening again.
+    """
+    from scripts.backfill_pokemonpricetracker_prices import main as backfill
+
+    outcome, details = "success", {}
+    try:
+        details["exit_code"] = backfill([])
+    except Exception as exc:  # a background task that dies silently is the bug above
+        outcome, details = "failed", {"error": f"{type(exc).__name__}: {exc}"}
+    with SessionLocal() as session:
+        record_event(session, actor_type="user", actor_id=user,
+                     action="inventory.price_refresh", resource_type="inventory_item",
+                     resource_id=None, outcome=outcome,
+                     correlation_id=_correlation_id(), details=details)
+
+
 def _next_price_review_card_id(session: Session, exclude_id: str) -> str | None:
     return session.scalars(
         select(CapturedCard.id)
@@ -204,6 +244,7 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
     never_checked = sum(1 for c in retryable if not c.price_lookup_error)
     failed_before = len(retryable) - never_checked
 
+    backlog = _inventory_price_backlog(session)
     head_extra = "<meta http-equiv='refresh' content='4'>" if request.query_params.get("checking") else ""
     checking_note = "<p class='subtitle'>Checking prices in the background -- this page refreshes automatically.</p>" if request.query_params.get("checking") else ""
 
@@ -237,6 +278,16 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
            "<input type='hidden' name='include_blocked' value='1'>"
            "<button class='ghost'>Try these anyway</button></form>" if blocked else "")
         + "</div>"
+        + f"<div class='panel'><h2>Inventory prices</h2>"
+        + (f"<p class='subtitle'>{backlog:,} held card/variant pair{'s' if backlog != 1 else ''} "
+           "still have no market price. The free tier allows about 25 a day, so this "
+           "works through the backlog rather than finishing it &mdash; it also runs "
+           "automatically at noon.</p>"
+           if backlog else
+           "<p class='subtitle'>Every held card has a market price. Nothing to do.</p>")
+        + ("<form method='post' action='/cards/pricing/refresh-inventory'>"
+           "<button>Price the next 25</button></form>" if backlog else "")
+        + "</div>"
     )
     return HTMLResponse(page("EzBay — Price review", body, head_extra=head_extra))
 
@@ -253,6 +304,20 @@ def pricing_check_all(request: Request, background_tasks: BackgroundTasks,
     """
     settings = request.app.state.settings
     background_tasks.add_task(_run_price_check, settings.pokemontcg_api_key, user, bool(include_blocked))
+    return RedirectResponse("/cards/pricing?checking=1", status_code=303)
+
+
+@router.post("/refresh-inventory")
+def pricing_refresh_inventory(background_tasks: BackgroundTasks,
+                              user: str = Depends(require_dashboard_user)) -> RedirectResponse:
+    """Run one day's worth of the inventory price backfill now.
+
+    Deliberately not "re-price everything": the upstream free tier is 100
+    credits a day at 3 credits a search, so everything is roughly 48 days
+    of runs. The button does what is actually possible and the page says
+    how much is left.
+    """
+    background_tasks.add_task(_run_inventory_price_refresh, user)
     return RedirectResponse("/cards/pricing?checking=1", status_code=303)
 
 

@@ -3,6 +3,51 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-13 — The nightly price backfill had been dead for six days
+
+The audit's headline complaint was "no button to check prices for
+everything". The button turned out to be the smaller half of it: there is
+already a systemd timer that prices held inventory daily, and it had
+failed at noon every day since **8 September**.
+
+    TypeError: '<' not supported between instances of 'str' and 'NoneType'
+
+`backfill_pokemonpricetracker_prices` selected every inventory row's
+card_id, and collectibles carry `card_id = NULL` -- they are filed by
+catalog_item_id. A None key reached `sorted()` and killed the run. 8
+September is the day the first collectibles were committed. Six days of
+failure, invisible because the unit logs no stdout and nothing surfaces a
+failed timer.
+
+Filtered at the query. Today's run recovered on demand: 25 cards searched,
+23 priced, 3 with no upstream match.
+
+Also on the price page, an **Inventory prices** panel with the backlog
+(1,193 held card/variant pairs) and a *Price the next 25* button. It runs
+the same script the timer runs rather than a second implementation -- a
+job that silently died for six days is not an argument for having two of
+them -- and it records an audit event on crash. Deliberately not
+"re-price everything": the free tier is 100 credits a day at 3 a search,
+so everything is about 48 days of runs. The panel says how far through you
+are instead of implying one click finishes it.
+
+Smaller, from the same audit:
+
+- **Shop listings** shows a count on every filter tab. The page opens on
+  Drafts by design -- it exists because nothing else showed a DRAFT row --
+  but with one draft and 995 active listings it greeted you with
+  "1 listing(s)". Counts fix that without moving the review step.
+- **Adding a collectible by hand** defaults to quantity 1, matching the
+  review form. At 0 no InventoryItem is created and `list_for_sale` only
+  sees quantity > 0, so the old default produced a catalogue entry that
+  could never be listed. Nothing needed rescuing -- the 22 items in that
+  state turned out to be seeded blind-box rows, which are products to
+  price, not figures owned.
+- **Kappa** is no longer flagged as a secret.
+- **Pink Robby / Flower Robby** gain "... Robby Angel" aliases, the form
+  the brand's own Summer Vacation release uses.
+- 7 new tests. Full suite (1310) green.
+
 ## 2026-09-13 — A retry and a decision are different jobs
 
 Twelve cards had sat unpriced since 15 August. Ten of them were behind

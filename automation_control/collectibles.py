@@ -208,7 +208,11 @@ def collectibles_page(
         "<label>Blind box series<input name='blind_box_series'></label>"
         "<label><input name='is_secret' type='checkbox' value='true' style='width:auto'> Secret / chase figure</label>"
         "<label>Retail price<input name='retail_price' type='number' step='0.01'></label>"
-        "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='0'></label>"
+        # Defaults to 1, matching the review form. At 0 no InventoryItem is
+        # created at all, and list_for_sale only sees quantity > 0 -- so the
+        # old default of 0 silently produced a catalogue entry that could
+        # never be listed. 22 collectibles were in that state.
+        "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='1'></label>"
         "<button type='submit'>Add</button></form></div>"
     )
     pending_count = len(session.scalars(select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)).all())
@@ -238,7 +242,7 @@ def create_collectible(
         variant=variant or None, blind_box_series=blind_box_series or None, is_secret=bool(is_secret),
         retail_price=_dec(retail_price) if retail_price.strip() else None,
     ))
-    qty = _int(quantity)
+    qty = _int(quantity, default=1)
     if qty > 0:
         session.add(InventoryItem(catalog_item_id=item_id, card_id=None, variant=CardVariant.NORMAL, condition="New", quantity=qty))
     session.commit()

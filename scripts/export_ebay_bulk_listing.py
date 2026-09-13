@@ -16,8 +16,17 @@ price -- a single-card listing is always one card regardless of what it's
 worth, so it always gets --letter-policy. A "Bulk Master" lot
 (bulk_lots.card_count) is the one place card count varies: a lot at or
 under --lot-max-cards is still thin enough for a padded envelope, above
-that it needs an actual tracked parcel. Pass your *real* eBay Business
-Policy names (Seller Hub -> Account -> Business Policies -> Shipping) --
+that it needs an actual tracked parcel.
+
+A single at or under --lot-overlap-max-price, from a set that already has
+an active Bulk Master lot, is excluded rather than exported: real
+inventory check on 2026-09-13 found 545 of 990 singles were exactly this
+-- build_bulk_lots.py sweeps cheap commons into a set-wide lot without
+reserving specific inventory rows, so those singles were the same
+physical cards the lot already promises. Exporting both risked selling
+the same card twice.
+
+Pass your *real* eBay Business Policy names (Seller Hub -> Account -> Business Policies -> Shipping) --
 the defaults here are just placeholders and will not mean anything in
 your eBay account.
 
@@ -54,6 +63,7 @@ couldn't be fetched by eBay's own servers even if it were used.
 import argparse
 import csv
 import sys
+from decimal import Decimal
 
 from sqlalchemy import select
 
@@ -101,16 +111,41 @@ def lot_shipping_policy(card_count: int, lot_max_cards: int, letter_policy: str,
     return letter_policy if card_count <= lot_max_cards else parcel_policy
 
 
-def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str) -> tuple[list[dict], list[str]]:
+def _lot_covered_set_ids(session, status: ShopListingStatus) -> set[str]:
+    return {
+        set_id for (set_id,) in session.execute(
+            select(BulkLot.set_id).where(BulkLot.status == status, BulkLot.set_id.isnot(None))
+        ).all()
+    }
+
+
+def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
+                       lot_overlap_max_price: Decimal | None = Decimal("2")) -> tuple[list[dict], list[str]]:
     """Every single-card listing is one card per sale, so it's always
-    letter-appropriate regardless of price -- no tiering needed here."""
+    letter-appropriate regardless of price -- no tiering needed here.
+
+    `lot_overlap_max_price` guards against double-selling: build_bulk_lots.py
+    sweeps cheap commons (<=$2 by its own default) into a set-wide lot
+    without reserving specific inventory rows, so a common at or under
+    that price from a set that already has an active lot is the same
+    physical card the lot also promises -- listing it again individually
+    risks selling it twice. A single priced above the threshold in that
+    same set wasn't lot-eligible in the first place and is safe. Pass
+    None to disable the check entirely (e.g. if lots have been retired).
+    """
     listings = session.scalars(
         select(ShopListing).where(ShopListing.status == status).order_by(ShopListing.title)
     ).all()
+    lot_set_ids = _lot_covered_set_ids(session, status) if lot_overlap_max_price is not None else set()
 
     rows, skipped = [], []
     for listing in listings:
         item = session.get(CatalogItem, listing.catalog_item_id)
+        if lot_set_ids and listing.price <= lot_overlap_max_price:
+            tcg = session.get(TcgCard, listing.catalog_item_id)
+            if tcg and tcg.set_id in lot_set_ids:
+                skipped.append(f"{listing.title} ({listing.id}) -- already covered by an active bulk lot for its set")
+                continue
         url = single_image_url(session, listing, item)
         if not url:
             skipped.append(f"{listing.title} ({listing.id}) -- no publicly-hosted image on file")
@@ -171,6 +206,11 @@ def main() -> int:
                         help="your real eBay shipping Business Policy name for a lot over --lot-max-cards")
     parser.add_argument("--singles-only", action="store_true", help="skip Bulk Master lots")
     parser.add_argument("--lots-only", action="store_true", help="skip individual single-card listings")
+    parser.add_argument("--lot-overlap-max-price", type=Decimal, default=Decimal("2"),
+                        help="a single at or under this price, from a set that already has an active bulk lot, is "
+                             "assumed to be the same physical cards the lot promises and is excluded to avoid "
+                             "double-selling (default 2, matching build_bulk_lots.py's own default). Pass a "
+                             "negative number to disable this check entirely.")
     parser.add_argument("--out", default="ebay_bulk_listing.csv", help="output CSV path")
     parser.add_argument("--dry-run", action="store_true", help="print what would be exported, write nothing")
     args = parser.parse_args()
@@ -187,7 +227,9 @@ def main() -> int:
         rows: list[dict] = []
         skipped: list[str] = []
         if not args.lots_only:
-            r, s = build_single_rows(session, status=status, letter_policy=args.letter_policy)
+            overlap_price = args.lot_overlap_max_price if args.lot_overlap_max_price >= 0 else None
+            r, s = build_single_rows(session, status=status, letter_policy=args.letter_policy,
+                                     lot_overlap_max_price=overlap_price)
             rows += r
             skipped += s
         if not args.singles_only:
@@ -208,7 +250,7 @@ def main() -> int:
         print(f"wrote {len(rows)} row(s) to {args.out}")
 
     if skipped:
-        print(f"\nskipped {len(skipped)} row(s) with no publicly-hosted image (add one before listing these):")
+        print(f"\nskipped {len(skipped)} row(s) -- see reason per row:")
         for reason in skipped:
             print(f"  {reason}")
 

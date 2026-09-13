@@ -251,6 +251,12 @@ _ALIASES: dict[str, tuple[str, str]] = {
     # Retailers split on the plural. Matching is exact on word boundaries,
     # so "Cherry Blossoms" would otherwise miss the singular entry entirely.
     "cherry blossoms": (SONNY_ANGEL, "Cherry Blossom"),
+    # Sonny Angel's Robby secrets are sold under both the short name and the
+    # full "... Robby Angel" -- the Summer Vacation line-up on the brand's
+    # own release uses "Flamingo Robby Angel", so the long form is the
+    # official one and the short form is what most listings actually say.
+    "pink robby angel": (SONNY_ANGEL, "Pink Robby"),
+    "flower robby angel": (SONNY_ANGEL, "Flower Robby"),
 }
 
 _LOADERS = {SONNY_ANGEL: _load_sonny_angel, POP_MART: _load_pop_mart}

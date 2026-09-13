@@ -50,6 +50,17 @@ def _money(value) -> str:
     return "—" if value is None else f"${Decimal(str(value)):,.2f}"
 
 
+def _filter_counts(session: Session, q: str) -> dict[str, int]:
+    """How many listings sit behind each tab, for the current search.
+
+    This page opens on Drafts by design -- it exists because nothing else
+    showed a DRAFT row. But with one draft and 995 active listings it
+    greeted you with "1 listing(s)", which reads as the shop being empty.
+    The counts fix that without moving the review step off the front.
+    """
+    return {key: len(session.scalars(_filtered(session, key, q)).all()) for key in FILTERS}
+
+
 def _filtered(session: Session, status: str, q: str):
     stmt = select(ShopListing)
     if status != "all" and status in {s.value for s in ShopListingStatus}:
@@ -140,9 +151,11 @@ def shop_listings_page(
         for listing in listings
     ) or "<tr><td colspan='5' class='muted'>Nothing here.</td></tr>"
 
+    counts = _filter_counts(session, query)
     filter_bar = "".join(
         f"<a class='filter-tab{' active' if key == status else ''}' "
-        f"href='/shop-listings?status={key}{'&q=' + escape(query) if query else ''}'>{escape(label)}</a>"
+        f"href='/shop-listings?status={key}{'&q=' + escape(query) if query else ''}'>{escape(label)}"
+        f"<span class='filter-count'>{counts.get(key, 0)}</span></a>"
         for key, label in FILTERS.items()
     )
 
@@ -237,6 +250,7 @@ _STYLE = """<style>
 .filter-tab{padding:7px 13px;border-radius:999px;font-size:13px;font-weight:600;
   background:var(--surface-sunken);color:var(--text-dim)}
 .filter-tab.active{background:var(--accent);color:#fff}
+.filter-count{margin-left:6px;opacity:.62;font-variant-numeric:tabular-nums;font-weight:500}
 .listing-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:14px}
 .listing-search{display:flex;gap:8px}
 .listing-search input{padding:7px 10px;border-radius:6px;border:1px solid var(--panel-border);font-size:13px;width:220px}

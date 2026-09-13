@@ -38,7 +38,7 @@ from automation_control.adapters.ebay_write import EbayWriteAdapter
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import configured_for_writes, ebay_services, valid_user_access_token
-from automation_control.models import EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus, ShopListing
+from automation_control.models import BulkLot, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus, ShopListing
 from automation_control.stock import decrement_listing_quantity
 
 # How far back to look on the very first run (no last_order_sync_at yet).
@@ -131,7 +131,18 @@ async def run(args) -> int:
                     session.add(record)
 
                 link = session.scalar(select(EbayListingLink).where(EbayListingLink.sku == sku))
-                if link is None:
+                target = session.get(ShopListing, link.shop_listing_id) if link else None
+                if target is None and link is None:
+                    # A listing published through ebay_publish.py's API flow
+                    # always has an EbayListingLink. One uploaded by hand via
+                    # eBay's own Bulk Listing Tool (export_ebay_bulk_listing.py
+                    # + convert_to_ebay_template.py) never does -- but its
+                    # CustomLabel/SKU *is* the ShopListing or BulkLot id
+                    # directly (see export_ebay_bulk_listing.py's `sku` column),
+                    # so that id resolves the sale with no link needed at all.
+                    target = session.get(ShopListing, sku) or session.get(BulkLot, sku)
+
+                if target is None:
                     print(f"  no local listing for sku={sku} (order {ebay_order_id}) -- nothing to apply")
                     # Marked applied anyway: there's nothing this sku will
                     # ever resolve to without a code/data change, and
@@ -142,17 +153,14 @@ async def run(args) -> int:
                         session.commit()
                     continue
 
-                listing = session.get(ShopListing, link.shop_listing_id)
-                if listing is None:
-                    continue
-
-                print(f"  {'would apply' if args.dry_run else 'applying'}: order {ebay_order_id} sold {quantity}x sku={sku} ({listing.title})")
+                print(f"  {'would apply' if args.dry_run else 'applying'}: order {ebay_order_id} sold {quantity}x sku={sku} ({target.title})")
                 if args.dry_run:
                     continue
 
-                record.shop_listing_id = listing.id
-                new_quantity = decrement_listing_quantity(listing, quantity)
-                if new_quantity is not None:
+                if isinstance(target, ShopListing):
+                    record.shop_listing_id = target.id
+                new_quantity = decrement_listing_quantity(target, quantity)
+                if link is not None and new_quantity is not None:
                     link.last_pushed_quantity = new_quantity
                     if new_quantity == 0:
                         link.status = EbayListingLinkStatus.ENDED

@@ -94,3 +94,27 @@ def test_returns_early_without_a_key_configured(monkeypatch, session_factory):
     monkeypatch.setattr(backfill_mod, "SessionLocal", session_factory)
     monkeypatch.setattr(backfill_mod, "get_settings", lambda: FakeSettings(pokemonpricetracker_api_key=None))
     assert backfill_mod.main([]) == 1
+
+
+def test_a_collectible_in_inventory_does_not_crash_the_run(monkeypatch, session_factory):
+    """Collectibles are filed by catalog_item_id with card_id NULL. A None
+    key reached sorted() and raised TypeError comparing str to None, which
+    killed this timer silently every day from 8 September -- the day the
+    first collectibles were committed -- until someone read the journal.
+    """
+    _seed(session_factory, [("xy11-1", "1")])
+    with session_factory() as session:
+        session.add(InventoryItem(card_id=None, catalog_item_id="some-collectible", variant=CardVariant.NORMAL))
+        session.commit()
+
+    monkeypatch.setattr(backfill_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(backfill_mod, "get_settings", lambda: FakeSettings())
+    monkeypatch.setattr(pricing_mod, "search_cards",
+                        lambda *a, **k: [{"cardNumber": "1/198", "variants": {"Normal": {"marketPrice": 1.23}}}])
+
+    assert backfill_mod.main(["--max-cards", "5"]) == 0
+
+    with session_factory() as session:
+        priced = session.scalars(select(CardPrice.card_id)).all()
+    # The card is priced; the collectible is simply not this script's job.
+    assert priced == ["xy11-1"]

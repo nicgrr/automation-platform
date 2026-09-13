@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from automation_control.adapters.currency import CurrencyLookupError
@@ -478,3 +478,55 @@ def test_a_card_never_checked_is_ready_not_blocked(client, session):
     assert "Ready to price (1)" in page
     assert "Needs your decision (0)" in page
     assert "Check prices" in page  # not "Retry", nothing has failed yet
+
+
+# --- inventory prices, the "check everything" button ------------------------
+
+def test_the_page_shows_the_inventory_price_backlog(client, session):
+    """The honest form of "check prices for everything": the upstream free
+    tier allows ~25 cards a day, so the button says how far through you are
+    instead of implying the job ends when the page reloads."""
+    from automation_control.models import CardVariant, InventoryItem
+
+    session.add_all([InventoryItem(card_id="xy11-1", variant=CardVariant.NORMAL),
+                     InventoryItem(card_id="xy11-2", variant=CardVariant.NORMAL)])
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Inventory prices" in page
+    assert "2 held card/variant pairs still have no market price" in page
+    assert "Price the next 25" in page
+
+
+def test_a_collectible_is_not_counted_in_the_backlog(client, session):
+    """Collectibles carry card_id NULL and are not this source's job -- the
+    same NULL that crashed the nightly timer for six days."""
+    from automation_control.models import CardVariant, InventoryItem
+
+    session.add(InventoryItem(card_id=None, catalog_item_id="a-figure", variant=CardVariant.NORMAL))
+    session.commit()
+
+    assert "Every held card has a market price" in client.get("/cards/pricing").text
+
+
+def test_refresh_inventory_runs_the_same_script_the_timer_runs(client, session):
+    """Not a second implementation: the timer spent six days failing on a
+    TypeError nobody saw, and two copies would double the odds of a repeat."""
+    with patch("scripts.backfill_pokemonpricetracker_prices.main", return_value=0) as backfill:
+        resp = client.post("/cards/pricing/refresh-inventory", follow_redirects=False)
+
+    assert resp.status_code == 303
+    backfill.assert_called_once_with([])
+
+
+def test_a_crash_in_the_refresh_is_recorded_not_swallowed(client, session):
+    """The failure mode being fixed is a background job dying quietly."""
+    from automation_control.models import AuditEvent
+
+    with patch("scripts.backfill_pokemonpricetracker_prices.main", side_effect=TypeError("boom")):
+        client.post("/cards/pricing/refresh-inventory")
+
+    events = session.scalars(select(AuditEvent).where(AuditEvent.action == "inventory.price_refresh")).all()
+    assert [e.outcome for e in events] == ["failed"]
+    assert "TypeError: boom" in events[0].details["error"]

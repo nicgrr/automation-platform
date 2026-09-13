@@ -49,7 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     searched = 0
 
     with SessionLocal() as session:
-        held = session.execute(select(InventoryItem.card_id, InventoryItem.variant).distinct()).all()
+        # card_id is NULL for anything that isn't a TCG card -- collectibles
+        # are filed by catalog_item_id alone. Without this filter a None key
+        # reaches sorted() below and raises TypeError comparing str to None,
+        # which is exactly what killed this timer every day from 8 September
+        # (the day the first collectibles were committed) until it was found.
+        held = session.execute(
+            select(InventoryItem.card_id, InventoryItem.variant)
+            .where(InventoryItem.card_id.isnot(None))
+            .distinct()
+        ).all()
         already_priced = set(
             session.execute(
                 select(CardPrice.card_id, CardPrice.variant).where(CardPrice.source == POKEMONPRICETRACKER_SOURCE_NAME).distinct()
