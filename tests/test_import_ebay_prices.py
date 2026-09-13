@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from automation_control.config import Settings
@@ -330,3 +330,27 @@ def test_a_limit_takes_the_stalest_not_an_arbitrary_slice(engine):
         targets = script._targets(session, price_all=False, game=None, limit=1)
 
     assert [row[0].id for row in targets] == ["b"]
+
+
+def test_inventory_without_a_catalog_item_id_is_invisible_to_pricing(engine):
+    """Not a hypothetical: 185 inventory rows carrying only the older
+    card_id column were invisible to this script, which is why 163 held
+    cards had no ebay_active_low row no matter how often it ran. They were
+    invisible to list_for_sale on the same filter, so 473 copies could not
+    be listed either."""
+    with sessionmaker(bind=engine)() as session:
+        session.add(CatalogItem(id="op13-076", item_type=CatalogItemType.TCG_CARD, name="Divine Departure"))
+        session.add(TcgCard(catalog_item_id="op13-076", game="one_piece", set_code="OP13", number="076"))
+        # Old-shaped row: card_id only, no catalog_item_id.
+        session.add(InventoryItem(card_id="op13-076", catalog_item_id=None,
+                                  variant=CardVariant.NORMAL, quantity=1))
+        session.commit()
+
+        assert script._targets(session, price_all=False, game=None, limit=10) == []
+
+        # Filling the newer column is all it takes to make it visible.
+        row = session.scalars(select(InventoryItem)).one()
+        row.catalog_item_id = row.card_id
+        session.commit()
+
+        assert [r[0].id for r in script._targets(session, price_all=False, game=None, limit=10)] == ["op13-076"]

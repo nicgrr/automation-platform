@@ -3,6 +3,40 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-13 — 473 copies of stock that nothing could see
+
+Running the new eBay timer to prove it worked gave the wrong answer: 1,530
+cards priced, and the count of held cards with no eBay signal stayed at
+exactly 163. Ordering never-priced first should have made that impossible.
+
+They were not being skipped. They were invisible. `InventoryItem` carries
+both `card_id` (older, a CatalogCard) and `catalog_item_id` (the CatalogItem
+everything else keys on), and **185 rows had only the old one**. Both
+`import_ebay_prices` and `list_for_sale` filter on
+`catalog_item_id IS NOT NULL`, so those rows -- **473 copies** -- could
+never be priced and could never be listed. No number of runs would have
+reached them.
+
+`scripts/backfill_inventory_catalog_item_id.py` fills the newer column in.
+Safe because the two are identical wherever both are set: zero rows
+disagree and all 185 orphans resolve to a real CatalogItem. The script
+re-checks both at run time and refuses rather than guessing if either stops
+holding.
+
+Result, after backfilling and re-pricing:
+
+- held cards with no eBay signal: **163 -> 0** (100% of 1,343)
+- `ebay_active_low` rows: 4,447 -> 6,198
+- listable inventory rows: 1,784
+
+Worth naming the shape of this. The audit started from "no button to check
+prices"; the button was the smallest part. Under it sat a timer that had
+been dead six days, a `--limit` that re-priced the same arbitrary slice
+forever, and 473 copies of stock that two separate subsystems could not
+see. None of it was visible from the page that prompted the question.
+
+- 1 new test, on the invisibility itself. Full suite (1316) green.
+
 ## 2026-09-13 — eBay prices get a timer, and `--limit` starts meaning something
 
 `ebay-price-import.timer` now runs daily at 03:17 (+ up to 5 min jitter),
