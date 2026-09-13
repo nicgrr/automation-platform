@@ -52,7 +52,7 @@ import time
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from automation_control.adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_market
 from automation_control.config import get_settings
@@ -64,6 +64,7 @@ from automation_control.models import (
 )
 
 DEFAULT_LIMIT = 200
+EBAY_ACTIVE_LOW_SOURCE = "ebay_active_low"
 CALL_DELAY_SECONDS = 0.4
 COMMIT_EVERY = 25
 
@@ -209,6 +210,17 @@ def _targets(session, *, price_all: bool, game: str | None, limit: int,
         # so filtering on TcgCard.game here would zero them all out --
         # the sealed branch above already applied its own game filter.
         query = query.where(TcgCard.game == game)
+    # Stalest first, never-priced before that. Without an order, `--limit`
+    # re-priced whatever the database happened to return first, every run --
+    # so a limit below the held count silently starved every card past it
+    # and the same rows were refreshed forever.
+    last_priced = (
+        select(func.max(CardPrice.fetched_at))
+        .where(CardPrice.card_id == CatalogItem.id, CardPrice.source == EBAY_ACTIVE_LOW_SOURCE)
+        .correlate(CatalogItem)
+        .scalar_subquery()
+    )
+    query = query.order_by(last_priced.is_(None).desc(), last_priced.asc())
     return session.execute(query.limit(limit)).all()
 
 
@@ -268,7 +280,7 @@ async def run(args) -> int:
             priced += 1
 
             if not args.dry_run:
-                for source, value in (("ebay_active_low", low), ("ebay_active_median", median)):
+                for source, value in ((EBAY_ACTIVE_LOW_SOURCE, low), ("ebay_active_median", median)):
                     session.add(CardPrice(
                         id=str(uuid.uuid4()), card_id=item.id, variant=None,
                         source=source, price=value, currency=currency or "AUD",

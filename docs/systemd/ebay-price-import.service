@@ -1,0 +1,16 @@
+[Unit]
+Description=EzBay daily eBay active-listing price refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ezbay
+Group=ezbay
+WorkingDirectory=/home/nic/automation-platform
+ExecStart=/bin/bash /home/nic/automation-platform/scripts/run-ebay-price-import.sh
+# ~1,350 sequential Browse calls; generous headroom, but bounded so a hung
+# run can't sit holding the timer's next firing.
+TimeoutStartSec=3600
+StandardOutput=append:/home/nic/automation-platform/scan_ingest_data/logs/ebay-price-import.log
+StandardError=append:/home/nic/automation-platform/scan_ingest_data/logs/ebay-price-import.log

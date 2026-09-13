@@ -284,3 +284,49 @@ def test_unconfigured_ebay_exits_with_a_clear_message(monkeypatch, engine):
     with pytest.raises(SystemExit) as exc:
         script.main([])
     assert "not configured" in str(exc.value)
+
+
+def test_targets_are_ordered_never_priced_first_then_stalest(engine):
+    """Without an order, --limit re-priced whatever the DB returned first,
+    every run -- so a limit below the held count silently starved every
+    card past it and refreshed the same rows forever. That also made the
+    review page's "Refresh eBay prices" button a 200-card no-op."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    with sessionmaker(bind=engine)() as session:
+        for cid, name in [("a", "Fresh"), ("b", "Stale"), ("c", "Never")]:
+            session.add(CatalogItem(id=cid, item_type=CatalogItemType.TCG_CARD, name=name))
+            session.add(TcgCard(catalog_item_id=cid, game="one_piece", set_code="OP13", number=cid))
+            session.add(InventoryItem(card_id=None, catalog_item_id=cid,
+                                      variant=CardVariant.NORMAL, quantity=1))
+        session.add(CardPrice(card_id="a", variant=CardVariant.NORMAL, source="ebay_active_low",
+                              price=Decimal("1"), currency="AUD", fetched_at=now))
+        session.add(CardPrice(card_id="b", variant=CardVariant.NORMAL, source="ebay_active_low",
+                              price=Decimal("1"), currency="AUD", fetched_at=now - timedelta(days=9)))
+        session.commit()
+
+        targets = script._targets(session, price_all=False, game=None, limit=10)
+
+    assert [row[0].id for row in targets] == ["c", "b", "a"]
+
+
+def test_a_limit_takes_the_stalest_not_an_arbitrary_slice(engine):
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    with sessionmaker(bind=engine)() as session:
+        for cid in ("a", "b"):
+            session.add(CatalogItem(id=cid, item_type=CatalogItemType.TCG_CARD, name=cid))
+            session.add(TcgCard(catalog_item_id=cid, game="one_piece", set_code="OP13", number=cid))
+            session.add(InventoryItem(card_id=None, catalog_item_id=cid,
+                                      variant=CardVariant.NORMAL, quantity=1))
+        session.add(CardPrice(card_id="a", variant=CardVariant.NORMAL, source="ebay_active_low",
+                              price=Decimal("1"), currency="AUD", fetched_at=now))
+        session.add(CardPrice(card_id="b", variant=CardVariant.NORMAL, source="ebay_active_low",
+                              price=Decimal("1"), currency="AUD", fetched_at=now - timedelta(days=30)))
+        session.commit()
+
+        targets = script._targets(session, price_all=False, game=None, limit=1)
+
+    assert [row[0].id for row in targets] == ["b"]

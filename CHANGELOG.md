@@ -3,6 +3,34 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-13 — eBay prices get a timer, and `--limit` starts meaning something
+
+`ebay-price-import.timer` now runs daily at 03:17 (+ up to 5 min jitter),
+early enough that the prices every listing decision is built from are fresh
+*before* the day's listing work. Units vendored into `docs/systemd/`
+alongside the wrapper script, so what's installed on the box is in the repo.
+
+Writing it exposed a worse bug than the missing timer. `_targets` applied
+`.limit()` with **no ordering at all**, so a limited run re-priced whatever
+the database happened to return first -- every time. With 1,343 held cards
+and a default limit of 200, the same arbitrary 200 were refreshed forever
+and the remaining 1,143 were never reached. That also made yesterday's new
+"Refresh eBay prices" button a 200-card no-op.
+
+Targets are now ordered never-priced first, then stalest first, so any
+limit sweeps the whole set instead of starving most of it. The timer still
+passes `--limit 2000` to cover everything in one pass with headroom.
+
+Also worth correcting: the claim that the failing pokemonpricetracker unit
+"logged no stdout" was wrong. It logs to
+`scan_ingest_data/logs/pokemonpricetracker-backfill.log`, and that file had
+recorded the same TypeError **six times, once per day**. The failure was
+never invisible -- nothing was reading it. A failed-timer indicator in the
+UI would have caught this on day one and is not built.
+
+- 2 new tests, on the ordering and on a limit taking the stalest rather
+  than an arbitrary slice. Full suite (1315) green.
+
 ## 2026-09-13 — eBay prices get a button too, and they are the ones that matter
 
 `import_ebay_prices` had no timer and no trigger of any kind. The last run

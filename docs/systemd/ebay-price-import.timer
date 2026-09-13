@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh eBay market prices daily
+
+[Timer]
+# Early morning, so the prices every listing decision is built from are
+# fresh before the day's listing work rather than after it. Off the hour
+# and well clear of the noon pokemonpricetracker backfill and the
+# ten-minutely order import.
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target
