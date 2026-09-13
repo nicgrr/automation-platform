@@ -10,7 +10,7 @@ from automation_control.adapters.ebay import EbayApiError
 from automation_control.config import Settings
 from automation_control.database import Base
 from automation_control.models import (
-    CatalogItem, CatalogItemType, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus,
+    BulkLot, CatalogItem, CatalogItemType, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus,
     ShopListing, ShopListingStatus,
 )
 
@@ -47,6 +47,33 @@ def _seed_listing(Session, listing_id="listing-1", quantity=3):
                                 price=Decimal("9.99"), currency="AUD", quantity=quantity, status=ShopListingStatus.ACTIVE))
         session.add(EbayListingLink(shop_listing_id=listing_id, sku=listing_id, marketplace_id="EBAY_AU",
                                     status=EbayListingLinkStatus.ACTIVE, ebay_offer_id="offer-1", last_pushed_quantity=quantity))
+        session.commit()
+
+
+def _seed_credential(session):
+    from datetime import UTC, datetime
+    if session.get(EbayCredential, 1) is None:
+        session.add(EbayCredential(id=1, encrypted_access_token=b"x", encrypted_refresh_token=b"y",
+                                   access_token_expires_at=datetime.now(UTC), scopes="sell.inventory"))
+
+
+def _seed_unlinked_listing(Session, listing_id="listing-1", quantity=3):
+    """A ShopListing with no EbayListingLink at all -- what you get from
+    uploading export_ebay_bulk_listing.py's CSV by hand through eBay's
+    Bulk Listing Tool, rather than publishing through ebay_publish.py."""
+    with Session() as session:
+        _seed_credential(session)
+        session.add(CatalogItem(id=f"item-{listing_id}", item_type=CatalogItemType.TCG_CARD, name="Test"))
+        session.add(ShopListing(id=listing_id, catalog_item_id=f"item-{listing_id}", title="Test #1",
+                                price=Decimal("2.00"), currency="AUD", quantity=quantity, status=ShopListingStatus.ACTIVE))
+        session.commit()
+
+
+def _seed_unlinked_lot(Session, lot_id="lot-1", card_count=30, quantity=1):
+    with Session() as session:
+        _seed_credential(session)
+        session.add(BulkLot(id=lot_id, title="Obsidian Flames — bulk lot (30 cards)", card_count=card_count,
+                            price=Decimal("20"), currency="AUD", quantity=quantity, status=ShopListingStatus.ACTIVE))
         session.commit()
 
 
@@ -195,3 +222,59 @@ def test_a_failed_reconciliation_push_is_recorded_not_raised(monkeypatch, Sessio
     with Session() as session:
         link = session.scalar(select(EbayListingLink))
         assert "boom" in link.last_error
+
+
+# --- matching a sale with no EbayListingLink (a manually-uploaded eBay CSV) --
+
+def test_a_sale_for_a_csv_uploaded_single_decrements_it_with_no_link_at_all(monkeypatch, Session):
+    """export_ebay_bulk_listing.py's CustomLabel/sku *is* the ShopListing
+    id -- this must resolve and decrement even though no EbayListingLink
+    row exists, since one never gets created for a manually-uploaded CSV."""
+    _seed_unlinked_listing(Session, listing_id="listing-1", quantity=3)
+    orders = {"orders": [{"orderId": "ord-1", "lineItems": [{"sku": "listing-1", "quantity": 2}]}]}
+    _patch_common(monkeypatch, Session, orders)
+
+    result = script.main([])
+    assert result == 0
+
+    with Session() as session:
+        listing = session.get(ShopListing, "listing-1")
+        assert listing.quantity == 1
+        record = session.scalar(select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == "ord-1"))
+        assert record.applied_at is not None
+        assert record.shop_listing_id == "listing-1"
+
+
+def test_a_sale_for_a_csv_uploaded_bulk_lot_decrements_and_ends_it_at_zero(monkeypatch, Session):
+    """A Bulk Master lot sold via the same manually-uploaded CSV -- its
+    sku is the BulkLot id directly, and BulkLot has no shop_listing_id
+    slot to record (that FK only fits a real ShopListing)."""
+    _seed_unlinked_lot(Session, lot_id="lot-1", quantity=1)
+    orders = {"orders": [{"orderId": "ord-2", "lineItems": [{"sku": "lot-1", "quantity": 1}]}]}
+    _patch_common(monkeypatch, Session, orders)
+
+    result = script.main([])
+    assert result == 0
+
+    with Session() as session:
+        lot = session.get(BulkLot, "lot-1")
+        assert lot.quantity == 0
+        assert lot.status == ShopListingStatus.SOLD_OUT
+        record = session.scalar(select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == "ord-2"))
+        assert record.applied_at is not None
+        assert record.shop_listing_id is None
+
+
+def test_an_ebaylistinglink_match_is_still_preferred_over_a_direct_id_match(monkeypatch, Session):
+    """If a listing has *both* a link (published via the API) and happens
+    to share its id with a coincidental sku lookup, the link -- the
+    authoritative source for an API-published listing -- must win."""
+    _seed_listing(Session, listing_id="listing-1", quantity=3)
+    orders = {"orders": [{"orderId": "ord-1", "lineItems": [{"sku": "listing-1", "quantity": 1}]}]}
+    _patch_common(monkeypatch, Session, orders)
+
+    script.main([])
+
+    with Session() as session:
+        link = session.scalar(select(EbayListingLink).where(EbayListingLink.shop_listing_id == "listing-1"))
+        assert link.last_pushed_quantity == 2  # the linked path's own bookkeeping ran

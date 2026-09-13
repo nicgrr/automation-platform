@@ -23,6 +23,31 @@ router = APIRouter(prefix="/cards/pricing", tags=["pricing"])
 
 PACING_DELAY_SECONDS = 1.0
 
+# Whether asking pokemontcg.io the same question again could plausibly give a
+# different answer. This is the difference between the two halves of the
+# not-yet-priced list, and it matters because they need opposite things from
+# you: one needs a click, the other needs a decision.
+#
+# Twelve cards sat unpriced for a month because the page showed both the same
+# way -- ten of them behind nothing worse than a 500 from an API that was
+# briefly down on 15 August.
+#
+# An unrecognised error is treated as retryable on purpose. Guessing
+# "transient" costs one API call; guessing "permanent" strands a card in a
+# list nobody revisits, which is the failure this is fixing.
+_NEEDS_A_PERSON = (
+    "ambiguous match",                    # two candidates, different prices
+    "no priced match found",              # searched every variant, found nothing
+    "missing character or set name",      # the capture itself is incomplete
+)
+
+
+def needs_a_person(error: str | None) -> bool:
+    """True when re-running the lookup cannot help -- only you can."""
+    return bool(error) and any(hint in error.lower() for hint in _NEEDS_A_PERSON)
+
+
+
 # Guards against two overlapping "Check prices" runs stepping on each other:
 # without it, a second click while the first run is still in progress opens
 # a second background task that re-reads the same not-yet-priced cards and
@@ -66,7 +91,7 @@ def _finish_price_check(run_id: str) -> None:
             _price_check_started_at = None
 
 
-def _run_price_check(api_key: str | None, user: str) -> None:
+def _run_price_check(api_key: str | None, user: str, include_blocked: bool = False) -> None:
     """Background task: look up a suggested price for every reviewed card
     that doesn't have one yet. Uses its own DB session -- the request-scoped
     one closes as soon as the triggering request returns, before this runs.
@@ -96,6 +121,10 @@ def _run_price_check(api_key: str | None, user: str) -> None:
             cards = session.scalars(
                 select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.REVIEWED, CapturedCard.pricing_status == PricingStatus.NOT_PRICED)
             ).all()
+            if not include_blocked:
+                # Re-asking about an ambiguous card returns the same ambiguity
+                # and spends a rate-limited call to do it.
+                cards = [c for c in cards if not needs_a_person(c.price_lookup_error)]
             for index, card in enumerate(cards):
                 if not card.character or not card.set_name:
                     card.price_lookup_error = "missing character or set name, needs manual price"
@@ -154,30 +183,76 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
         for c in pending
     ) or "<li>Nothing waiting for price approval.</li>"
 
-    unpriced_rows = "".join(
-        f"<li>{escape(c.character or '?')} — {escape(c.set_name or '?')}"
-        + (f" <span class='pill bad'>{escape(c.price_lookup_error)}</span>" if c.price_lookup_error else "")
-        + f" <a href='/cards/pricing/{c.id}'>set price manually</a></li>"
-        for c in unpriced
-    ) or "<li>All reviewed cards have been checked.</li>"
+    # Two lists, because they need opposite things from you: one needs a
+    # click, the other needs a decision. Showing them as one list is how
+    # twelve cards sat unpriced for a month.
+    blocked = [c for c in unpriced if needs_a_person(c.price_lookup_error)]
+    retryable = [c for c in unpriced if not needs_a_person(c.price_lookup_error)]
+
+    def _row(card, *, show_error: bool) -> str:
+        label = f"{escape(card.character or '?')} — {escape(card.set_name or '?')}"
+        if card.card_number:
+            label += f" #{escape(card.card_number)}"
+        reason = (f"<span class='pill bad'>{escape(card.price_lookup_error)}</span>"
+                  if show_error and card.price_lookup_error else "")
+        return f"<li>{label} {reason} <a href='/cards/pricing/{card.id}'>set price manually</a></li>"
+
+    retry_rows = "".join(_row(c, show_error=False) for c in retryable) or \
+        "<li>Nothing waiting on a retry.</li>"
+    blocked_rows = "".join(_row(c, show_error=True) for c in blocked) or \
+        "<li>Nothing needs a decision.</li>"
+    never_checked = sum(1 for c in retryable if not c.price_lookup_error)
+    failed_before = len(retryable) - never_checked
 
     head_extra = "<meta http-equiv='refresh' content='4'>" if request.query_params.get("checking") else ""
     checking_note = "<p class='subtitle'>Checking prices in the background -- this page refreshes automatically.</p>" if request.query_params.get("checking") else ""
+
+    if never_checked and failed_before:
+        retry_note = (f"{never_checked} never checked, {failed_before} failed on a temporary error "
+                      "and can be tried again.")
+    elif failed_before:
+        retry_note = (f"{failed_before} failed on a temporary error &mdash; an upstream outage or a "
+                      "timeout, not a problem with the card.")
+    else:
+        retry_note = "Captured and reviewed, waiting on their first price check."
+
+    button = ("Check prices" if not failed_before
+              else f"Retry {len(retryable)} lookup{'s' if len(retryable) != 1 else ''}")
 
     body = (
         brand_header("Price review")
         + checking_note
         + f"<div class='panel'><h2>Awaiting approval ({len(pending)})</h2><ul class='events'>{pending_rows}</ul></div>"
-        + f"<div class='panel'><h2>Not yet priced ({len(unpriced)})</h2><ul class='events'>{unpriced_rows}</ul>"
-        + "<form method='post' action='/cards/pricing/check-all'><button>Check prices</button></form></div>"
+        + f"<div class='panel'><h2>Ready to price ({len(retryable)})</h2>"
+        + f"<p class='subtitle'>{retry_note}</p>"
+        + f"<ul class='events'>{retry_rows}</ul>"
+        + (f"<form method='post' action='/cards/pricing/check-all'><button>{button}</button></form>"
+           if retryable else "")
+        + "</div>"
+        + f"<div class='panel'><h2>Needs your decision ({len(blocked)})</h2>"
+        + "<p class='subtitle'>Asking again returns the same answer &mdash; these need a price set by "
+          "hand, or the capture corrected.</p>"
+        + f"<ul class='events'>{blocked_rows}</ul>"
+        + ("<form method='post' action='/cards/pricing/check-all'>"
+           "<input type='hidden' name='include_blocked' value='1'>"
+           "<button class='ghost'>Try these anyway</button></form>" if blocked else "")
+        + "</div>"
     )
     return HTMLResponse(page("EzBay — Price review", body, head_extra=head_extra))
 
 
 @router.post("/check-all")
-def pricing_check_all(request: Request, background_tasks: BackgroundTasks, user: str = Depends(require_dashboard_user)) -> RedirectResponse:
+def pricing_check_all(request: Request, background_tasks: BackgroundTasks,
+                      include_blocked: str = Form(""),
+                      user: str = Depends(require_dashboard_user)) -> RedirectResponse:
+    """Price everything a lookup could still help with.
+
+    `include_blocked` is the escape hatch behind "Try these anyway": the
+    classifier reads error strings, so a wrongly-classified card would
+    otherwise never be retried again by anything.
+    """
     settings = request.app.state.settings
-    background_tasks.add_task(_run_price_check, settings.pokemontcg_api_key, user)
+    background_tasks.add_task(_run_price_check, settings.pokemontcg_api_key, user, bool(include_blocked))
     return RedirectResponse("/cards/pricing?checking=1", status_code=303)
 
 

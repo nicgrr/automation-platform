@@ -28,8 +28,12 @@ from .models import EbayCredential, OAuthState
 INVENTORY_WRITE_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory"
 FULFILLMENT_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
 IDENTITY_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly"
-SELLER_SCOPE = f"{INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} {IDENTITY_READ_SCOPE}"
 MARKET_SCOPE = "https://api.ebay.com/oauth/api_scope"
+# The base scope has to be requested alongside the specific ones -- a
+# real first attempt at this exact flow (2026-09-13) got "invalid_request"
+# from auth.ebay.com without it, even though every specific scope below
+# was already granted to the app in the Developer Portal.
+SELLER_SCOPE = f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} {IDENTITY_READ_SCOPE}"
 AUTH_URL = "https://auth.sandbox.ebay.com/oauth2/authorize"
 TOKEN_URL = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
 AUTH_URL_PRODUCTION = "https://auth.ebay.com/oauth2/authorize"

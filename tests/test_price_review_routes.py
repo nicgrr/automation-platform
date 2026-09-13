@@ -12,7 +12,22 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import AuditEvent, CapturedCard, CardCaptureStatus, PricingStatus
-from automation_control.price_review import _run_price_check, _try_start_price_check, _finish_price_check
+from automation_control.price_review import (_run_price_check, _try_start_price_check,
+                                            _finish_price_check, needs_a_person)
+
+
+@pytest.fixture(autouse=True)
+def _clear_price_check_guard():
+    """The run-lock is module state, so a test that leaves a run "in
+    progress" makes every later test's price check a silent no-op. Reset it
+    around each test rather than relying on every test to unwind its own."""
+    import automation_control.price_review as pr
+
+    pr._price_check_run_id = None
+    pr._price_check_started_at = None
+    yield
+    pr._price_check_run_id = None
+    pr._price_check_started_at = None
 
 
 @pytest.fixture
@@ -384,3 +399,82 @@ def test_price_review_redirects_to_list_when_no_more_pending(client, session):
     resp = client.post(f"/cards/pricing/{only.id}", data={"action": "approve", "price": "5.00"}, follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/cards/pricing"
+
+
+# --- separating a retry from a decision ------------------------------------
+
+@pytest.mark.parametrize("error,expected", [
+    ("pokemontcg.io unavailable after 3 attempts: pokemontcg.io returned 500", False),
+    ("pokemontcg.io unavailable after 3 attempts: pokemontcg.io returned 502", False),
+    ("ambiguous match for 'Tyrunt' (query='name:\"Tyrunt\"' #'070'): 2 candidates", True),
+    ("no priced match found for 'Mega Greninja ex' after 2 search variant(s)", True),
+    ("missing character or set name, needs manual price", True),
+    (None, False),
+    ("something nobody has seen before", False),
+])
+def test_needs_a_person_reads_the_error(error, expected):
+    """The real strings from twelve cards that sat unpriced for a month. An
+    unrecognised error defaults to retryable: guessing "transient" costs one
+    API call, guessing "permanent" strands the card in a list nobody
+    revisits."""
+    assert needs_a_person(error) is expected
+
+
+def test_a_retry_run_skips_the_cards_a_retry_cannot_help(session, price_check_session_local):
+    """Re-asking about an ambiguous card returns the same ambiguity and
+    spends a rate-limited call to do it."""
+    outage = _reviewed_card(character="Tepig", price_lookup_error="pokemontcg.io unavailable after 3 attempts")
+    ambiguous = _reviewed_card(character="Tyrunt", price_lookup_error="ambiguous match for 'Tyrunt': 2 candidates")
+    session.add_all([outage, ambiguous])
+    session.commit()
+
+    with patch("automation_control.price_review.lookup_price", return_value=Decimal("2.00")) as lookup:
+        _run_price_check(api_key=None, user="testuser")
+
+    assert [c.args[0] for c in lookup.call_args_list] == ["Tepig"]
+    session.expire_all()
+    assert session.get(CapturedCard, ambiguous.id).pricing_status == PricingStatus.NOT_PRICED
+
+
+def test_include_blocked_is_the_escape_hatch(session, price_check_session_local):
+    """The classifier reads error strings, so a wrongly-classified card would
+    otherwise never be retried by anything again."""
+    ambiguous = _reviewed_card(character="Tyrunt", price_lookup_error="ambiguous match for 'Tyrunt'")
+    session.add(ambiguous)
+    session.commit()
+
+    with patch("automation_control.price_review.lookup_price", return_value=Decimal("2.00")) as lookup:
+        _run_price_check(api_key=None, user="testuser", include_blocked=True)
+
+    assert [c.args[0] for c in lookup.call_args_list] == ["Tyrunt"]
+
+
+def test_the_page_splits_retryable_from_blocked(client, session):
+    """One list is why twelve cards went unnoticed for a month -- ten behind
+    nothing worse than an API that was briefly down."""
+    session.add_all([
+        _reviewed_card(character="Tepig", price_lookup_error="pokemontcg.io unavailable after 3 attempts: returned 500"),
+        _reviewed_card(character="Totodile", price_lookup_error="pokemontcg.io unavailable after 3 attempts: returned 502"),
+        _reviewed_card(character="Tyrunt", price_lookup_error="ambiguous match for 'Tyrunt': 2 candidates"),
+    ])
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Ready to price (2)" in page
+    assert "Needs your decision (1)" in page
+    assert "Retry 2 lookups" in page
+    assert "Try these anyway" in page
+    # The reason belongs next to the card only where it's a decision to make.
+    assert page.index("Needs your decision") < page.index("ambiguous match")
+
+
+def test_a_card_never_checked_is_ready_not_blocked(client, session):
+    session.add(_reviewed_card(character="Snivy"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Ready to price (1)" in page
+    assert "Needs your decision (0)" in page
+    assert "Check prices" in page  # not "Retry", nothing has failed yet

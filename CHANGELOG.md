@@ -3,6 +3,36 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-13 — A retry and a decision are different jobs
+
+Twelve cards had sat unpriced since 15 August. Ten of them were behind
+nothing worse than `pokemontcg.io returned 500` -- an upstream outage that
+afternoon -- and the page gave no way to tell those apart from the two that
+genuinely cannot be matched. One list, one button, same red pill on every
+row, so the whole thing read as work nobody wanted to start.
+
+"Not yet priced" is now two panels:
+
+- **Ready to price** -- never checked, or failed on something a retry can
+  fix. The button reads "Retry 10 lookups" and names the count.
+- **Needs your decision** -- an ambiguous match (two candidates at different
+  prices) or no match after every search variant. The error shows here,
+  where it is the thing you act on, rather than on every row.
+
+A price run now skips the blocked ones: re-asking about an ambiguous card
+returns the same ambiguity and spends a rate-limited call doing it. "Try
+these anyway" is the escape hatch, because the classifier reads error
+strings and a misread card would otherwise never be retried by anything
+again. An unrecognised error counts as retryable -- guessing "transient"
+costs one API call, guessing "permanent" strands a card in a list nobody
+revisits, which is the failure being fixed.
+
+- Fixed a test-isolation bug found on the way: the price-check run-lock is
+  module state, and a test leaving a run "in progress" made every later
+  test's price check a silent no-op. Reset around each test now.
+- 9 new tests, including the real error strings off all twelve cards.
+  Full suite (1305) green.
+
 ## 2026-09-13 — Stock art on audit-flagged photos, journalled
 
 113 inventory items now show pokemontcg.io reference art instead of their

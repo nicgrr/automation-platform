@@ -145,3 +145,59 @@ def test_lot_row_set_name_comes_from_the_lots_own_card_set(session):
     rows, _ = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
                              letter_policy="Letter", parcel_policy="Parcel")
     assert rows[0]["set_name"] == "Obsidian Flames"
+
+
+# --- excluding singles already covered by an active bulk lot -----------
+
+def _set_with_lot(session, set_id="sv3", set_name="Obsidian Flames"):
+    session.add(CardSet(id=set_id, name=set_name))
+    session.add(BulkLot(title=f"{set_name} — bulk lot (30 cards)", set_id=set_id, card_count=30,
+                        price=Decimal("20"), image_url="https://example.test/logo.png", status=ShopListingStatus.ACTIVE))
+
+
+def test_a_cheap_single_from_a_lot_covered_set_is_excluded(session):
+    _set_with_lot(session)
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="sv3", number="4"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Common #4", price=Decimal("2"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, skipped = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert rows == []
+    assert "already covered by an active bulk lot" in skipped[0]
+
+
+def test_a_single_above_the_lot_threshold_from_a_lot_covered_set_is_still_exported(session):
+    """A card priced above the bulk lot's own price ceiling was never
+    eligible for the lot in the first place, so it isn't the same
+    physical card and is safe to sell individually."""
+    _set_with_lot(session)
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="sv3", number="199"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Rare #199", price=Decimal("50"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert [r["title"] for r in rows] == ["Rare #199"]
+
+
+def test_a_cheap_single_from_a_set_with_no_lot_is_still_exported(session):
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="no-lot-set", number="4"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Common #4", price=Decimal("2"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert [r["title"] for r in rows] == ["Common #4"]
+
+
+def test_passing_none_disables_the_lot_overlap_check(session):
+    _set_with_lot(session)
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="sv3", number="4"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Common #4", price=Decimal("2"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter",
+                                lot_overlap_max_price=None)
+    assert [r["title"] for r in rows] == ["Common #4"]
