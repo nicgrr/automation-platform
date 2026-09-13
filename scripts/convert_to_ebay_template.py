@@ -42,8 +42,27 @@ import argparse
 import csv
 import re
 import sys
+import unicodedata
 
 _LOT_CARD_COUNT_RE = re.compile(r"\((\d+) cards\)")
+
+# eBay rejects "superscript, subscript, or similar characters (e.g., (tm),
+# heart, 1/2, star)" in titles, subtitles, and item specifics -- confirmed
+# by a real failed upload on card names that are *literally* printed with
+# a gender symbol (Nidoran (female)/(male), and the whole Nidoran family).
+# Spelled-out replacements first (readable, matches how sellers actually
+# write these -- see import_ebay_prices.py's build_query, which strips the
+# same two symbols for the same underlying reason), then a general net for
+# any other symbol/fraction character eBay would reject that this
+# specific card family isn't the only one to ever carry.
+_TITLE_REPLACEMENTS = {"♀": "F", "♂": "M"}
+_DISALLOWED_UNICODE_CATEGORIES = {"So", "Sk", "Sm", "No"}
+
+
+def sanitize_title(text: str) -> str:
+    for symbol, replacement in _TITLE_REPLACEMENTS.items():
+        text = text.replace(symbol, replacement)
+    return "".join(c for c in text if unicodedata.category(c) not in _DISALLOWED_UNICODE_CATEGORIES)
 
 PLACEHOLDER = "REPLACE_ME"
 
@@ -90,25 +109,40 @@ SINGLE_CATEGORY_ID = "183454"
 LOT_CATEGORY_ID = "183455"
 # Ungraded is the only condition that makes sense for a scanned personal
 # collection (2750 is Graded, i.e. professionally slabbed, which none of
-# this inventory is).
+# this inventory is). Confirmed correct for singles by a real upload:
+# 4000 was accepted for category 183454, and the only real failure there
+# was the missing CD:40001 descriptor below -- but 4000 was explicitly
+# *rejected* for 183455 (Mixed Card Lots), so lots need a different,
+# still-unverified value (see --lot-condition-id).
 DEFAULT_CONDITION_ID = "4000"
+
+# eBay's Condition Descriptor for ungraded CCG singles (ID 40001) is a
+# required sub-field of ConditionID 4000, confirmed by a real failed
+# upload ("Card Condition (40001) is a required field" on 990/1014 rows).
+# Two independent community sources agree the numeric form is the
+# reliable one to send, and both agree 400010 means "Near Mint or
+# Better" -- which is what this whole export already assumes as the
+# scanned condition, so one constant covers the actual data rather than
+# a full text->ID mapping table for conditions nothing here currently has.
+CARD_CONDITION_DESCRIPTOR_NEAR_MINT = "400010"
 
 
 def convert_row(row: dict, args) -> dict:
     is_lot = "bulk lot" in row["title"].lower()
-    name, _, number = row["title"].partition(" #")
+    title = sanitize_title(row["title"])
+    name, _, number = title.partition(" #")
 
     out = {
         "*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8)": "Add",
         "CustomLabel": row["sku"],
         "*Category": LOT_CATEGORY_ID if is_lot else SINGLE_CATEGORY_ID,
-        "*Title": row["title"][:80],
-        "*ConditionID": args.condition_id,
+        "*Title": title[:80],
+        "*ConditionID": args.lot_condition_id if is_lot else args.condition_id,
         "*C:Type": TYPE,
         "*C:Franchise": FRANCHISE,
         "*C:Manufacturer": MANUFACTURER,
         "PicURL": row["image_url"],
-        "*Description": row["description"],
+        "*Description": sanitize_title(row["description"]),
         "*Format": "FixedPrice",
         "*Duration": "GTC",
         "*StartPrice": row["price"],
@@ -126,10 +160,14 @@ def convert_row(row: dict, args) -> dict:
         match = _LOT_CARD_COUNT_RE.search(row["title"])
         if match:
             out["C:Number of Cards"] = match.group(1)
+        # Not populated: 183455's own condition-descriptor scheme (if it
+        # has one at all) is unverified, unlike the singles' 4000/40001
+        # pair below -- confirmed only once already, no need to guess twice.
     else:
         out["C:Card Name"] = name.strip()
         if number:
             out["C:Card Number"] = number.strip()
+        out["CD:Card Condition - (ID: 40001)"] = CARD_CONDITION_DESCRIPTOR_NEAR_MINT
     return out
 
 
@@ -141,8 +179,12 @@ def main() -> int:
                         help="our own export (see export_ebay_bulk_listing.py)")
     parser.add_argument("--out", default="ebay_bulk_listing_ready.csv")
     parser.add_argument("--condition-id", default=DEFAULT_CONDITION_ID,
-                        help=f"eBay condition ID (default {DEFAULT_CONDITION_ID} = Ungraded -- override only if some "
-                             "of this inventory is professionally graded)")
+                        help=f"eBay condition ID for SINGLE cards (default {DEFAULT_CONDITION_ID} = Ungraded -- "
+                             "confirmed correct by a real upload; override only if some of this inventory is graded)")
+    parser.add_argument("--lot-condition-id", default=PLACEHOLDER,
+                        help="eBay condition ID for BULK LOTS -- 4000 was confirmed *invalid* for category 183455 "
+                             "by a real upload, and no verified replacement is known yet. List one lot by hand "
+                             "through eBay's normal flow to find the real value before setting this.")
     parser.add_argument("--location", default=PLACEHOLDER)
     parser.add_argument("--dispatch-days", default=PLACEHOLDER)
     parser.add_argument("--payment-policy", default=PLACEHOLDER)

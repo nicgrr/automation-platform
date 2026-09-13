@@ -3,6 +3,40 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-13 — Stock art on audit-flagged photos, journalled
+
+113 inventory items now show pokemontcg.io reference art instead of their
+own photo, via `scripts/photo_audit_use_stock.py`. Own photos across the
+catalogue go 1,273 -> 1,160.
+
+The audit flags 135. Two exclusions bring that to 113, and both matter:
+the 20 items already dismissed in `/inventory-audit` (a dismissal is a
+human saying "I looked, this is fine", and re-clearing it throws that
+verdict away), and 2 whose closest match *is* the card they're filed under
+-- a badly-hashing photo of the right card, not a mismatch.
+
+Nothing is deleted. Every cleared path goes to a journal under `backups/`
+first -- before the rows change, since a journal lost to a crash is a swap
+nobody can undo -- and `--revert` restores from it. All 113 photo files are
+still on disk. Revert skips any item whose photo was re-added since, which
+would otherwise silently undo a real fix.
+
+**This hides a symptom rather than fixing one.** A flagged item is either a
+good card whose photo hashes badly, or a genuinely misfiled card. In the
+second case stock art makes the listing *more* wrong: the buyer sees a
+confident render of a card that may not be in the envelope, at that card's
+price -- the exact failure audit_inventory_photos.py exists to catch, and
+why it is read-only by design. It also clears the photo from the review
+page, which is the evidence for deciding what the card really is.
+
+Of the 113, 47 sit at own_distance under 20 against a threshold of 12 --
+close enough to the line that the audit's own docstring puts false
+positives there (foils, crops catching the neighbour). Those are the ones
+most likely worth reverting and reviewing by hand.
+
+- 7 new tests, on what the swap excludes and what revert refuses to
+  clobber. Full suite (1286) green.
+
 ## 2026-09-13 — The eBay upload that failed all 1,014 rows
 
 An upload came back "1,014 failed, 0 completed" -- every row, none

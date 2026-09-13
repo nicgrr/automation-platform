@@ -1,0 +1,797 @@
+{
+  "swapped_at": "2026-09-13T01:23:52.023411+00:00",
+  "threshold": 12,
+  "items": [
+    {
+      "item_id": "db11544c-7bbe-4fc4-9416-ad74d1572d26",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-4-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #4 Snivy",
+      "looks_like_label": "SWSH Black Star Promos #SWSH053 Machamp",
+      "own_distance": 36
+    },
+    {
+      "item_id": "5fef1274-267b-41a1-924b-765a21fb8c25",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-43-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #43 Milcery",
+      "looks_like_label": "Prismatic Evolutions #43 Flutter Mane",
+      "own_distance": 34
+    },
+    {
+      "item_id": "7db67e49-b871-4c5c-814c-48e14b164ef7",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-3-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #3 Vileplume",
+      "looks_like_label": "Legendary Treasures #108 Tornadus",
+      "own_distance": 32
+    },
+    {
+      "item_id": "e69f7c69-630c-4fa1-b7ff-636c0c140237",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-95-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #95 Ludicolo",
+      "looks_like_label": "Prismatic Evolutions #95 Binding Mochi",
+      "own_distance": 32
+    },
+    {
+      "item_id": "9c3828cb-c6f1-4099-9fa9-5211020ce462",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-70-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #70 Empoleon ex",
+      "looks_like_label": "Lost Thunder #187a Net Ball",
+      "own_distance": 30
+    },
+    {
+      "item_id": "add4c890-aaf1-4f72-9a88-193dd5f94e24",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-18-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #18 Seel",
+      "looks_like_label": "Fusion Strike #3 Butterfree",
+      "own_distance": 30
+    },
+    {
+      "item_id": "87bdb6f5-6132-49af-81a4-cc0c2584217c",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-15-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #15 Darumaka",
+      "looks_like_label": "Supreme Victors #19 Camerupt G",
+      "own_distance": 26
+    },
+    {
+      "item_id": "88a34bf3-56b0-4ac3-82ec-5ae03322994d",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-39-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #39 Cresselia",
+      "looks_like_label": "Supreme Victors #6 Magmortar",
+      "own_distance": 26
+    },
+    {
+      "item_id": "0d530b68-7fd4-43e6-b85b-6ae4dcfb7bd0",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-29-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #29 Rotom ex",
+      "looks_like_label": "Steam Siege #5 Jumpluff",
+      "own_distance": 26
+    },
+    {
+      "item_id": "80e8960f-cd51-4b3f-bf3b-c6521ce829b4",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-81-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #81 Pok\u00e9 Pad",
+      "looks_like_label": "Steam Siege #116 Gardevoir-EX",
+      "own_distance": 26
+    },
+    {
+      "item_id": "95bdbc3d-f972-4dad-a585-d55d07bf8788",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-68-reverse_holo-near-mint.jpg",
+      "filed_label": "Perfect Order #68 Antique Jaw Fossil",
+      "looks_like_label": "Team Up #27 Golduck",
+      "own_distance": 26
+    },
+    {
+      "item_id": "6eee3926-6482-4a0f-9524-9b06da6ff221",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-32-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #32 Pawmi",
+      "looks_like_label": "Fates Collide #58 Mandibuzz",
+      "own_distance": 24
+    },
+    {
+      "item_id": "c17ef7f9-02cf-4394-8a6f-d23569904250",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-14-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #14 Moltres",
+      "looks_like_label": "HeartGold & SoulSilver #94 Moomoo Milk",
+      "own_distance": 24
+    },
+    {
+      "item_id": "149ce06a-1edf-4dd5-adfc-5d3f74406269",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-40-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #40 Meloetta",
+      "looks_like_label": "Pitch Black #113 Tremendous Bomb",
+      "own_distance": 24
+    },
+    {
+      "item_id": "7380ff28-a02a-4357-a8b6-9b9c9431f80a",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-24-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #24 Aurorus",
+      "looks_like_label": "Majestic Dawn #77 Turtwig",
+      "own_distance": 24
+    },
+    {
+      "item_id": "a43a2adc-1703-4d3a-9e1e-383417ee82cb",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-27-reverse_holo-near-mint.jpg",
+      "filed_label": "Perfect Order #27 Luxio",
+      "looks_like_label": "Black Bolt #7 Lilligant",
+      "own_distance": 24
+    },
+    {
+      "item_id": "145fce66-a1df-4fb2-abb3-396bf32b73e6",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-72-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #72 Makuhita",
+      "looks_like_label": "Ancient Origins #3 Vileplume",
+      "own_distance": 22
+    },
+    {
+      "item_id": "d80dc90e-0fda-4976-9734-f750436ec7da",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-214-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #214 Urbain",
+      "looks_like_label": "Vivid Voltage #78 Xerneas",
+      "own_distance": 22
+    },
+    {
+      "item_id": "c38278f8-29e2-40c5-b437-2b3582c9b914",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-77-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #77 Team Rocket's Exeggcute",
+      "looks_like_label": "Steam Siege #29 Gastrodon",
+      "own_distance": 22
+    },
+    {
+      "item_id": "8f522a5d-a4c9-4da9-a96f-90deb743a30d",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-175-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #175 Larry's Komala",
+      "looks_like_label": "Legend Maker #27 Torkoal",
+      "own_distance": 22
+    },
+    {
+      "item_id": "24e4f74c-c60c-4bf5-bace-0f262dddab20",
+      "scan_image_path": "scan_ingest_data/media/cards/PAR-12-holo-near-mint.jpg",
+      "filed_label": "Paradox Rift #12 Orbeetle",
+      "looks_like_label": "Crown Zenith #8 Yanma",
+      "own_distance": 22
+    },
+    {
+      "item_id": "d6184805-5af9-481b-b97f-52b16c17a2c7",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-62-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #62 Spoink",
+      "looks_like_label": "Unbroken Bonds #9 Venonat",
+      "own_distance": 22
+    },
+    {
+      "item_id": "c6a6a24c-ad48-47f6-8abf-6084eeecfac9",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-124-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #124 Premium Power Pro",
+      "looks_like_label": "Paldea Evolved #67 Electrode",
+      "own_distance": 22
+    },
+    {
+      "item_id": "8cdfe7be-f9e5-4427-8711-bcc2d24f010e",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-15-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #15 Dustox",
+      "looks_like_label": "Primal Clash #119 Bouffalant",
+      "own_distance": 22
+    },
+    {
+      "item_id": "9de16127-855c-4618-8fd9-e46eb66886ea",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-73-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #73 Unfezant",
+      "looks_like_label": "Silver Tempest #166 Wallace",
+      "own_distance": 22
+    },
+    {
+      "item_id": "9d5ee37b-3f38-43f1-85b7-18deace67de9",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-60-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #60 Escavalier",
+      "looks_like_label": "Skyridge #47 Buried Fossil",
+      "own_distance": 22
+    },
+    {
+      "item_id": "57223b2a-176f-4656-a0c4-05019e15d1b2",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-72-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #72 Tranquill",
+      "looks_like_label": "Vivid Voltage #134 Swellow",
+      "own_distance": 22
+    },
+    {
+      "item_id": "34fb80ee-e7d1-484d-9449-8acba3511d6e",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-42-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #42 Golett",
+      "looks_like_label": "Pitch Black #25 Charjabug",
+      "own_distance": 22
+    },
+    {
+      "item_id": "abb43b59-386d-4de8-a64f-e2c0c33672da",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-78-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #78 Braviary",
+      "looks_like_label": "Legendary Treasures #41 Palpitoad",
+      "own_distance": 22
+    },
+    {
+      "item_id": "a090a587-227c-449f-956c-ee11b0c6a351",
+      "scan_image_path": "scan_ingest_data/media/cards/PAR-154-normal-near-mint.jpg",
+      "filed_label": "Paradox Rift #154 Tandemaus",
+      "looks_like_label": "Unified Minds #101 Necrozma",
+      "own_distance": 22
+    },
+    {
+      "item_id": "e2eb76b9-e444-48f4-aee6-535b6b2c99e3",
+      "scan_image_path": "scan_ingest_data/media/cards/PAR-10-normal-near-mint.jpg",
+      "filed_label": "Paradox Rift #10 Blipbug",
+      "looks_like_label": "Unbroken Bonds #59 Vikavolt",
+      "own_distance": 22
+    },
+    {
+      "item_id": "013b3a24-f351-403c-9b8a-6bb3e62545d7",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-49-normal-near-mint.jpg",
+      "filed_label": "White Flare #49 Sawk",
+      "looks_like_label": "Black Bolt #7 Lilligant",
+      "own_distance": 22
+    },
+    {
+      "item_id": "3bedaf59-a23d-4fdf-820a-0a8d88cddb2c",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-72-normal-near-mint.jpg",
+      "filed_label": "White Flare #72 Patrat",
+      "looks_like_label": "Prismatic Evolutions #77 Hoothoot",
+      "own_distance": 22
+    },
+    {
+      "item_id": "002e5365-e03d-4d38-9cad-219c49ec0768",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-71-normal-near-mint.jpg",
+      "filed_label": "White Flare #71 Druddigon",
+      "looks_like_label": "BREAKthrough #87 Hawlucha",
+      "own_distance": 22
+    },
+    {
+      "item_id": "40bf4d0d-aa1f-4b45-8274-87ce0ed47f92",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-67-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #67 Toxel",
+      "looks_like_label": "Dragons Exalted #77 Skuntank",
+      "own_distance": 22
+    },
+    {
+      "item_id": "61d8c91a-ed94-4aa6-b1ac-56ed4d02379e",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-31-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #31 Boltund",
+      "looks_like_label": "Steam Siege #100 Claw Fossil Anorith",
+      "own_distance": 22
+    },
+    {
+      "item_id": "a889a87b-4596-447e-bf52-e59212588090",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-23-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #23 Swinub",
+      "looks_like_label": "Platinum #28 Giratina",
+      "own_distance": 22
+    },
+    {
+      "item_id": "0241d874-639a-43d4-beba-6e2bcee07602",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-80-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #80 Pok\u00e9 Ball",
+      "looks_like_label": "Paldean Fates #13 Heat Rotom",
+      "own_distance": 22
+    },
+    {
+      "item_id": "0b237bf2-19c0-4b32-acca-cc24bdbea0c0",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-86-holo-near-mint.jpg",
+      "filed_label": "Perfect Order #86 Growing Grass Energy",
+      "looks_like_label": "Vivid Voltage #162 Aromatic Grass Energy",
+      "own_distance": 22
+    },
+    {
+      "item_id": "a363edb5-2648-4dba-b5fc-20fdc3f10f52",
+      "scan_image_path": "scan_ingest_data/media/cards/SVI-20-normal-near-mint.jpg",
+      "filed_label": "Paldean Fates #20 Chinchou",
+      "looks_like_label": "White Flare #40 Cofagrigus",
+      "own_distance": 20
+    },
+    {
+      "item_id": "9ce8c303-3068-4a4d-868d-76f0a5d829c5",
+      "scan_image_path": "scan_ingest_data/media/cards/SHF-52-normal-near-mint.jpg",
+      "filed_label": "Shining Fates #52 Eevee",
+      "looks_like_label": "Astral Radiance #141 Feather Ball",
+      "own_distance": 20
+    },
+    {
+      "item_id": "54a6a41d-6dce-4274-8348-d739e6bf39bd",
+      "scan_image_path": "scan_ingest_data/media/cards/SSP-113-normal-near-mint.jpg",
+      "filed_label": "Surging Sparks #113 Grapploct",
+      "looks_like_label": "Sword & Shield #144 Noctowl",
+      "own_distance": 20
+    },
+    {
+      "item_id": "ab1b3def-6c28-4808-b605-255be140273a",
+      "scan_image_path": "scan_ingest_data/media/cards/SSP-122-normal-near-mint.jpg",
+      "filed_label": "Surging Sparks #122 Alolan Diglett",
+      "looks_like_label": "Phantom Forces #27 Galvantula",
+      "own_distance": 20
+    },
+    {
+      "item_id": "7aad516f-c8d9-44d8-9660-77a09df78bb7",
+      "scan_image_path": "scan_ingest_data/media/cards/SSP-172-normal-near-mint.jpg",
+      "filed_label": "Surging Sparks #172 Dragon Elixir",
+      "looks_like_label": "Unbroken Bonds #74 Weezing",
+      "own_distance": 20
+    },
+    {
+      "item_id": "0b52ec51-53d3-4eb8-b3ce-96f08ab2e3cc",
+      "scan_image_path": "scan_ingest_data/media/cards/SSP-23-normal-near-mint.jpg",
+      "filed_label": "Surging Sparks #23 Simisear",
+      "looks_like_label": "Black Bolt #34 Zekrom ex",
+      "own_distance": 20
+    },
+    {
+      "item_id": "b0f8f712-2cc4-4d8a-aa81-57aa0f00651b",
+      "scan_image_path": "scan_ingest_data/media/cards/SVI-28-normal-near-mint.jpg",
+      "filed_label": "Scarlet & Violet #28 Capsakid",
+      "looks_like_label": "Gym Challenge #102 Chaos Gym",
+      "own_distance": 20
+    },
+    {
+      "item_id": "0b91d341-d05f-4506-b9af-b8283f530dc4",
+      "scan_image_path": "scan_ingest_data/media/cards/SVI-2-normal-near-mint.jpg",
+      "filed_label": "Scarlet & Violet #2 Heracross",
+      "looks_like_label": "Unbroken Bonds #59 Vikavolt",
+      "own_distance": 20
+    },
+    {
+      "item_id": "1ef343dc-6bec-452d-9d82-342f9a46ed61",
+      "scan_image_path": "scan_ingest_data/media/cards/SVI-20-normal-near-mint.jpg",
+      "filed_label": "Scarlet & Violet #20 Smoliv",
+      "looks_like_label": "White Flare #40 Cofagrigus",
+      "own_distance": 20
+    },
+    {
+      "item_id": "e6b0fe00-1661-4fb0-88e7-ed2db9c2e2d2",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-134-normal-near-mint.jpg",
+      "filed_label": "Destined Rivals #134 Marnie's Impidimp",
+      "looks_like_label": "Chilling Reign #81 Gallade",
+      "own_distance": 20
+    },
+    {
+      "item_id": "dc4fd058-3dd4-4022-bf3d-3b394e5ba3ae",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-20-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #20 Ninetales",
+      "looks_like_label": "Team Up #115 Alolan Exeggutor",
+      "own_distance": 20
+    },
+    {
+      "item_id": "01a16ada-f580-4bdd-955a-335b80e1d7dc",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-6-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #6 Tangela",
+      "looks_like_label": "Fates Collide #63 Lucario",
+      "own_distance": 20
+    },
+    {
+      "item_id": "e8a935b8-9650-418f-85d2-bb693761fba5",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-83-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #83 Naclstack",
+      "looks_like_label": "Pok\u00e9mon GO #14 Camerupt",
+      "own_distance": 20
+    },
+    {
+      "item_id": "baa27611-63a5-464a-8013-0e82fa36e9ca",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-74-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #74 Lunatone",
+      "looks_like_label": "White Flare #13 Emboar",
+      "own_distance": 20
+    },
+    {
+      "item_id": "ea3ee0fe-55ca-4608-8c5c-85be0d7eb894",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-11-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #11 Wurmple",
+      "looks_like_label": "Scarlet & Violet #33 Houndour",
+      "own_distance": 20
+    },
+    {
+      "item_id": "f9066dc7-a7ca-4e64-aa90-cc7ab4fb2e5b",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-6-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #6 Petilil",
+      "looks_like_label": "Paldean Fates #238 Nemona",
+      "own_distance": 20
+    },
+    {
+      "item_id": "8a8a7e20-a86c-4034-9bd1-865a6a02ba72",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-15-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #15 Larvesta",
+      "looks_like_label": "Skyridge #124 Fast Ball",
+      "own_distance": 20
+    },
+    {
+      "item_id": "afd073e5-f86a-4a04-ac19-02d9a70ede92",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-19-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #19 Tympole",
+      "looks_like_label": "Rising Rivals #96 Team Galactic's Invention G-109 SP Radar",
+      "own_distance": 20
+    },
+    {
+      "item_id": "41a671ab-d9a2-48a9-81d7-e3989908f1d2",
+      "scan_image_path": "scan_ingest_data/media/cards/TEF-125-normal-near-mint.jpg",
+      "filed_label": "Temporal Forces #125 Lickilicky",
+      "looks_like_label": "Evolving Skies #158 Single Strike Scroll of the Fanged Dragon",
+      "own_distance": 20
+    },
+    {
+      "item_id": "6bfc120d-c3aa-47da-baa7-b1c89831cf71",
+      "scan_image_path": "scan_ingest_data/media/cards/PAR-145-normal-near-mint.jpg",
+      "filed_label": "Paradox Rift #145 Aipom",
+      "looks_like_label": "Black Bolt #49 Conkeldurr",
+      "own_distance": 20
+    },
+    {
+      "item_id": "e0c2e6cc-96bd-4c2f-a5ba-b436472a2785",
+      "scan_image_path": "scan_ingest_data/media/cards/PAR-148-normal-near-mint.jpg",
+      "filed_label": "Paradox Rift #148 Whismur",
+      "looks_like_label": "Sword & Shield #52 Mantine",
+      "own_distance": 20
+    },
+    {
+      "item_id": "ca70e618-c1bb-4b4a-aa24-3c8fd4525dc4",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-7-normal-near-mint.jpg",
+      "filed_label": "White Flare #7 Sawsbuck",
+      "looks_like_label": "Sword & Shield #152 Wooloo",
+      "own_distance": 20
+    },
+    {
+      "item_id": "9d17c360-3d58-4537-9093-69a8862a9b01",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-59-normal-near-mint.jpg",
+      "filed_label": "White Flare #59 Trubbish",
+      "looks_like_label": "Sword & Shield #126 Thievul",
+      "own_distance": 20
+    },
+    {
+      "item_id": "6680280f-ec82-49ca-8e86-1a911d6567e3",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-69-normal-near-mint.jpg",
+      "filed_label": "White Flare #69 Ferrothorn",
+      "looks_like_label": "Forbidden Light #126 Xerneas-GX",
+      "own_distance": 20
+    },
+    {
+      "item_id": "ba0292ce-4911-462d-a3fd-a2b7b249be4b",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-51-normal-near-mint.jpg",
+      "filed_label": "White Flare #51 Archeops",
+      "looks_like_label": "Ascended Heroes #188 Forest of Vitality",
+      "own_distance": 20
+    },
+    {
+      "item_id": "1fdd8e25-f93b-4dce-ba9c-c97299c302c7",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-3-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #3 Shaymin",
+      "looks_like_label": "Paldea Evolved #92 Gothitelle",
+      "own_distance": 20
+    },
+    {
+      "item_id": "c7ed5f3a-eaeb-4108-b133-26a05bcad049",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-26-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #26 Shinx",
+      "looks_like_label": "Surging Sparks #2 Exeggcute",
+      "own_distance": 20
+    },
+    {
+      "item_id": "bd020057-e7b8-4822-952c-023f1edc3cbe",
+      "scan_image_path": "scan_ingest_data/media/cards/SSP-22-normal-near-mint.jpg",
+      "filed_label": "Surging Sparks #22 Pansear",
+      "looks_like_label": "Emerging Powers #14 Lilligant",
+      "own_distance": 18
+    },
+    {
+      "item_id": "a463793a-844d-4c0f-a567-bd59a5ebffe3",
+      "scan_image_path": "scan_ingest_data/media/cards/MEW-79-normal-near-mint.jpg",
+      "filed_label": "151 #79 Slowpoke",
+      "looks_like_label": "Phantom Forces #10 Talonflame",
+      "own_distance": 18
+    },
+    {
+      "item_id": "0bc9699e-f647-42d6-bfe5-d1b27b8c7e46",
+      "scan_image_path": "scan_ingest_data/media/cards/SVI-141-normal-near-mint.jpg",
+      "filed_label": "Scarlet & Violet #141 Varoom",
+      "looks_like_label": "Twilight Masquerade #80 Abra",
+      "own_distance": 18
+    },
+    {
+      "item_id": "398733be-2a09-497e-b3f8-7e7a6ee64ec5",
+      "scan_image_path": "scan_ingest_data/media/cards/SVI-59-normal-near-mint.jpg",
+      "filed_label": "Scarlet & Violet #59 Cetoddle",
+      "looks_like_label": "Shining Fates Shiny Vault #SV017 Cinderace",
+      "own_distance": 18
+    },
+    {
+      "item_id": "64cbdbd4-055a-4919-9a03-920c00c751b0",
+      "scan_image_path": "scan_ingest_data/media/cards/SVI-72-normal-near-mint.jpg",
+      "filed_label": "Scarlet & Violet #72 Toxtricity",
+      "looks_like_label": "Cosmic Eclipse #190 Dragonium Z: Dragon Claw",
+      "own_distance": 18
+    },
+    {
+      "item_id": "ae1b4e6a-20ff-4a15-814c-0c3cab466db5",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-98-normal-near-mint.jpg",
+      "filed_label": "Destined Rivals #98 Probopass",
+      "looks_like_label": "Paradox Rift #162 Defiance Vest",
+      "own_distance": 18
+    },
+    {
+      "item_id": "aa58aaf5-c18a-4602-8dec-52e1edcea55b",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-174-normal-near-mint.jpg",
+      "filed_label": "Destined Rivals #174 Team Rocket's Giovanni",
+      "looks_like_label": "Paldean Fates #59 Paldean Clodsire ex",
+      "own_distance": 18
+    },
+    {
+      "item_id": "fa4258e9-81f1-4a3d-98f6-6ac1d0b56aae",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-35-normal-near-mint.jpg",
+      "filed_label": "Destined Rivals #35 Ethan's Slugma",
+      "looks_like_label": "Pok\u00e9mon Futsal Collection #2 Eevee on the Ball",
+      "own_distance": 18
+    },
+    {
+      "item_id": "83f10208-8398-4c53-92ab-7dbf0c5a669b",
+      "scan_image_path": "scan_ingest_data/media/cards/CRI-57-normal-near-mint.jpg",
+      "filed_label": "Chaos Rising #57 Garbodor",
+      "looks_like_label": "Team Up #93 Mandibuzz",
+      "own_distance": 18
+    },
+    {
+      "item_id": "7a39b655-2a4a-4cde-9405-e15f29f49beb",
+      "scan_image_path": "scan_ingest_data/media/cards/CRI-5-normal-near-mint.jpg",
+      "filed_label": "Chaos Rising #5 Chespin",
+      "looks_like_label": "Cosmic Eclipse #190 Dragonium Z: Dragon Claw",
+      "own_distance": 18
+    },
+    {
+      "item_id": "6bbd80ed-4753-4ad6-85f7-285bbc811ad3",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-187-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #187 Fighting Gong",
+      "looks_like_label": "Pitch Black #70 Silvally",
+      "own_distance": 18
+    },
+    {
+      "item_id": "94d228e1-61b9-4875-a5df-80d62b91ccff",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-64-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #64 Pawniard",
+      "looks_like_label": "Steam Siege #54 Nosepass",
+      "own_distance": 18
+    },
+    {
+      "item_id": "f526943e-b80c-440b-b7e4-f7cac6682b5c",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-19-normal-near-mint.jpg",
+      "filed_label": "White Flare #19 Heatmor",
+      "looks_like_label": "Astral Radiance Trainer Gallery #TG09 Mightyena",
+      "own_distance": 18
+    },
+    {
+      "item_id": "57e6ce67-e75c-4c9a-9930-ba5be8c56d8a",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-79-normal-near-mint.jpg",
+      "filed_label": "White Flare #79 Antique Plume Fossil",
+      "looks_like_label": "Lost Origin #50 Cramorant",
+      "own_distance": 18
+    },
+    {
+      "item_id": "c3eb7f11-37fe-45bf-910d-bb4bc11f9e18",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-50-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #50 Gliscor",
+      "looks_like_label": "Perfect Order #7 Scatterbug",
+      "own_distance": 18
+    },
+    {
+      "item_id": "0123f721-95da-4098-b0be-f1c9471da347",
+      "scan_image_path": "scan_ingest_data/media/cards/POR-5-normal-near-mint.jpg",
+      "filed_label": "Perfect Order #5 Servine",
+      "looks_like_label": "Pitch Black #25 Charjabug",
+      "own_distance": 18
+    },
+    {
+      "item_id": "18fd5eea-310a-4895-921d-5e8e4de80103",
+      "scan_image_path": "scan_ingest_data/media/cards/LOR-40-normal-near-mint.jpg",
+      "filed_label": "Lost Origin #40 Finneon",
+      "looks_like_label": "Paldean Fates #167 Tinkaton",
+      "own_distance": 16
+    },
+    {
+      "item_id": "fe44648c-cd40-44f7-855f-aad067026f0c",
+      "scan_image_path": "scan_ingest_data/media/cards/MEW-70-normal-near-mint.jpg",
+      "filed_label": "151 #70 Weepinbell",
+      "looks_like_label": "Fusion Strike #60 Qwilfish",
+      "own_distance": 16
+    },
+    {
+      "item_id": "752a6b33-f0d2-4bc1-a49c-b79bbfc8074f",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-38-normal-near-mint.jpg",
+      "filed_label": "Destined Rivals #38 Team Rocket's Houndoom",
+      "looks_like_label": "Cosmic Eclipse #208 Will",
+      "own_distance": 16
+    },
+    {
+      "item_id": "c7f43d12-0d44-4cbd-bf06-04bd5e3fd632",
+      "scan_image_path": "scan_ingest_data/media/cards/CRI-74-normal-near-mint.jpg",
+      "filed_label": "Chaos Rising #74 Adversity Policy",
+      "looks_like_label": "Legend Maker #30 Cascoon",
+      "own_distance": 16
+    },
+    {
+      "item_id": "86e1fa73-16ea-447a-885f-8acc8dd6e2bc",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-64-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #64 Heliolisk",
+      "looks_like_label": "Lost Origin Trainer Gallery #TG24 Boss's Orders",
+      "own_distance": 16
+    },
+    {
+      "item_id": "ce499ae8-8a62-4caa-8a70-e4a00d3df6b9",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-177-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #177 Hop's Cramorant",
+      "looks_like_label": "Evolving Skies #201 Gordie",
+      "own_distance": 16
+    },
+    {
+      "item_id": "f3cd3079-d29f-4447-98de-090e7574fdcd",
+      "scan_image_path": "scan_ingest_data/media/cards/TEF-55-normal-near-mint.jpg",
+      "filed_label": "Temporal Forces #55 Charjabug",
+      "looks_like_label": "Mega Evolution #114 Boss's Orders",
+      "own_distance": 16
+    },
+    {
+      "item_id": "78b6e160-e564-4548-aa41-39f4ffe947a8",
+      "scan_image_path": "scan_ingest_data/media/cards/TEF-29-normal-near-mint.jpg",
+      "filed_label": "Temporal Forces #29 Magcargo",
+      "looks_like_label": "Lost Origin #160 Lake Acuity",
+      "own_distance": 16
+    },
+    {
+      "item_id": "62a3f2b1-ccc0-49ab-9763-996b52d6f029",
+      "scan_image_path": "scan_ingest_data/media/cards/PAR-4-normal-near-mint.jpg",
+      "filed_label": "Paradox Rift #4 Pansage",
+      "looks_like_label": "Team Up #138 Dangerous Drill",
+      "own_distance": 16
+    },
+    {
+      "item_id": "fa62d373-da20-47a7-aa85-c02d7a82ef5c",
+      "scan_image_path": "scan_ingest_data/media/cards/PAR-105-normal-near-mint.jpg",
+      "filed_label": "Paradox Rift #105 Klawf",
+      "looks_like_label": "Celestial Storm #117 Whismur",
+      "own_distance": 16
+    },
+    {
+      "item_id": "6508c8fd-7287-4927-93ce-136a01a00d6c",
+      "scan_image_path": "scan_ingest_data/media/cards/WHT-3-normal-near-mint.jpg",
+      "filed_label": "White Flare #3 Leavanny",
+      "looks_like_label": "Double Crisis #24 Magma Pointer",
+      "own_distance": 16
+    },
+    {
+      "item_id": "f0bf9f25-5bbf-4bee-a629-27f1e9f5bd5d",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-10-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #10 Lokix",
+      "looks_like_label": "Chilling Reign #149 Peonia",
+      "own_distance": 16
+    },
+    {
+      "item_id": "119fcfe7-7dbf-49d4-8f51-cc7777fa904b",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-81-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #81 Zigzagoon",
+      "looks_like_label": "XY Black Star Promos #XY64 Rayquaza",
+      "own_distance": 16
+    },
+    {
+      "item_id": "30eedf01-1fad-4c00-97bb-144d772b51bb",
+      "scan_image_path": "scan_ingest_data/media/cards/CEC-166-normal-near-mint.jpg",
+      "filed_label": "Cosmic Eclipse #166 Eevee",
+      "looks_like_label": "Crystal Guardians #49 Charmander \u03b4",
+      "own_distance": 14
+    },
+    {
+      "item_id": "78ffbe9f-0f56-4bc9-85f3-6cb8a3729896",
+      "scan_image_path": "scan_ingest_data/media/cards/XY-125-normal-near-mint.jpg",
+      "filed_label": "Cosmic Eclipse #125 Passimian",
+      "looks_like_label": "Rebel Clash #151 Skwovet",
+      "own_distance": 14
+    },
+    {
+      "item_id": "ac84bd0c-bf20-4723-afd9-fb7321e6b68e",
+      "scan_image_path": "scan_ingest_data/media/cards/FST-46-normal-near-mint.jpg",
+      "filed_label": "Fusion Strike #46 Sizzlipede",
+      "looks_like_label": "Chilling Reign #37 Spheal",
+      "own_distance": 14
+    },
+    {
+      "item_id": "6df1696d-2ecb-48e2-9c3c-5d87f50ab56a",
+      "scan_image_path": "scan_ingest_data/media/cards/SSP-6-normal-near-mint.jpg",
+      "filed_label": "Surging Sparks #6 Spewpa",
+      "looks_like_label": "Surging Sparks #22 Pansear",
+      "own_distance": 14
+    },
+    {
+      "item_id": "37a3e83d-df36-435a-be9c-1f7ecb01d11d",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-73-normal-near-mint.jpg",
+      "filed_label": "Destined Rivals #73 Team Rocket's Flaaffy",
+      "looks_like_label": "White Flare #10 Virizion",
+      "own_distance": 14
+    },
+    {
+      "item_id": "299082bf-1fc1-47d5-b120-35b385c64125",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-107-normal-near-mint.jpg",
+      "filed_label": "Destined Rivals #107 Mudbray",
+      "looks_like_label": "White Flare #3 Leavanny",
+      "own_distance": 14
+    },
+    {
+      "item_id": "6cac8d1a-996a-4a0a-88da-4ebbec2648b1",
+      "scan_image_path": "scan_ingest_data/media/cards/OBF-104-normal-near-mint.jpg",
+      "filed_label": "Obsidian Flames #104 Dugtrio",
+      "looks_like_label": "Ascended Heroes #65 Charjabug",
+      "own_distance": 14
+    },
+    {
+      "item_id": "1092554e-04c6-4eed-8b0e-d62bafc0ddb3",
+      "scan_image_path": "scan_ingest_data/media/cards/JTG-18-holo-near-mint.jpg",
+      "filed_label": "Journey Together #18 Meowscarada",
+      "looks_like_label": "Temporal Forces #57 Zeraora",
+      "own_distance": 14
+    },
+    {
+      "item_id": "80eec008-92f2-4316-a0f9-e3a42ff8b942",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-28-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #28 Cinderace",
+      "looks_like_label": "Stormfront #91 Premier Ball",
+      "own_distance": 14
+    },
+    {
+      "item_id": "f2328b58-341d-418b-a0ea-0f87a46c905e",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-38-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #38 Clawitzer",
+      "looks_like_label": "Mega Evolution #2 Ivysaur",
+      "own_distance": 14
+    },
+    {
+      "item_id": "2546ef3b-11c0-4579-a3a0-63c0ffcbef86",
+      "scan_image_path": "scan_ingest_data/media/cards/MEG-13-normal-near-mint.jpg",
+      "filed_label": "Mega Evolution #13 Seedot",
+      "looks_like_label": "Obsidian Flames #12 Trevenant",
+      "own_distance": 14
+    },
+    {
+      "item_id": "f17af286-3b9d-4c74-9e30-2e18f2d18368",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-1-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #1 Erika's Oddish",
+      "looks_like_label": "Sword & Shield #159 Crushing Hammer",
+      "own_distance": 14
+    },
+    {
+      "item_id": "d0065b9b-cc85-4a75-b1bb-32549798e4fd",
+      "scan_image_path": "scan_ingest_data/media/cards/ASC-158-normal-near-mint.jpg",
+      "filed_label": "Ascended Heroes #158 Dreepy",
+      "looks_like_label": "Scarlet & Violet Black Star Promos #64 Arctibax",
+      "own_distance": 14
+    },
+    {
+      "item_id": "0d85c1ad-a536-4b18-b8f6-1d71e68363d0",
+      "scan_image_path": "scan_ingest_data/media/cards/DRI-92-holo-near-mint.jpg",
+      "filed_label": "Destined Rivals #92 Annihilape",
+      "looks_like_label": "Ascended Heroes #42 Croconaw",
+      "own_distance": 14
+    },
+    {
+      "item_id": "b0d6a042-27fe-415f-9731-9ef84c7b201b",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-81-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #81 Energy Coin",
+      "looks_like_label": "BREAKthrough #139 Glalie Spirit Link",
+      "own_distance": 14
+    },
+    {
+      "item_id": "cb7ccefb-6860-436b-b06d-82269fbf78b8",
+      "scan_image_path": "scan_ingest_data/media/cards/BLK-5-normal-near-mint.jpg",
+      "filed_label": "Black Bolt #5 Simisage",
+      "looks_like_label": "Shining Fates #57 Ball Guy",
+      "own_distance": 14
+    },
+    {
+      "item_id": "c756e2fb-6d3f-4a70-b290-7fb30755b4f7",
+      "scan_image_path": "scan_ingest_data/media/cards/TEF-53-normal-near-mint.jpg",
+      "filed_label": "Temporal Forces #53 Electabuzz",
+      "looks_like_label": "Scarlet & Violet #50 Clawitzer",
+      "own_distance": 14
+    },
+    {
+      "item_id": "49c72e31-77b4-40b9-bf8c-3c57d0401dbe",
+      "scan_image_path": "scan_ingest_data/media/cards/PFL-60-normal-near-mint.jpg",
+      "filed_label": "Phantasmal Flames #60 Carvanha",
+      "looks_like_label": "Sword & Shield #23 Ninetales",
+      "own_distance": 14
+    }
+  ]
+}

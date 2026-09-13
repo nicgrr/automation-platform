@@ -2,11 +2,11 @@ import argparse
 
 import pytest
 
-from scripts.convert_to_ebay_template import PLACEHOLDER, convert_row, read_ebay_header
+from scripts.convert_to_ebay_template import PLACEHOLDER, convert_row, read_ebay_header, sanitize_title
 
 
 def _args(**overrides):
-    base = dict(condition_id="456", location="Sydney NSW", dispatch_days="1",
+    base = dict(condition_id="4000", lot_condition_id="1000", location="Sydney NSW", dispatch_days="1",
                 payment_policy="Payments", return_policy="Returns")
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -86,6 +86,62 @@ def test_a_bulk_lot_gets_the_mixed_card_lots_category():
 def test_set_name_passes_through_to_the_required_c_set_field():
     out = convert_row(_row(set_name="Unified Minds"), _args())
     assert out["*C:Set"] == "Unified Minds"
+
+
+def test_a_single_card_gets_the_confirmed_near_mint_condition_descriptor():
+    """Regression guard for a real failed upload: 990/1014 rows failed
+    with "Card Condition (40001) is a required field" because this
+    descriptor was missing entirely, not just wrong."""
+    out = convert_row(_row(title="Abra #54"), _args())
+    assert out["CD:Card Condition - (ID: 40001)"] == "400010"
+
+
+def test_a_bulk_lot_does_not_get_the_singles_condition_descriptor():
+    """The 40001 scheme is specific to the singles category (183454) --
+    sending it for a lot (183455) is an unverified guess this script
+    deliberately avoids making twice."""
+    out = convert_row(_row(title="Obsidian Flames — bulk lot (21 cards)"), _args())
+    assert "CD:Card Condition - (ID: 40001)" not in out
+
+
+def test_gender_symbols_are_spelled_out_not_stripped():
+    """Regression guard for a real failed upload: eBay rejected 3 titles
+    outright (error 240, "special characters... e.g. TM, heart, 1/2,
+    star") because Nidoran's own printed name carries a gender symbol."""
+    assert sanitize_title("Nidoran ♀ #29") == "Nidoran F #29"
+    assert sanitize_title("Nidoran ♂ #43") == "Nidoran M #43"
+    assert sanitize_title("Team Rocket's Nidoran♀ #114") == "Team Rocket's NidoranF #114"
+
+
+def test_other_disallowed_symbol_categories_are_stripped_not_just_the_two_seen_so_far():
+    """The two Nidoran symbols are what a real upload actually hit, but
+    eBay's own error names TM/heart/half/star as further examples -- this
+    must not be a fix for only the two characters that happened to fail."""
+    assert sanitize_title("Charizard ★") == "Charizard "
+    assert sanitize_title("Energy™ Card ½") == "Energy Card "
+
+
+def test_ordinary_accented_letters_survive_sanitizing():
+    """Pokémon itself has an accent -- the sanitizer must only strip
+    symbol/fraction categories, never ordinary accented Latin letters."""
+    assert sanitize_title("Pokémon Center Naviuwu") == "Pokémon Center Naviuwu"
+
+
+def test_a_sanitized_title_still_splits_name_and_number_correctly():
+    out = convert_row(_row(title="Nidoran ♀ #29"), _args())
+    assert out["*Title"] == "Nidoran F #29"
+    assert out["C:Card Name"] == "Nidoran F"
+    assert out["C:Card Number"] == "29"
+
+
+def test_singles_and_lots_use_different_condition_ids():
+    """A real upload confirmed ConditionID 4000 is valid for singles
+    (183454) but explicitly invalid for lots (183455) -- they must never
+    share one --condition-id value."""
+    single = convert_row(_row(title="Abra #54"), _args(condition_id="4000", lot_condition_id="1000"))
+    lot = convert_row(_row(title="Obsidian Flames — bulk lot (21 cards)"), _args(condition_id="4000", lot_condition_id="1000"))
+    assert single["*ConditionID"] == "4000"
+    assert lot["*ConditionID"] == "1000"
 
 
 def test_the_written_file_starts_with_the_info_row_and_a_bom(tmp_path):
