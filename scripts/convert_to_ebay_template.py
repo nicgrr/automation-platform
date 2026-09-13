@@ -53,7 +53,14 @@ PLACEHOLDER = "REPLACE_ME"
 INFO_ROW_PREFIX = "﻿Info,Version="
 
 
-def read_ebay_header(template_path: str) -> list[str]:
+def read_ebay_header(template_path: str) -> tuple[str, list[str]]:
+    """Returns (info row, column header).
+
+    Both matter on the way back out. The Info row is how File Exchange
+    identifies which template and version a file was built from, and an
+    upload without it fails every row while still reporting a row count --
+    so it looks like 1,014 bad listings rather than one bad file.
+    """
     with open(template_path, "r", encoding="utf-8-sig", newline="") as f:
         raw = f.read()
     rows = raw.split("\r")
@@ -62,7 +69,11 @@ def read_ebay_header(template_path: str) -> list[str]:
             f"{template_path} doesn't look like an eBay File Exchange template "
             "(expected an Info row then a header row starting with '*Action(...)')"
         )
-    return next(csv.reader([rows[1]]))
+    if not rows[0].startswith("Info,"):
+        raise SystemExit(
+            f"{template_path}: row 1 should be the Info marker, got {rows[0][:60]!r}"
+        )
+    return rows[0], next(csv.reader([rows[1]]))
 
 
 TYPE = "Trading Card"
@@ -147,7 +158,7 @@ def main() -> int:
         print(f"NOTE: still using placeholders for: {', '.join(placeholders)} -- "
               "these need a real value before uploading.\n", file=sys.stderr)
 
-    header = read_ebay_header(args.template)
+    info_row, header = read_ebay_header(args.template)
     unmapped_required = [h for h in header if h.startswith("*") and h not in (
         "*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8)",
         "*Category", "*Title", "*ConditionID", "*C:Type", "*C:Franchise", "*C:Manufacturer",
@@ -168,7 +179,11 @@ def main() -> int:
         print(f"would convert {len(out_rows)} row(s) against a {len(header)}-column template")
         return 0
 
-    with open(args.out, "w", newline="", encoding="utf-8") as f:
+    # utf-8-sig, because the template carries a BOM and the data carries
+    # "Pokemon" with an accent -- without it eBay is left guessing at the
+    # encoding the Action column's own CC=UTF-8 already declares.
+    with open(args.out, "w", newline="", encoding="utf-8-sig") as f:
+        f.write(info_row + "\r\n")
         writer = csv.DictWriter(f, fieldnames=header, restval="")
         writer.writeheader()
         writer.writerows(out_rows)

@@ -35,8 +35,10 @@ def test_read_ebay_header_parses_the_r_delimited_real_template(tmp_path):
         "*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8),CustomLabel,*Category\r"
         .encode("utf-8")
     )
-    header = read_ebay_header(str(template))
+    info_row, header = read_ebay_header(str(template))
     assert header == ["*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8)", "CustomLabel", "*Category"]
+    # The Info row comes back too: an upload without it fails every row.
+    assert info_row.startswith("Info,Version=")
 
 
 def test_a_single_card_row_splits_name_and_number_from_the_title():
@@ -84,3 +86,46 @@ def test_a_bulk_lot_gets_the_mixed_card_lots_category():
 def test_set_name_passes_through_to_the_required_c_set_field():
     out = convert_row(_row(set_name="Unified Minds"), _args())
     assert out["*C:Set"] == "Unified Minds"
+
+
+def test_the_written_file_starts_with_the_info_row_and_a_bom(tmp_path):
+    """The failure this guards produced "1,014 failed, 0 completed" on a
+    real upload. File Exchange uses the Info row to identify which template
+    a file was built from; without it every row fails while the row count
+    still parses -- so it reads as a thousand bad listings rather than one
+    bad file. The BOM goes with it: eBay's own template carries one and the
+    data is not ASCII.
+    """
+    import subprocess
+    import sys
+
+    # Built from the converter's own output columns so a new field can't
+    # quietly leave this test asserting against a stale template.
+    columns = list(convert_row(_row(), _args()))
+    action = "*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8)"
+    header = [action] + [c for c in columns if c != action]
+
+    template = tmp_path / "template.csv"
+    template.write_bytes(
+        ("\ufeffInfo,Version=1.0.0,Template=fx_category_template_EBAY_AU\r"
+         + ",".join(header) + "\r").encode("utf-8")
+    )
+    source = tmp_path / "in.csv"
+    source.write_text(
+        "sku,title,description,condition,price,currency,quantity,weight_grams,image_url,shipping_policy,set_name\n"
+        "abc,Abra #54,a Pok\u00e9mon card,New,2.34,AUD,1,15,http://x/y.png,letter,Mega Evolution\n",
+        encoding="utf-8")
+    out = tmp_path / "out.csv"
+
+    subprocess.run([sys.executable, "-m", "scripts.convert_to_ebay_template",
+                    "--template", str(template), "--in", str(source), "--out", str(out),
+                    "--location", "Sydney", "--dispatch-days", "1",
+                    "--payment-policy", "P", "--return-policy", "R"],
+                   check=True, capture_output=True)
+
+    raw = out.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    lines = raw.decode("utf-8-sig").splitlines()
+    assert lines[0] == "Info,Version=1.0.0,Template=fx_category_template_EBAY_AU"
+    assert lines[1].startswith("*Action(")
+    assert lines[2].startswith("Add,")

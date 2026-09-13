@@ -3,6 +3,35 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-13 — The eBay upload that failed all 1,014 rows
+
+An upload came back "1,014 failed, 0 completed" -- every row, none
+completed, which is the signature of a bad *file* rather than bad
+listings. Two structural differences from eBay's own template, both in
+`convert_to_ebay_template.py`:
+
+- **The Info row was never written.** `read_ebay_header` reads the
+  template's row 1 (`Info,Version=1.0.0,Template=...`) purely to find row
+  2, then discards it. File Exchange uses that row to identify which
+  template and version a file was built from. The script's own docstring
+  documents the row; the writer just never emitted it.
+- **No BOM.** eBay's template carries one, the output didn't, and the data
+  is not ASCII ("Pokemon" with an accent, throughout). The Action column
+  declares `CC=UTF-8` while the file gave the parser nothing to confirm it
+  with.
+
+Regenerated: 1,014 listings byte-identical to the failed upload, now with
+the Info row and a BOM ahead of them.
+
+- A new test drives the script end to end and asserts both, with its fake
+  template built from the converter's own output columns so a new field
+  can't leave it asserting against a stale header.
+- Full suite (1272) green.
+
+Unconfirmed: eBay's own per-row error report ("Download results") hasn't
+been read yet, so this is two defects certainly fixed, not two defects
+proven to be the whole cause.
+
 ## 2026-09-12 — Candidates you can look at, not just read
 
 The suggestion panel listed names. "Milk Biscuit 4, Milk 3" is not a
