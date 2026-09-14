@@ -2,7 +2,9 @@ import argparse
 
 import pytest
 
-from scripts.convert_to_ebay_template import PLACEHOLDER, convert_row, read_ebay_header, sanitize_title
+from scripts.convert_to_ebay_template import (
+    PLACEHOLDER, SINGLE_CATEGORY_ID, build_variation_group, convert_row, read_ebay_header, sanitize_title,
+)
 
 
 def _args(**overrides):
@@ -16,7 +18,7 @@ def _row(**overrides):
     base = dict(sku="sku-1", title="Abra #54", description="Abra #54", condition="Near Mint",
                 price="2.34", currency="AUD", quantity="1", weight_grams="15",
                 image_url="https://example.test/abra.png", shipping_policy="Letter Mail",
-                set_name="Unified Minds")
+                set_name="Unified Minds", rarity="", set_total="94")
     base.update(overrides)
     return base
 
@@ -185,3 +187,80 @@ def test_the_written_file_starts_with_the_info_row_and_a_bom(tmp_path):
     assert lines[0] == "Info,Version=1.0.0,Template=fx_category_template_EBAY_AU"
     assert lines[1].startswith("*Action(")
     assert lines[2].startswith("Add,")
+
+
+# --- build_variation_group: one listing per set, a variation per card ---
+
+def _cards(*numbers, set_name="Obsidian Flames", set_total="99"):
+    return [
+        _row(sku=f"sku-{n}", title=f"Card{n} #{n}", price=f"{n}.00", set_name=set_name, set_total=set_total)
+        for n in numbers
+    ]
+
+
+def test_one_parent_row_plus_one_child_row_per_card():
+    rows, skipped = build_variation_group("Obsidian Flames", _cards(4, 21, 63), _args())
+    assert len(rows) == 4  # 1 parent + 3 children
+    assert skipped == []
+
+
+def test_the_parent_row_has_no_relationship_and_lists_every_value():
+    rows, _ = build_variation_group("Obsidian Flames", _cards(4, 21, 63), _args())
+    parent = rows[0]
+    assert parent["Relationship"] == ""
+    assert parent["RelationshipDetails"] == "MPN=04/99 Card4;21/99 Card21;63/99 Card63"
+    assert parent["*Quantity"] == ""
+    assert parent["*StartPrice"] == ""
+    assert parent["C:Card Name"] == ""
+    assert parent["C:Card Number"] == ""
+
+
+def test_each_child_row_is_marked_variation_with_its_own_value_and_price():
+    """Format ("001/162 Pineco") matches a real, live, successful
+    competitor listing inspected directly (2026-09-14), not a guess --
+    the bare-number "Card #" value from the first attempt told a buyer
+    nothing useful in the picker."""
+    rows, _ = build_variation_group("Obsidian Flames", _cards(4, 21), _args())
+    children = rows[1:]
+    assert {c["RelationshipDetails"] for c in children} == {"MPN=04/99 Card4", "MPN=21/99 Card21"}
+    for c in children:
+        assert c["Relationship"] == "Variation"
+    prices = {c["RelationshipDetails"]: c["*StartPrice"] for c in children}
+    assert prices["MPN=04/99 Card4"] == "4.00"
+    assert prices["MPN=21/99 Card21"] == "21.00"
+
+
+def test_the_padding_matches_the_sets_own_digit_width():
+    rows, _ = build_variation_group("Obsidian Flames", _cards(4, set_total="8"), _args())
+    assert rows[1]["RelationshipDetails"] == "MPN=4/8 Card4"
+
+
+def test_the_parent_gets_a_pick_your_card_title_and_the_sets_own_category_id():
+    rows, _ = build_variation_group("Obsidian Flames", _cards(4), _args())
+    parent = rows[0]
+    assert parent["*Title"] == "Obsidian Flames - pick your card"
+    assert parent["*Category"] == SINGLE_CATEGORY_ID
+    assert parent["CustomLabel"] == "set-variation-obsidian-flames"
+
+
+def test_a_card_with_no_readable_number_is_skipped_not_a_broken_variation():
+    cards = _cards(4) + [_row(sku="sku-x", title="No Number Card", price="2.00", set_name="Obsidian Flames")]
+    rows, skipped = build_variation_group("Obsidian Flames", cards, _args())
+    # only the one real card became a variation; the other contributed nothing
+    assert len(rows) == 2
+    assert rows[1]["RelationshipDetails"] == "MPN=04/99 Card4"
+    assert "No Number Card" in skipped[0]
+
+
+def test_a_second_card_sharing_a_printed_number_is_skipped_not_a_colliding_variation():
+    """Regression guard for a real failed upload: 3 of 24 sets were
+    rejected with "Duplicate VariationSpecifics trait value" because an
+    alt-art/reprint shares its base card's number -- eBay has no way to
+    tell two options both keyed on MPN 148 apart."""
+    cards = _cards(148) + [_row(sku="sku-alt", title="Charizard (Alt Art) #148", price="20.00", set_name="Obsidian Flames")]
+    rows, skipped = build_variation_group("Obsidian Flames", cards, _args())
+    assert len(rows) == 2  # 1 parent + only the first #148
+    assert rows[1]["CustomLabel"] == "sku-148"
+    assert "sku-alt" in skipped[0]
+    assert "148" in skipped[0]
+

@@ -3,6 +3,45 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-14 — Making a dead job visible from the dashboard
+
+The price backfill died on 8 September and nobody noticed for six days.
+The traceback was written to `scan_ingest_data/logs/` **once a day, every
+day**. Nothing read it. Every figure on the dashboard kept rendering a
+value the whole time -- just a staler one each morning.
+
+`job_health.py` reads the state of the four background jobs and the
+dashboard shows it above the widget grid. Healthy collapses to one line;
+only trouble gets room.
+
+Two states, and only one of them is "failed":
+
+- **failed** -- it ran and exited non-zero.
+- **overdue** -- the timer's next firing is in the past, or there is no
+  next firing at all. A timer that has been stopped, masked or never
+  enabled looks perfect on every other measure, because nothing failed;
+  nothing happened. That is the shape of outage most worth catching and
+  the one a plain "did it error?" check misses entirely.
+
+`Result` alone is not enough, which this box proved on the spot:
+`systemctl reset-failed` had cleared it to "success" while
+`ExecMainStatus` still held the 1 from the previous day's failure. Reading
+Result would have put a green tick over it. Both are checked, and the
+detail line deliberately omits Result when the exit code disagrees --
+"exited 1 (success)" reads as a bug in the panel rather than a broken job.
+
+Each entry says what the failure costs in the reader's terms, not the
+unit's: "held cards stop getting a market value", not "oneshot exited 1".
+
+- Degrades to "unknown" rather than raising if systemd is absent, the unit
+  is renamed, or the query hangs. A status panel must never be the thing
+  that takes the page down.
+- Costs the dashboard ~130ms (1,445 -> 1,578) for eight `systemctl show`
+  calls. The dashboard was already the slowest page in the app; batching
+  the queries is the obvious fix if it starts to matter.
+- 18 new tests, every one a case the real outage hit or would have slipped
+  past. Full suite (1357) green.
+
 ## 2026-09-13 — 473 copies of stock that nothing could see
 
 Running the new eBay timer to prove it worked gave the wrong answer: 1,530

@@ -35,6 +35,40 @@ OPEN_POTENTIAL_STATUSES = {
 }
 
 
+def _jobs_html() -> str:
+    """The background jobs, above everything else on the page.
+
+    Placed above the widget grid rather than in it, because the failure
+    this exists for looked exactly like healthy numbers: the price backfill
+    died on 8 September and every figure on this page carried on rendering
+    a value, just an increasingly stale one. A widget among widgets would
+    have been read the same way.
+
+    Healthy collapses to a single line. Only trouble gets room.
+    """
+    from .job_health import all_statuses
+
+    statuses = all_statuses()
+    hurt = [s for s in statuses if s.needs_attention]
+    if not hurt:
+        when = max((s.last_run for s in statuses if s.last_run), default=None)
+        ran = f" &middot; last ran {when:%a %H:%M}" if when else ""
+        return (f"<div class='jobs jobs-ok'><span class='jobs-dot'></span>"
+                f"All {len(statuses)} background jobs healthy{ran}</div>")
+
+    rows = "".join(
+        f"<li><strong>{escape(s.job.label)}</strong> &mdash; {escape(s.detail)}"
+        f"<span class='jobs-what'>{escape(s.job.what)}</span>"
+        + (f"<span class='jobs-next'>next run {s.next_run:%a %H:%M}</span>" if s.next_run else "")
+        + "</li>"
+        for s in hurt
+    )
+    phrase = "job needs" if len(hurt) == 1 else "jobs need"
+    return (f"<div class='jobs jobs-bad'><p class='jobs-head'>{len(hurt)} background {phrase} "
+            f"attention</p><ul>{rows}</ul>"
+            "<p class='jobs-foot'>Logs are in <code>scan_ingest_data/logs/</code>.</p></div>")
+
+
 def _quicklinks_html(counts: dict[str, int | None], storefront_url: str) -> str:
     """Rendered from ui.ADMIN_NAV rather than hand-written here.
 
@@ -228,6 +262,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     <h1>Sales Executive Dashboard</h1>
     <p>A live view of inventory, sales, and purchasing &middot; as of {now:%Y-%m-%d %H:%M} UTC</p>
   </div>
+  {_jobs_html()}
   <div class="widget-grid">{grid}</div>
 
   {_quicklinks_html(counts, storefront_url)}"""
@@ -237,6 +272,17 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
 _STYLE = """
 .dash-title h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em;font-weight:800}
 .dash-title p{margin:0 0 24px;color:var(--text-dim);font-size:13.5px}
+.jobs{margin:0 0 20px;border-radius:12px;font-size:13px}
+.jobs-ok{padding:9px 14px;background:var(--surface-sunken);border:1px solid var(--panel-border);
+  color:var(--text-dim);display:flex;align-items:center;gap:9px}
+.jobs-dot{width:7px;height:7px;border-radius:50%;background:var(--success);flex:none}
+.jobs-bad{padding:15px 18px;background:var(--warning-bg);border:1px solid var(--warning)}
+.jobs-head{margin:0 0 9px;font-weight:700;color:var(--warning)}
+.jobs-bad ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:9px}
+.jobs-bad li{line-height:1.45}
+.jobs-what{display:block;color:var(--text-dim);font-size:12.5px}
+.jobs-next{display:block;color:var(--text-faint);font-size:11.5px;margin-top:2px}
+.jobs-foot{margin:11px 0 0;font-size:12px;color:var(--text-dim)}
 
 .widget-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
 @media (max-width:980px){.widget-grid{grid-template-columns:repeat(2,1fr)}}

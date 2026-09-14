@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import Base
 from automation_control.models import BulkLot, CardSet, CatalogItem, CatalogItemType, ShopListing, ShopListingStatus, TcgCard
-from scripts.export_ebay_bulk_listing import build_lot_rows, build_single_rows, lot_shipping_policy, single_image_url
+from scripts.export_ebay_bulk_listing import (
+    build_lot_rows, build_single_rows, build_variation_rows, lot_shipping_policy, single_image_url,
+)
 
 
 @pytest.fixture
@@ -201,3 +203,39 @@ def test_passing_none_disables_the_lot_overlap_check(session):
     rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter",
                                 lot_overlap_max_price=None)
     assert [r["title"] for r in rows] == ["Common #4"]
+
+
+# --- build_variation_rows: the exact population build_single_rows excludes --
+
+def test_variation_rows_is_exactly_what_single_rows_excludes(session):
+    _set_with_lot(session)
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="sv3", number="4"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Common #4", price=Decimal("2"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    singles, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    variations, _ = build_variation_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert singles == []
+    assert [r["title"] for r in variations] == ["Common #4"]
+
+
+def test_variation_rows_ignores_a_card_above_max_price_even_in_a_lot_covered_set(session):
+    _set_with_lot(session)
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="sv3", number="199"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Rare #199", price=Decimal("50"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    variations, _ = build_variation_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert variations == []
+
+
+def test_variation_rows_ignores_a_cheap_card_from_a_set_with_no_lot(session):
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="no-lot-set", number="4"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Common #4", price=Decimal("2"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    variations, _ = build_variation_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert variations == []

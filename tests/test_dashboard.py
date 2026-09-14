@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -188,3 +189,34 @@ def test_dashboard_requires_login():
     client = TestClient(app)
     response = client.get("/dashboard", follow_redirects=False)
     assert response.status_code in (302, 303, 401)
+
+
+# --- the background-jobs banner --------------------------------------------
+
+def test_the_dashboard_names_a_failing_background_job(client):
+    """The failure this exists for looked exactly like healthy numbers: the
+    price backfill died and every figure on this page carried on rendering
+    a value, just a staler one each day."""
+    from automation_control.job_health import FAILED, JOBS, JobStatus
+
+    broken = JobStatus(JOBS[1], FAILED, detail="last run exited 1")
+    with patch("automation_control.job_health.all_statuses", lambda *a, **k: [broken]):
+        page = client.get("/dashboard").text
+
+    assert "1 background job needs attention" in page
+    assert "Card price backfill" in page
+    assert "last run exited 1" in page
+    # and says what it costs you, not just that it broke
+    assert "held cards stop getting a market value" in page
+
+
+def test_a_healthy_dashboard_says_so_in_one_line(client):
+    """Healthy must not cost the page real estate -- only trouble gets room."""
+    from automation_control.job_health import JOBS, OK, JobStatus
+
+    fine = [JobStatus(job, OK) for job in JOBS]
+    with patch("automation_control.job_health.all_statuses", lambda *a, **k: fine):
+        page = client.get("/dashboard").text
+
+    assert f"All {len(JOBS)} background jobs healthy" in page
+    assert "needs attention" not in page
