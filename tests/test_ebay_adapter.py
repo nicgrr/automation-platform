@@ -19,3 +19,65 @@ def test_production_environment_targets_the_production_host():
     assert not hasattr(adapter, "update_listing")
     assert not hasattr(adapter, "create_listing")
 
+
+
+class _FakeClient:
+    """Records every call and answers by URL path, the way a real eBay
+    response would -- inventory_item once, offer once per SKU."""
+    def __init__(self, offers_by_sku=None):
+        self.calls = []
+        self.offers_by_sku = offers_by_sku or {}
+
+    async def get(self, url, headers=None, params=None):
+        self.calls.append((url, params))
+
+        class _Response:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+            def json(self):
+                return self._payload
+
+        if url.endswith("/sell/inventory/v1/inventory_item"):
+            return _Response(200, {"inventoryItems": [{"sku": sku} for sku in self.offers_by_sku]})
+        if url.endswith("/sell/inventory/v1/offer"):
+            sku = params.get("sku") if params else None
+            if not sku:
+                # The bug this test locks in: eBay's real Inventory API has
+                # no "list every offer" call. GET .../offer with no sku
+                # 400s (errorId 25707, "invalid value for a SKU") because a
+                # missing sku is treated as an empty one.
+                return _Response(400, {"errors": [{"errorId": 25707}]})
+            return _Response(200, {"offers": self.offers_by_sku.get(sku, [])})
+        raise AssertionError(f"unexpected call: {url}")
+
+
+@pytest.mark.asyncio
+async def test_get_listings_fetches_offers_per_sku_not_in_one_bulk_call():
+    """The endpoint this used to hit -- GET .../offer with no sku -- 400s on
+    every real eBay account regardless of environment, because getOffers is
+    per-SKU and there is no bulk list. Confirmed live against production:
+    an account with inventory items and zero offers is the ordinary case
+    (items created but never published), not an error."""
+    client = _FakeClient({"SKU-A": [{"offerId": "o1"}], "SKU-B": [{"offerId": "o2"}]})
+    adapter = EbaySandboxReadAdapter("tok", client=client, environment="production")
+
+    payload = await adapter.get_listings()
+
+    offer_calls = [(url, params) for url, params in client.calls if url.endswith("/offer")]
+    assert {p["sku"] for _, p in offer_calls} == {"SKU-A", "SKU-B"}
+    assert {o["offerId"] for o in payload["offers"]} == {"o1", "o2"}
+
+
+@pytest.mark.asyncio
+async def test_inventory_items_with_no_offers_is_not_an_error():
+    """Items exist but were never published -- the state confirmed live on
+    this account: inventory_item returns total:0, so no offer call is made
+    and get_listings returns cleanly rather than raising."""
+    client = _FakeClient({})
+    adapter = EbaySandboxReadAdapter("tok", client=client, environment="production")
+
+    payload = await adapter.get_listings()
+
+    assert payload["offers"] == []
+    assert not any(url.endswith("/offer") for url, _ in client.calls)

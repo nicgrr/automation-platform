@@ -3,6 +3,27 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — Confirming there are no eBay listings, and fixing the route that couldn't check
+
+Nic asked where to see current eBay listings. `/api/ebay/listings` calls
+the real eBay API with the connected credential, so it should have been
+the answer -- instead it 400'd every time, in any environment: it called
+`GET /sell/inventory/v1/offer` with no `sku`, and eBay's Inventory API has
+no "list every offer" endpoint. `getOffers` is per-SKU; a missing `sku` is
+read as an empty one and rejected (errorId 25707, "invalid value for a
+SKU"). Nothing in the UI calls this route yet, which is the only reason it
+had never been noticed.
+
+Fixed by walking the SKUs the inventory-items page actually returned and
+fetching each one's offers individually. Confirmed live end to end against
+eBay production with the account's own credential once the fix was in:
+**0 listings** -- the honest answer to the original question, now backed
+by eBay's own API rather than an empty local table.
+
+- 2 new tests against a fake client shaped like eBay's real responses,
+  including the 400-with-no-sku case the bug produced. Full suite (1370)
+  green.
+
 ## 2026-09-14 — A settings page, so "is eBay hooked up?" has an answer
 
 `/settings`, in the Today group of the nav. Everything on it was already

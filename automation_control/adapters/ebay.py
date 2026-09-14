@@ -41,10 +41,22 @@ class EbaySandboxReadAdapter:
         return response.json()
 
     async def get_listings(self, *, limit: int = 50, offset: int = 0) -> Any:
+        """eBay's Sell Inventory API has no "list every offer" call --
+        GET /sell/inventory/v1/offer requires a `sku` and 400s without one
+        (errorId 25707, "invalid value for a SKU", because a missing sku is
+        treated as an empty one). getOffers is per-SKU, so offers are
+        fetched by walking the SKUs this page of inventory items actually
+        has. An account with inventory items but zero offers -- items
+        created but never published -- is the common case, not an error.
+        """
         params = {"limit": min(max(limit, 1), 200), "offset": max(offset, 0)}
         inventory = await self._get("/sell/inventory/v1/inventory_item", params=params)
-        offers = await self._get("/sell/inventory/v1/offer", params=params)
-        inventory["offers"] = offers.get("offers", [])
+        skus = [item["sku"] for item in inventory.get("inventoryItems", []) if item.get("sku")]
+        offers = []
+        for sku in skus:
+            result = await self._get("/sell/inventory/v1/offer", params={"sku": sku})
+            offers.extend(result.get("offers", []))
+        inventory["offers"] = offers
         return inventory
 
     async def get_seller(self) -> Any:
