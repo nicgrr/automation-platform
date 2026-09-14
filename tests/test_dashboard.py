@@ -220,3 +220,41 @@ def test_a_healthy_dashboard_says_so_in_one_line(client):
 
     assert f"All {len(JOBS)} background jobs healthy" in page
     assert "needs attention" not in page
+
+
+# --- the eBay Listings widget ----------------------------------------------
+
+def test_dashboard_shows_never_checked_when_ebay_listings_cache_is_empty(client):
+    """Must never show 0 for something never actually asked about -- that
+    is the exact gap that prompted /ebay-listings to exist: the Sell API
+    this app is built around reported 0 while two real listings were live."""
+    page = client.get("/dashboard").text
+    assert "eBay Listings" in page
+    assert "Never checked" in page
+
+
+def test_dashboard_shows_the_cached_active_listing_count(client, session):
+    from automation_control.models import EbayListing
+
+    session.add(EbayListing(ebay_listing_id="267785450003", title="Pikachu Card",
+                            currency="AUD", current_price_minor=30000, listing_status="Active",
+                            raw_snapshot={"source": "trading_api"}))
+    session.commit()
+
+    page = client.get("/dashboard").text
+    assert "Active listings" in page
+    assert ">1<" in page or ">1 <" in page  # the count renders somewhere in the widget
+
+
+def test_dashboard_ebay_widget_ignores_sell_api_rows(client, session):
+    """The Sell API sync (/api/ebay/listings) writes into the same table
+    with no source tag -- the dashboard widget must only count rows this
+    session's Trading API path actually wrote."""
+    from automation_control.models import EbayListing
+
+    session.add(EbayListing(ebay_listing_id="sell-api-row", title="X", currency="AUD",
+                            current_price_minor=100, listing_status="ACTIVE", raw_snapshot={}))
+    session.commit()
+
+    page = client.get("/dashboard").text
+    assert "Never checked" in page

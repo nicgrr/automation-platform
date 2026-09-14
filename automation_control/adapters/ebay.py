@@ -25,19 +25,25 @@ class EbaySandboxReadAdapter:
 
     def __init__(self, access_token: str | None = None, client: httpx.AsyncClient | None = None, *, environment: str = "sandbox"):
         self._access_token = access_token
+        self.environment = environment
         self.base_url = self._BASE_URLS[environment]
         self.client = client or httpx.AsyncClient(timeout=15.0)
 
     def _headers(self) -> dict[str, str]:
         if not self._access_token:
-            raise EbayNotConfigured("eBay sandbox access token is not configured")
+            # Was hardcoded to say "sandbox" here regardless of which
+            # environment actually failed -- found while auditing other
+            # pages for the same class of stale/wrong-environment message
+            # that adapters/ebay_trading.py was built to avoid from the
+            # start.
+            raise EbayNotConfigured(f"eBay {self.environment} access token is not configured")
         return {"Authorization": f"Bearer {self._access_token}", "Accept": "application/json"}
 
     async def _get(self, path: str, **kwargs: Any) -> dict:
         headers = {**self._headers(), **kwargs.pop("headers", {})}
         response = await self.client.get(f"{self.base_url}{path}", headers=headers, **kwargs)
         if response.status_code >= 400:
-            raise EbayApiError(f"eBay Sandbox API request failed ({response.status_code})")
+            raise EbayApiError(f"eBay {self.environment} API request failed ({response.status_code})")
         return response.json()
 
     async def get_listings(self, *, limit: int = 50, offset: int = 0) -> Any:

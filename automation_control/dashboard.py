@@ -241,6 +241,33 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         f"<div class='bar-list'>{bar_list(list(ageing.items()), color='#7c3aed', money=False)}</div></div>"
     )
 
+    # Cached, not a live eBay call -- this loads on every dashboard visit,
+    # and the whole point of /ebay-listings existing is that "what's live"
+    # can only be answered by asking eBay, which is comparatively slow and
+    # rate-limited. Same local-only read _cached_rows already does for
+    # /settings, so the two can never disagree about what's cached.
+    from .ebay_listings import _cached_rows
+
+    ebay_active = _cached_rows(session)
+    ebay_last_synced = max((r.observed_at for r in ebay_active), default=None)
+    if ebay_last_synced:
+        ebay_body = (
+            f"<div class='ops-grid'><div><div class='ops-label'>Active listings</div>"
+            f"<div class='ops-value'>{len(ebay_active)}</div></div></div>"
+            f"<p class='ops-catalog'>Checked {ebay_last_synced:%Y-%m-%d %H:%M} UTC</p>"
+        )
+    else:
+        # Never 0 -- 0 is a specific claim about eBay this dashboard has
+        # not made yet. This is the exact gap that prompted the page to
+        # exist: the modern Sell API this app is built around reported 0
+        # while two real listings were live, found only by asking a
+        # different eBay API by hand.
+        ebay_body = "<p class='chart-empty'>Never checked. <a href='/ebay-listings'>Check eBay</a> to see what's live.</p>"
+    ebay_widget = (
+        "<div class='widget'><div class='widget-head'><h3>eBay Listings</h3>"
+        "<a href='/ebay-listings' class='widget-link'>View</a></div>" + ebay_body + "</div>"
+    )
+
     catalog_summary = ", ".join(f"{count:,} {game}" for game, count in catalog_by_game) or "none yet"
     events_html = "".join(f"<li>{escape(str(e.occurred_at))} — {escape(e.action)} — {escape(e.outcome)}</li>" for e in events) or "<li>No events</li>"
     ops_widget = (
@@ -256,7 +283,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         "</div>"
     )
 
-    grid = "".join([gauge_widget, sales_widget, buys_widget, market_value_widget, channel_widget, ageing_widget, ops_widget])
+    grid = "".join([gauge_widget, sales_widget, buys_widget, market_value_widget, channel_widget, ageing_widget, ebay_widget, ops_widget])
 
     body = f"""<div class="dash-title">
     <h1>Sales Executive Dashboard</h1>

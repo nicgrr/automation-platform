@@ -1,6 +1,6 @@
 import pytest
 
-from automation_control.adapters.ebay import EbayNotConfigured, EbaySandboxReadAdapter
+from automation_control.adapters.ebay import EbayApiError, EbayNotConfigured, EbaySandboxReadAdapter
 
 
 @pytest.mark.asyncio
@@ -81,3 +81,29 @@ async def test_inventory_items_with_no_offers_is_not_an_error():
 
     assert payload["offers"] == []
     assert not any(url.endswith("/offer") for url, _ in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_error_messages_name_the_real_environment_not_hardcoded_sandbox():
+    """Both messages used to say "sandbox" unconditionally, so a production
+    failure read as a sandbox problem -- found while auditing other pages
+    for the same class of bug adapters/ebay_trading.py was built to avoid.
+    """
+    adapter = EbaySandboxReadAdapter(access_token=None, environment="production")
+    with pytest.raises(EbayNotConfigured, match="production"):
+        adapter._headers()
+
+    class _FailingClient:
+        async def get(self, *a, **k):
+            class _R:
+                status_code = 500
+            return _R()
+
+    prod = EbaySandboxReadAdapter("tok", client=_FailingClient(), environment="production")
+    with pytest.raises(EbayApiError, match="production") as exc:
+        await prod._get("/x")
+    assert "sandbox" not in str(exc.value).lower()
+
+    sandbox = EbaySandboxReadAdapter("tok", client=_FailingClient(), environment="sandbox")
+    with pytest.raises(EbayApiError, match="sandbox"):
+        await sandbox._get("/x")

@@ -3,6 +3,47 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — eBay Listings on the dashboard, and a sweep for the same bug elsewhere
+
+The dashboard gets an **eBay Listings** widget, reading the same local
+cache /settings and /ebay-listings already read -- no live eBay call on
+every dashboard load. Shows the cached active count and when it was last
+checked; **never a silent 0** when nothing has been checked yet, which is
+the exact failure that prompted /ebay-listings to exist in the first
+place (the Sell API this app is built around reported 0 while two real
+listings were live). Also only ever counts rows the Trading API path
+itself wrote, same as /settings and /ebay-listings, tested directly.
+
+Asked to check other pages for wrong information, so before treating that
+as done, here's what was actually checked rather than assumed clean:
+
+- **Hardcoded environment strings.** Grepped for "Sandbox" outside its
+  legitimate uses and found one real bug: `adapters/ebay.py`'s error
+  messages said "eBay Sandbox API request failed" / "sandbox access
+  token is not configured" **unconditionally**, regardless of which
+  environment actually failed -- the same class of bug
+  `adapters/ebay_trading.py` was built to avoid from the start. A
+  production failure read as a sandbox problem. Fixed to name the real
+  environment; verified both directions with a test.
+- **Pluralisation.** Every `{'s' if ... != 1 else ''}` branch in the
+  codebase (6 of them) checked by hand -- all correct.
+- **Subject-verb agreement**, the bug class from two commits ago ("1
+  background job need attention", "1 held card have no eBay signal").
+  Swept every page-facing f-string with a count next to a bare verb;
+  found nothing further.
+- **The "empty cache vs never checked" bug** -- the shape of the eBay
+  gap itself. Checked every other cache-backed page (Lens results, foil
+  review, photo audit): all already distinguish "ran and found nothing"
+  from "hasn't run" correctly, most by returning nothing at all rather
+  than a false zero.
+
+Not claimed: a line-by-line proofread of every page's copy. This was a
+grep-driven sweep for specific, previously-confirmed bug shapes, not an
+exhaustive review -- flagged here plainly rather than overclaimed.
+
+- 4 new tests (2 dashboard widget, 2 environment-aware error messages).
+  Full suite (1409) green.
+
 ## 2026-09-15 — A page that can actually see a relisted item
 
 Nic relisted two items through Seller Hub's Relist button and asked
