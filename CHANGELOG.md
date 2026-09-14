@@ -3,6 +3,37 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-14 — A settings page, so "is eBay hooked up?" has an answer
+
+`/settings`, in the Today group of the nav. Everything on it was already
+knowable and scattered: the eBay connection lived only inside a 503 you
+had to trigger, the API keys only in `.env.local`, the background jobs
+only on the dashboard.
+
+Four sections: **eBay** (environment, connection, token expiry,
+marketplace, and whether the listing prerequisites are met), **Integrations**,
+**Background jobs**, and **Storage**.
+
+**No credential is ever rendered** -- not even masked. A truncated key
+still leaks its length and prefix, and nothing this page answers needs the
+value, so each one reports only "configured" or "not configured" plus what
+stops working without it ("reverse image search is unavailable"). A test
+plants a known secret in five settings and asserts neither it nor its
+first or last eight characters appear anywhere in the HTML.
+
+The eBay section calls out the environment mismatch specifically, because
+that failure is otherwise silent: a sandbox token against production comes
+back as an ordinary auth error, so nothing tells you *which* eBay you are
+attached to. "Connected" and "able to publish" are also separated -- a
+missing returns policy names itself rather than hiding inside a generic
+not-ready state.
+
+Deliberately read-only apart from the Connect button. Values come from
+`.env.local`, which systemd's timers read too, so anything edited in the
+browser would disagree with what the nightly jobs use.
+
+- 8 new tests. Full suite (1368) green.
+
 ## 2026-09-14 — Why there are no eBay stats to show
 
 Asked for eBay figures on the dashboard, and there are none to put there.

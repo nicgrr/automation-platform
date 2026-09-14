@@ -249,6 +249,7 @@ ADMIN_NAV = [
         ("/analytics", "Analytics"),
         ("/feed", "Scan feed"),
         ("/scan-ingest", "Scanner status & logs"),
+        ("/settings", "Settings"),
     ], False),
     ("Review", [
         ("/review", "Scan crops"),
