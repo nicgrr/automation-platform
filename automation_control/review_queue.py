@@ -310,7 +310,12 @@ def _printing_picker(selected: CardVariant = CardVariant.NORMAL) -> str:
 
 def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     name = crop.name
-    thumb = f"<img src='/review/image/{escape(name)}' alt='' loading='lazy' decoding='async'>"
+    # Cache-busted by mtime: a recrop overwrites this same filename in
+    # place (see review_recrop), and the image is served with a 5-minute
+    # Cache-Control -- without this, reloading right after a recrop would
+    # keep showing the browser's cached copy of the old crop.
+    image_url = f"/review/image/{escape(name)}?t={int(crop.stat().st_mtime)}"
+    thumb = f"<img src='{image_url}' alt='' loading='lazy' decoding='async'>"
 
     sheet_html = ""
     match = _CROP_NAME_RE.match(name)
@@ -355,7 +360,7 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     placeholder = "52/72 (with total)" if not candidates else "or type a no."
     return (
         "<div class='review-card'>"
-        + f"<a class='review-face' href='/review/image/{escape(name)}' target='_blank' rel='noopener'>{thumb}</a>"
+        + f"<a class='review-face' href='{image_url}' target='_blank' rel='noopener'>{thumb}</a>"
         + sheet_html
         + "<form method='post' action='/review/decide' class='review-form'>"
         + f"<input type='hidden' name='crop' value='{escape(name)}'>"
@@ -502,7 +507,14 @@ def review_recrop(
         box = (int(lo_x * width), int(lo_y * height), int(hi_x * width), int(hi_y * height))
         sheet_image.convert("RGB").crop(box).save(path, quality=92)
 
-    return RedirectResponse("/review", status_code=303)
+    # Unlike accept/discard, this card doesn't leave the queue -- it's still
+    # here, just with new content -- so land back on its own page (PAGE_SIZE
+    # is 1, so that's its index in the sorted queue) instead of resetting to
+    # page 1, which would show the reviewer an unrelated card instead of the
+    # crop they just fixed.
+    queued = _queued()
+    page_number = queued.index(path) + 1 if path in queued else 1
+    return RedirectResponse(f"/review?page={page_number}", status_code=303)
 
 
 @router.get("/image/{name}")

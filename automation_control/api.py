@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_inventory, normalize_market
 from .analytics import router as analytics_router
 from .audit import record_event
-from .auth import create_session, require_dashboard_user, verify_password
+from .auth import SESSION_MAX_AGE_SECONDS, create_session, require_dashboard_user, verify_password
 from .business_records import router as business_records_router
 from .buying import router as buying_router
 from .capture import router as cards_router
@@ -63,6 +63,27 @@ app = FastAPI(title="EzBay Private Control Plane", version="0.2.0", lifespan=lif
 # just the install-to-home-screen assets.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.state.settings = get_settings()
+
+
+@app.middleware("http")
+async def renew_session_middleware(request: Request, call_next):
+    """Writes the sliding-session cookie onto the real response, after the
+    route has already returned its own Response object.
+
+    require_dashboard_user can't set this cookie itself: FastAPI only
+    merges a dependency's injected Response headers into the final
+    response when the route doesn't return its own, and every route here
+    does (`return HTMLResponse(...)`, `return RedirectResponse(...)`).
+    Middleware sees the actual object the route returned, so it works
+    regardless of which Response subclass that route happens to use.
+    """
+    response = await call_next(request)
+    username = getattr(request.state, "renew_session_for", None)
+    if username:
+        settings = request.app.state.settings
+        response.set_cookie("rbay_session", create_session(username, settings.session_signing_key),
+                            httponly=True, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
+    return response
 app.include_router(cards_router)
 app.include_router(pricing_router)
 app.include_router(listings_router)
@@ -129,7 +150,7 @@ def login(request: Request, username: str = Form(), password: str = Form(), sess
     if not ok:
         raise HTTPException(status_code=401, detail="invalid credentials")
     response = RedirectResponse("/dashboard", status_code=303)
-    response.set_cookie("rbay_session", create_session(username, settings.session_signing_key), httponly=True, secure=True, samesite="strict", max_age=8 * 3600)
+    response.set_cookie("rbay_session", create_session(username, settings.session_signing_key), httponly=True, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
     return response
 
 

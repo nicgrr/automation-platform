@@ -3,6 +3,41 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — Long-lived, sliding sessions
+
+Sessions had a hard 8-hour ceiling with no renewal, so a full workday of
+steady use ended in a mid-task logout with no way back short of typing the
+password again. This app is Tailscale-only and single-user -- the real
+perimeter is the tailnet, not this cookie -- so a long session costs
+nothing a public-facing login couldn't accept.
+
+Sliding rather than a longer fixed expiry: a session's clock resets on any
+use past 24 hours old, up to a 30-day ceiling from the last time it was
+used at all. Staying logged in now costs nothing more than opening the app
+at least once a month; a flat 30-day expiry from login would still force a
+re-login on exactly the daily use this exists to stop interrupting.
+
+First version of the fix did nothing, silently. `require_dashboard_user`
+tried to set the renewed cookie on FastAPI's dependency-injected
+`Response` -- which only reaches the browser when the route *doesn't*
+return its own Response object. Every route here does
+(`return HTMLResponse(...)`, `return RedirectResponse(...)`), so the
+cookie was set on an object nothing ever sent. Caught by actually checking
+for a Set-Cookie header on a live request rather than trusting the code
+read correctly.
+
+Fixed with middleware: the dependency marks a session for renewal in
+`request.state`, and `renew_session_middleware` writes the cookie onto
+whatever Response the route actually returned, regardless of which
+subclass. Verified against both HTMLResponse and RedirectResponse routes,
+since that distinction is exactly what broke the first attempt.
+
+- No dedicated auth test file existed before this -- every other test
+  overrode `require_dashboard_user` rather than exercising it, so even the
+  original 8-hour cutoff had never actually been run by the suite.
+- 14 new tests, including the renewed cookie itself verifying for a fresh
+  window rather than just being present. Full suite (1384) green.
+
 ## 2026-09-15 — Confirming there are no eBay listings, and fixing the route that couldn't check
 
 Nic asked where to see current eBay listings. `/api/ebay/listings` calls
