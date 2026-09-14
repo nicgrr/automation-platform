@@ -13,6 +13,7 @@ without an explicit click -- the whole point of the queue is that a human
 decides.
 """
 
+import json
 import re
 from html import escape
 from pathlib import Path
@@ -22,12 +23,13 @@ import numpy as np
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from PIL import Image
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
 from .config import get_settings
 from .database import get_session
-from .models import CardVariant
+from .models import CardVariant, ScanSession, ScanSessionStatus
 from .scan_feed import _archived_sheet
 from .scan_ingest import catalog
 from .scan_ingest.commit import CommitRefused, commit_card
@@ -264,7 +266,23 @@ def review_page(
     names = {s.id: s.name for s in catalog.cached_sets(session)}
 
     suggested = _suggestions(window, catalogs, totals, settings) if catalogs else {}
-    cards = [_card_html(crop, suggested.get(crop), names) for crop in window]
+
+    def _datalist_for(crop: Path, candidates) -> str:
+        # Priority: (1) this crop's own top guess -- strongest signal when
+        # it exists; (2) the set its own sheet actually matched, from the
+        # log -- correct regardless of when that sheet was scanned, unlike
+        # (3); (3) whatever's most recently been picked up for scanning, a
+        # last resort for a crop whose sheet never resolved a set at all.
+        set_id = candidates[0][0] if candidates else None
+        if set_id is None:
+            match = _CROP_NAME_RE.match(crop.name)
+            if match:
+                set_id = _sheet_set_id(match.group(1))
+        if set_id is None:
+            set_id = _likely_set_id(session)
+        return _number_options_json(set_id, catalogs, totals) if set_id else ""
+
+    cards = [_card_html(crop, suggested.get(crop), names, _datalist_for(crop, suggested.get(crop))) for crop in window]
 
     nav = []
     if page_number > 1:
@@ -289,6 +307,62 @@ def review_page(
 
 
 
+_SHEET_MATCHED_RE = re.compile(r"^Sheet (sheet-[\d-]+)\.png: matched .+? \(([\w\d]+)\), rotation")
+
+
+def _sheet_set_id(stem: str) -> str | None:
+    """Which cached set this exact sheet matched against, straight from the
+    log -- the log line only exists when a sheet resolved a set at all, so
+    this only helps a crop whose sheet-mates *did* identify (or whose sheet
+    resolved via the OCR-bootstrap path) while this one card didn't. Reads
+    the whole file rather than the tail used elsewhere in this app: an old
+    backlog sheet's "matched" line can be well outside a byte-bounded tail
+    once today's session has logged thousands of lines since.
+    """
+    log_path = Path(get_settings().scan_log_file)
+    if not log_path.exists():
+        return None
+    found = None
+    with log_path.open(encoding="utf-8", errors="replace") as f:
+        for line in f:
+            match = _SHEET_MATCHED_RE.match(line)
+            if match and match.group(1) == stem:
+                found = match.group(2)
+    return found
+
+
+def _likely_set_id(session: Session) -> str | None:
+    """Best guess at which set is currently being scanned, for seeding the
+    number field's autocomplete when a crop has no candidates of its own to
+    go on. A `ScanSession` stays RUNNING indefinitely (see its docstring --
+    a pile spread over days keeps one running count), so several can be
+    RUNNING at once; the most recently *started* one is whichever set was
+    picked up most recently, which is what a reviewer working the queue
+    live is almost always still scanning.
+    """
+    return session.scalar(
+        select(ScanSession.set_id).where(ScanSession.status == ScanSessionStatus.RUNNING)
+        .order_by(ScanSession.started_at.desc()).limit(1)
+    )
+
+
+def _number_options_json(set_id: str, catalogs: dict, totals: dict) -> str:
+    """One set's cards as a JSON array for the number field's custom
+    autocomplete dropdown (see _SCRIPT) -- not a native <datalist>, because
+    iOS Safari doesn't render one for text inputs at all (a long-standing
+    WebKit gap; Chrome and Firefox are fine), which is the whole reason this
+    is hand-rolled instead of a couple of <option> tags.
+    """
+    references = catalogs.get(set_id)
+    total = totals.get(set_id)
+    if not references or not total:
+        return ""
+    entries = [{"v": f"{r.number}/{total}", "n": r.name} for r in sorted(references, key=lambda r: r.name)]
+    # </script> inside a name would otherwise close the tag early.
+    payload = json.dumps(entries).replace("</", "<\\/")
+    return f"<script type='application/json' class='number-options'>{payload}</script>"
+
+
 def _printing_picker(selected: CardVariant = CardVariant.NORMAL) -> str:
     """Which printing this copy is.
 
@@ -308,7 +382,7 @@ def _printing_picker(selected: CardVariant = CardVariant.NORMAL) -> str:
     )
 
 
-def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
+def _card_html(crop: Path, candidates, set_names: dict[str, str], datalist_html: str = "") -> str:
     name = crop.name
     # Cache-busted by mtime: a recrop overwrites this same filename in
     # place (see review_recrop), and the image is served with a 5-minute
@@ -369,7 +443,11 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
         + _printing_picker()
         + f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
         + "<div class='manual'>"
-        + f"<input name='number' placeholder='{placeholder}' autocomplete='off'>"
+        + "<div class='autocomplete'>"
+        + f"<input name='number' placeholder='{placeholder}' autocomplete='off' spellcheck='false'>"
+        + "<div class='autocomplete-list' hidden></div>"
+        + datalist_html
+        + "</div>"
         + "<button name='action' value='accept'>Accept</button>"
         + "<button name='action' value='discard' class='ghost'>Discard</button>"
         + "</div></form></div>"
@@ -575,14 +653,24 @@ _STYLE = """<style>
 .printing select{flex:1 1 auto;min-width:0;background:var(--surface-sunken);border:1px solid var(--panel-border);
   border-radius:10px;padding:10px;color:var(--text);font-size:14px;text-transform:none;letter-spacing:normal}
 .manual{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;min-width:0}
-.manual input{flex:1 1 140px;min-width:0;background:var(--surface-sunken);border:1px solid var(--panel-border);
-  border-radius:10px;padding:12px;color:var(--text);font-size:15px}
+.manual .autocomplete{flex:1 1 140px;min-width:0;position:relative}
+.manual .autocomplete input{width:100%;box-sizing:border-box;min-width:0;background:var(--surface-sunken);
+  border:1px solid var(--panel-border);border-radius:10px;padding:12px;color:var(--text);font-size:15px}
 .manual button{flex:0 0 auto;padding:12px 18px;border-radius:10px;font-size:15px;cursor:pointer;
   border:none;background:linear-gradient(120deg,var(--accent),var(--accent-2));
   color:#fff;font-weight:700}
 .manual button.ghost{background:none;border:1px solid var(--panel-border);
   color:var(--text-dim);font-weight:600}
 .manual button.ghost:hover{border-color:var(--danger);color:var(--danger)}
+
+.autocomplete-list{position:absolute;left:0;right:0;bottom:calc(100% + 4px);z-index:30;
+  background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;
+  max-height:200px;overflow-y:auto;box-shadow:0 8px 22px rgba(0,0,0,.22)}
+.autocomplete-item{display:block;width:100%;text-align:left;padding:10px 12px;background:none;
+  border:none;border-bottom:1px solid var(--panel-border);color:var(--text);font-size:14px;cursor:pointer}
+.autocomplete-item:last-child{border-bottom:none}
+.autocomplete-item:hover,.autocomplete-item:active{background:var(--surface-sunken)}
+.autocomplete-item b{color:var(--accent);font-weight:700}
 </style>"""
 
 # Drag-to-select on the full sheet thumbnail, then post the selection (as
@@ -653,6 +741,53 @@ _SCRIPT = """<script>
       });
       document.body.appendChild(form);
       form.submit();
+    });
+  });
+
+  // Hand-rolled dropdown for the number field, not a native <datalist> --
+  // iOS Safari renders no suggestion UI at all for one on a text input
+  // (a long-standing WebKit gap), so a real dropdown is the only version
+  // of this that actually works on the phone this page is mostly used on.
+  document.querySelectorAll('.autocomplete').forEach(function (wrap) {
+    var script = wrap.querySelector('script.number-options');
+    var input = wrap.querySelector('input[name="number"]');
+    var list = wrap.querySelector('.autocomplete-list');
+    if (!script || !input || !list) return;
+    var options;
+    try { options = JSON.parse(script.textContent); } catch (e) { return; }
+
+    function render(matches) {
+      list.innerHTML = '';
+      matches.forEach(function (opt) {
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'autocomplete-item';
+        item.textContent = opt.v + '  ' + opt.n;
+        // pointerdown (not click) fires before the input's blur, so the
+        // selection registers before the list would otherwise vanish.
+        item.addEventListener('pointerdown', function (evt) {
+          evt.preventDefault();
+          input.value = opt.v;
+          list.hidden = true;
+        });
+        list.appendChild(item);
+      });
+      list.hidden = matches.length === 0;
+    }
+
+    function search() {
+      var q = input.value.trim().toLowerCase();
+      if (!q) { list.hidden = true; return; }
+      var matches = options.filter(function (opt) {
+        return opt.n.toLowerCase().indexOf(q) !== -1 || opt.v.indexOf(q) !== -1;
+      }).slice(0, 8);
+      render(matches);
+    }
+
+    input.addEventListener('input', search);
+    input.addEventListener('focus', search);
+    input.addEventListener('blur', function () {
+      setTimeout(function () { list.hidden = true; }, 200);
     });
   });
 })();

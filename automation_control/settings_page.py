@@ -84,6 +84,27 @@ def _ebay_rows(settings: Settings, session: Session) -> tuple[list[Row], str | N
         action = "Reconnect eBay"
 
     rows.append(Row("Marketplace", GOOD, settings.ebay_marketplace_id))
+
+    from .ebay_listings import _cached_rows
+
+    active = _cached_rows(session)
+    last_synced = max((r.observed_at for r in active), default=None)
+    if last_synced:
+        rows.append(Row("Active eBay listings", GOOD,
+                        f"{len(active)} &middot; <a href='/ebay-listings'>view</a>",
+                        f"last checked {last_synced:%Y-%m-%d %H:%M} UTC"))
+    else:
+        # This is exactly the state that prompted the page to exist: the
+        # Sell Inventory API this app is built around can report 0 while
+        # eBay's own Seller Hub shows real listings, because it only sees
+        # listings it created itself. Never checked reads as "unknown",
+        # deliberately not "0" -- 0 is a claim about eBay this app cannot
+        # make without visiting /ebay-listings at least once.
+        # Row.hint is HTML-escaped by _table, Row.value is not -- the link
+        # has to live in value or it renders as literal "<a href=...>" text.
+        rows.append(Row("Active eBay listings", WARN, "<a href='/ebay-listings'>not checked yet</a>",
+                        "the Sell API this app is built around can't see listings created "
+                        "outside it (Relist, bulk upload) -- click to check the real API"))
     if configured_for_writes(settings):
         rows.append(Row("Listing prerequisites", GOOD, "payment, postage, returns and location all set"))
     else:

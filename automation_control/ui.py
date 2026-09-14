@@ -282,6 +282,7 @@ ADMIN_NAV = [
         ("/shop-orders", "Shop orders"),
         ("/contact-messages", "Contact messages"),
         ("/listings/review", "eBay listing drafts"),
+        ("/ebay-listings", "eBay listings"),
         ("/market-search", "Market search"),
         ("/deal-check", "Deal check"),
         ("/buying-calculator", "Buying calculator"),

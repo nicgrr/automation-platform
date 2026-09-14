@@ -3,6 +3,50 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — A page that can actually see a relisted item
+
+Nic relisted two items through Seller Hub's Relist button and asked
+whether this app could see them. It couldn't, and now it can: `/ebay-listings`,
+built around `adapters/ebay_trading.py`'s GetMyeBaySelling wrapper --
+the Trading API call Seller Hub itself is built on.
+
+The prior route (`/api/ebay/listings`, used by nothing in the UI) calls
+the Sell Inventory API, which only ever sees listings created *through*
+the Inventory API. A listing made any other way -- by hand, Relist, bulk
+File Exchange -- is permanently invisible to it, confirmed directly on
+this account: Sell API reported 0 while GetMyeBaySelling found 2, real,
+priced, live listings.
+
+Trading API predates OAuth and is XML-over-HTTP, but takes the same
+Sell-scope access token as a bridge header (`X-EBAY-API-IAF-TOKEN`) --
+nothing new to configure. And its failures don't show up as an HTTP
+status: it returns 200 on both success and failure, with the real result
+in `<Ack>`, confirmed live by deliberately sending an invalid site id.
+
+- `ActiveList` is omitted from the response entirely, not returned empty,
+  when there's nothing in it -- checked `Ack` before treating an absent
+  section as "nothing to see" rather than "eBay declined to answer".
+- `SoldList`/`UnsoldList` are explicitly excluded from the request. Left
+  to defaults, GetMyeBaySelling handed back real buyer order details (a
+  live probe surfaced a genuine buyer email/address/postcode) that this
+  call has no reason to fetch or store.
+- Writes into the existing `EbayListing` table -- documented as a
+  wholesale mirror of "whatever eBay reports" -- tagged
+  `raw_snapshot.source = "trading_api"` so a future Sell API sync of the
+  same item id can't silently blend with this one.
+- Cached, not live per page load: a human clicking Refresh is currently
+  the only thing that calls eBay here, and the page says how stale that
+  is rather than a fresh number.
+- `/settings`' eBay section links to it, showing "not checked yet" as
+  WARN rather than a false "0" -- 0 is a specific claim about eBay this
+  app cannot make without visiting the page at least once, which is
+  exactly the mistake the old Sell-API-only view was making silently.
+
+- 21 new tests: pure XML parsing against real response shapes, pagination,
+  the Ack=Failure/HTTP-200 case, and route-level tests confirming a Sell
+  API row and a Trading API row in the same table never mix. Full suite
+  (1405) green.
+
 ## 2026-09-15 — Long-lived, sliding sessions
 
 Sessions had a hard 8-hour ceiling with no renewal, so a full workday of
