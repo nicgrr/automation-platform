@@ -515,11 +515,28 @@ def process_sheet(
                     identification = vision
 
         identified_card = db.get(CatalogCard, identification.card_id) if identification.card_id else None
+        card_variant = variant
         if identified_card is not None:
-            summary = assess_foil(crop_path, identified_card).log_summary()
+            foil_assessment = assess_foil(crop_path, identified_card)
+            summary = foil_assessment.log_summary()
             if identification.foil_observation:
                 summary += f" | vision saw: {identification.foil_observation}"
             prompter.notify(f"  Card {index}: {summary}")
+            # 0.98 confidence means the catalogue's own cached prices show
+            # exactly one printing exists at all -- not a guess to weigh
+            # against the operator's declared batch variant, a fact that
+            # overrides it. Everything below that confidence (a real
+            # heuristic guess) never does: a real check against 238 labelled
+            # examples (2026-09-14) found its confirmed/rejected body_bias
+            # ranges almost entirely overlapping, i.e. no reliable signal to
+            # act on -- see /foil-review, which exists to build a real one.
+            if foil_assessment.confidence >= 0.98 and foil_assessment.suggestion is not None \
+                    and foil_assessment.suggestion != variant:
+                card_variant = foil_assessment.suggestion
+                prompter.notify(
+                    f"  Card {index}: only {card_variant.value} exists for this card per the catalogue -- "
+                    f"filing as {card_variant.value} instead of the batch's {variant.value}"
+                )
         if unattended and identification.needs_confirmation:
             saved_to = _set_aside_for_review(crop_path, Path(settings.scan_media_dir), sheet_path.name, index, identification)
             label = f"#{identification.number} {identification.name}" if identification.card_id else "(unidentified)"
@@ -533,7 +550,7 @@ def process_sheet(
         try:
             result = commit_card(
                 db, decided, crop_path, Path(settings.scan_media_dir),
-                variant=variant, condition=condition, scan_session=scan_session,
+                variant=card_variant, condition=condition, scan_session=scan_session,
                 user=user, allow_unconfirmed=was_confirmed,
             )
         except CommitRefused as exc:

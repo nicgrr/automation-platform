@@ -13,6 +13,7 @@ without an explicit click -- the whole point of the queue is that a human
 decides.
 """
 
+import re
 from html import escape
 from pathlib import Path
 
@@ -27,11 +28,19 @@ from .auth import require_dashboard_user
 from .config import get_settings
 from .database import get_session
 from .models import CardVariant
+from .scan_feed import _archived_sheet
 from .scan_ingest import catalog
 from .scan_ingest.commit import CommitRefused, commit_card
 from .scan_ingest.identify import Identification, Source, _phash_confidence, art_phash
 from .scan_ingest.session import _load_all_catalogs, start_or_resume
 from .ui import brand_header, page, pill
+
+# A queued crop is named "{sheet stem}-card{N}-{label}.jpg" (see
+# session._set_aside_for_review) -- recovering the stem and position from it
+# is what lets the review page show the whole sheet next to the single crop,
+# so a genuinely ambiguous or truncated card can be placed by eye against its
+# neighbours instead of judged from an isolated square.
+_CROP_NAME_RE = re.compile(r"^(sheet-\d{8}-\d{6}-\d+)-card(\d+)-")
 
 router = APIRouter(prefix="/review", tags=["review"])
 
@@ -274,7 +283,7 @@ def review_page(
         + "</div>"
         + f"<div class='toolbar'>{''.join(nav)}</div>"
         + f"<div class='review-grid'>{''.join(cards)}</div>"
-        + _STYLE
+        + _STYLE + _SCRIPT
     )
     return HTMLResponse(page("EzBay — Review queue", body))
 
@@ -303,6 +312,23 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     name = crop.name
     thumb = f"<img src='/review/image/{escape(name)}' alt='' loading='lazy' decoding='async'>"
 
+    sheet_html = ""
+    match = _CROP_NAME_RE.match(name)
+    if match:
+        stem, index = match.group(1), match.group(2)
+        if _archived_sheet(stem) is not None:
+            sheet_html = (
+                "<div class='recrop'>"
+                f"<div class='recrop-stage' data-stem='{escape(stem)}' data-crop='{escape(name)}'>"
+                f"<img src='/feed/sheet/{escape(stem)}' alt='' loading='lazy' decoding='async'>"
+                "<div class='recrop-box' hidden></div>"
+                "</div>"
+                f"<div class='recrop-row'><span class='recrop-hint'>Full scan &mdash; this crop is card "
+                f"{escape(index)} on it. If it's wrong, drag a box around the real card here.</span>"
+                "<button type='button' class='recrop-go' disabled>Recrop from selection</button></div>"
+                "</div>"
+            )
+
     if not candidates:
         options = (
             "<div class='no-match'>No confident match in any cached set.</div>"
@@ -330,6 +356,7 @@ def _card_html(crop: Path, candidates, set_names: dict[str, str]) -> str:
     return (
         "<div class='review-card'>"
         + f"<a class='review-face' href='/review/image/{escape(name)}' target='_blank' rel='noopener'>{thumb}</a>"
+        + sheet_html
         + "<form method='post' action='/review/decide' class='review-form'>"
         + f"<input type='hidden' name='crop' value='{escape(name)}'>"
         + f"<input type='hidden' name='set_id' value='{escape(default_set)}'>"
@@ -428,6 +455,56 @@ def review_decide(
     return RedirectResponse("/review", status_code=303)
 
 
+# Below this, a selection smaller than this fraction of the sheet in either
+# dimension is almost certainly a stray tap/click rather than an intended
+# card-sized box -- refusing it outright beats silently producing a sliver
+# crop nothing can identify.
+MIN_RECROP_FRACTION = 0.02
+
+
+@router.post("/recrop")
+def review_recrop(
+    crop: str = Form(...),
+    sheet: str = Form(...),
+    x0: float = Form(...),
+    y0: float = Form(...),
+    x1: float = Form(...),
+    y1: float = Form(...),
+    user: str = Depends(require_dashboard_user),
+):
+    """Replace a queued crop with a fresh one cut from the archived sheet at
+    an operator-drawn box, for the case the automatic detector split the
+    grid wrong (a truncated or otherwise misshapen crop). The box arrives as
+    fractions of the sheet (0..1 on each axis), not pixels, since that's
+    resolution-independent -- the thumbnail shown in the browser and the
+    full-resolution archived sheet are different sizes.
+
+    Overwrites the crop file in place rather than creating a new one: the
+    filename is what the accept/discard form already references, and the
+    original auto-detected crop it replaces has no value once it's been
+    manually corrected (mirrors `_store_scan_image`'s overwrite-on-rescan
+    behaviour in commit.py).
+    """
+    path = _safe_crop(crop)
+    if not re.fullmatch(r"sheet-\d{8}-\d{6}-\d+", sheet):
+        raise HTTPException(status_code=404, detail="unknown sheet")
+    sheet_path = _archived_sheet(sheet)
+    if sheet_path is None:
+        raise HTTPException(status_code=404, detail="sheet not archived")
+
+    lo_x, hi_x = sorted((max(0.0, min(1.0, x0)), max(0.0, min(1.0, x1))))
+    lo_y, hi_y = sorted((max(0.0, min(1.0, y0)), max(0.0, min(1.0, y1))))
+    if hi_x - lo_x < MIN_RECROP_FRACTION or hi_y - lo_y < MIN_RECROP_FRACTION:
+        raise HTTPException(status_code=400, detail="selection too small -- drag a box around the whole card")
+
+    with Image.open(sheet_path) as sheet_image:
+        width, height = sheet_image.size
+        box = (int(lo_x * width), int(lo_y * height), int(hi_x * width), int(hi_y * height))
+        sheet_image.convert("RGB").crop(box).save(path, quality=92)
+
+    return RedirectResponse("/review", status_code=303)
+
+
 @router.get("/image/{name}")
 def review_image(name: str, user: str = Depends(require_dashboard_user)):
     return FileResponse(_safe_crop(name), headers={"Cache-Control": "private, max-age=300"})
@@ -454,6 +531,19 @@ _STYLE = """<style>
 .hint{font-size:13px;color:var(--text-dim);line-height:1.45}
 .filename{font-size:11px;color:var(--text-dim);opacity:.65;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+.recrop{display:flex;flex-direction:column;gap:8px;border:1px solid var(--panel-border);
+  border-radius:12px;padding:8px;background:var(--surface-sunken)}
+.recrop-stage{position:relative;touch-action:none;user-select:none;-webkit-user-select:none}
+.recrop-stage img{width:100%;border-radius:8px;display:block;pointer-events:none}
+.recrop-box{position:absolute;border:2px solid var(--accent);
+  background:color-mix(in srgb, var(--accent) 18%, transparent);pointer-events:none}
+.recrop-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.recrop-hint{font-size:12px;color:var(--text-dim);flex:1 1 160px}
+.recrop-go{flex:0 0 auto;padding:9px 14px;border-radius:9px;font-size:13px;cursor:pointer;
+  border:1px solid var(--panel-border);background:var(--panel);color:var(--text);font-weight:600}
+.recrop-go:not(:disabled):hover{border-color:var(--accent);color:var(--accent)}
+.recrop-go:disabled{opacity:.45;cursor:default}
 
 .picks{display:flex;flex-direction:column;gap:7px;margin-top:8px}
 .pick{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;
@@ -482,3 +572,76 @@ _STYLE = """<style>
   color:var(--text-dim);font-weight:600}
 .manual button.ghost:hover{border-color:var(--danger);color:var(--danger)}
 </style>"""
+
+# Drag-to-select on the full sheet thumbnail, then post the selection (as
+# fractions of the image, not pixels) to /review/recrop. Fractions are
+# resolution-independent, so no client-side scaling math is needed even
+# though the displayed thumbnail and the archived sheet it's cropped from
+# are different sizes -- the server just multiplies by the real sheet's
+# width/height.
+_SCRIPT = """<script>
+(function () {
+  document.querySelectorAll('.recrop-stage').forEach(function (stage) {
+    var box = stage.querySelector('.recrop-box');
+    var row = stage.parentElement.querySelector('.recrop-row');
+    var goBtn = row.querySelector('.recrop-go');
+    var dragging = false, frac = null;
+
+    function pos(evt) {
+      var rect = stage.getBoundingClientRect();
+      var x = (evt.clientX - rect.left) / rect.width;
+      var y = (evt.clientY - rect.top) / rect.height;
+      return [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y))];
+    }
+
+    function draw(x0, y0, x1, y1) {
+      var rect = stage.getBoundingClientRect();
+      box.style.left = (Math.min(x0, x1) * rect.width) + 'px';
+      box.style.top = (Math.min(y0, y1) * rect.height) + 'px';
+      box.style.width = (Math.abs(x1 - x0) * rect.width) + 'px';
+      box.style.height = (Math.abs(y1 - y0) * rect.height) + 'px';
+      box.hidden = false;
+    }
+
+    stage.addEventListener('pointerdown', function (evt) {
+      dragging = true;
+      goBtn.disabled = true;
+      var p = pos(evt);
+      frac = [p[0], p[1], p[0], p[1]];
+      stage.setPointerCapture(evt.pointerId);
+      evt.preventDefault();
+    });
+    stage.addEventListener('pointermove', function (evt) {
+      if (!dragging) return;
+      var p = pos(evt);
+      frac[2] = p[0]; frac[3] = p[1];
+      draw(frac[0], frac[1], frac[2], frac[3]);
+    });
+    stage.addEventListener('pointerup', function () {
+      if (!dragging) return;
+      dragging = false;
+      var big = Math.abs(frac[2] - frac[0]) > 0.03 && Math.abs(frac[3] - frac[1]) > 0.03;
+      goBtn.disabled = !big;
+    });
+
+    goBtn.addEventListener('click', function () {
+      if (!frac) return;
+      var form = document.createElement('form');
+      form.method = 'post';
+      form.action = '/review/recrop';
+      var fields = {
+        crop: stage.dataset.crop, sheet: stage.dataset.stem,
+        x0: Math.min(frac[0], frac[2]), y0: Math.min(frac[1], frac[3]),
+        x1: Math.max(frac[0], frac[2]), y1: Math.max(frac[1], frac[3])
+      };
+      Object.keys(fields).forEach(function (key) {
+        var input = document.createElement('input');
+        input.type = 'hidden'; input.name = key; input.value = fields[key];
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+    });
+  });
+})();
+</script>"""

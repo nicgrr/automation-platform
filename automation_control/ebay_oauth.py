@@ -183,13 +183,26 @@ async def valid_user_access_token(session: Session, cipher: TokenCipher, oauth: 
     now = now or datetime.now(UTC)
     record = session.get(EbayCredential, 1)
     if not record:
-        raise OAuthError("eBay Sandbox is not connected")
+        raise OAuthError(f"eBay {oauth.environment} is not connected")
+    # A sandbox user token against the production API fails as a generic
+    # auth error, which reads as "my credentials broke" rather than "I am
+    # connected to the wrong eBay". Say which, because the fix is to
+    # reconnect, not to retry.
+    if record.environment != oauth.environment:
+        raise OAuthError(
+            f"eBay is connected to {record.environment} but this app is configured for "
+            f"{oauth.environment} -- reconnect at /auth/ebay/start"
+        )
     expiry = record.access_token_expires_at.replace(tzinfo=UTC) if record.access_token_expires_at.tzinfo is None else record.access_token_expires_at
     if expiry > now + timedelta(seconds=60):
         return cipher.decrypt(record.encrypted_access_token)
     payload = await oauth.refresh(cipher.decrypt(record.encrypted_refresh_token))
     payload.setdefault("refresh_token", cipher.decrypt(record.encrypted_refresh_token))
-    updated = store_user_tokens(session, cipher, payload, now=now)
+    # Carry the record's own environment through. Without it this fell back
+    # to the "sandbox" default and every refresh silently downgraded a
+    # production connection -- which is how this box ended up storing a
+    # sandbox token while EBAY_ENV said production.
+    updated = store_user_tokens(session, cipher, payload, environment=record.environment, now=now)
     return cipher.decrypt(updated.encrypted_access_token)
 
 

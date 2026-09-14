@@ -3,6 +3,38 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-14 — Why there are no eBay stats to show
+
+Asked for eBay figures on the dashboard, and there are none to put there.
+Every eBay table is empty: `ebay_listings` 0, `ebay_listing_links` 0,
+`ebay_imported_orders` 0, `sales` 0, `shop_orders` 0. The 997
+`shop_listings` rows are the NL Vault storefront, not eBay. Nothing has
+ever been published to eBay, so there are no orders, so there are no
+sales.
+
+Underneath that, a bug that would have stopped it working even once the
+listings existed. `valid_user_access_token` fetched `EbayCredential` id=1
+with **no environment check**, and the refresh path called
+`store_user_tokens` without passing one -- so it fell back to the
+`"sandbox"` default and silently rewrote the stored environment on every
+refresh. A production connection downgraded itself to sandbox and then
+handed a sandbox user token to the production API, which fails as a
+generic auth error. That reads as "my credentials broke" rather than "I am
+connected to the wrong eBay", and it is the state this box was in:
+`EBAY_ENV=production` with a stored `sandbox` credential.
+
+- The refresh now carries the record's own environment through.
+- A mismatch is refused by name -- "connected to sandbox but configured
+  for production, reconnect at /auth/ebay/start" -- rather than failing at
+  the API.
+- "Not connected" names the environment it wanted instead of always
+  saying Sandbox.
+- 3 new tests. Full suite (1360) green.
+
+The dashboard work is not blocked on code. It is blocked on there being a
+single eBay listing, which needs reconnecting in production and either a
+successful File Exchange upload or the publish path being run.
+
 ## 2026-09-14 — Making a dead job visible from the dashboard
 
 The price backfill died on 8 September and nobody noticed for six days.

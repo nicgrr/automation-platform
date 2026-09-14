@@ -6,6 +6,7 @@ from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+import pytest
 from automation_control.adapters.ebay import EbayApiError, EbaySandboxReadAdapter
 from automation_control.api import configured, ebay_callback
 from automation_control.audit import redact
@@ -181,6 +182,7 @@ async def test_expired_token_is_refreshed_and_stored(session):
 
     class FakeOAuth:
         called = False
+        environment = "sandbox"
         async def refresh(self, refresh_token):
             self.called = True
             assert refresh_token == "refresh"
@@ -195,6 +197,7 @@ async def test_unexpired_token_does_not_refresh(session):
     cipher = TokenCipher(Fernet.generate_key().decode())
     store_user_tokens(session, cipher, {"access_token": "current", "refresh_token": "refresh", "expires_in": 7200})
     class NoRefresh:
+        environment = "sandbox"
         async def refresh(self, refresh_token):
             raise AssertionError("refresh should not run")
     assert await valid_user_access_token(session, cipher, NoRefresh()) == "current"
@@ -230,3 +233,54 @@ def test_seller_scope_includes_inventory_write_and_fulfillment_read():
     assert "sell.inventory.readonly" not in SELLER_SCOPE  # superseded, not additive
     assert "sell.fulfillment.readonly" in SELLER_SCOPE
     assert "commerce.identity.readonly" in SELLER_SCOPE
+
+
+async def test_a_refresh_keeps_the_environment_it_was_connected_to(session):
+    """The refresh path used to call store_user_tokens without an
+    environment, so it fell back to the "sandbox" default and silently
+    downgraded a production connection on every refresh. That is how this
+    box ended up holding a sandbox token while EBAY_ENV said production --
+    and a sandbox user token against the production API fails as a generic
+    auth error, which reads as broken credentials rather than the wrong
+    eBay."""
+    from automation_control.models import EbayCredential
+
+    cipher = TokenCipher(Fernet.generate_key().decode())
+    store_user_tokens(session, cipher, {"access_token": "old", "refresh_token": "r", "expires_in": -1},
+                      environment="production")
+
+    class ProdOAuth:
+        environment = "production"
+        async def refresh(self, refresh_token):
+            return {"access_token": "new", "expires_in": 7200, "scope": SELLER_SCOPE}
+
+    assert await valid_user_access_token(session, cipher, ProdOAuth()) == "new"
+    assert session.get(EbayCredential, 1).environment == "production"
+
+
+async def test_a_credential_for_the_wrong_environment_is_refused_by_name(session):
+    cipher = TokenCipher(Fernet.generate_key().decode())
+    store_user_tokens(session, cipher, {"access_token": "a", "refresh_token": "r", "expires_in": 7200},
+                      environment="sandbox")
+
+    class ProdOAuth:
+        environment = "production"
+        async def refresh(self, refresh_token):
+            raise AssertionError("must not try to refresh a mismatched credential")
+
+    with pytest.raises(OAuthError) as exc:
+        await valid_user_access_token(session, cipher, ProdOAuth())
+    assert "sandbox" in str(exc.value) and "production" in str(exc.value)
+    assert "/auth/ebay/start" in str(exc.value)
+
+
+async def test_not_connected_names_the_environment_it_wanted(session):
+    cipher = TokenCipher(Fernet.generate_key().decode())
+
+    class ProdOAuth:
+        environment = "production"
+        async def refresh(self, refresh_token):
+            raise AssertionError("nothing to refresh")
+
+    with pytest.raises(OAuthError, match="production is not connected"):
+        await valid_user_access_token(session, cipher, ProdOAuth())
