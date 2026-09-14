@@ -3,6 +3,31 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — Cat Life Series
+
+14 figures added -- 9 base coat patterns plus two separate rarity tiers,
+Lucky (3) and Secret (2) -- cross-checked between the brand's own release
+post and Toysez before landing, same as every prior addition.
+
+The names in first search results ("Black Cat", "Silver Tabby") looked
+like generic pattern labels rather than the brand's real names; fetching
+both sources directly confirmed the figures really are just named after
+their coat ("Calico", "Tuxedo", "Black") -- the fish, chicken leg, and
+milk bottle seen in Nic's own photo of the set are per-figure props, not
+separate names.
+
+The master list's raw export shortens the series to **"Cat Life"**; every
+retailer and the brand's own product page call it **"Cat Life Series"** --
+the same Sun-Kissed-Style-vs-Summer-Vacation shape as before, aliased the
+same way.
+
+Lucky and Secret are two named rarity tiers on eBay's own product page,
+collapsed to one `is_secret` flag here (this vocabulary has no
+in-between), with the tier kept in `secret_label` for anyone reading the
+CSV by hand.
+
+- 3 new tests. Full suite (1412) green.
+
 ## 2026-09-15 — eBay Listings on the dashboard, and a sweep for the same bug elsewhere
 
 The dashboard gets an **eBay Listings** widget, reading the same local

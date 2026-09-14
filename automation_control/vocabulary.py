@@ -257,6 +257,10 @@ _ALIASES: dict[str, tuple[str, str]] = {
     # official one and the short form is what most listings actually say.
     "pink robby angel": (SONNY_ANGEL, "Pink Robby"),
     "flower robby angel": (SONNY_ANGEL, "Flower Robby"),
+    # The master list's raw export shortens this to "Cat Life"; everyone
+    # selling it -- the brand's own product pages included -- calls it
+    # "Cat Life Series".
+    "cat life series": (SONNY_ANGEL, "Cat Life"),
 }
 
 _LOADERS = {SONNY_ANGEL: _load_sonny_angel, POP_MART: _load_pop_mart}

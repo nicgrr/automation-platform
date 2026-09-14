@@ -389,3 +389,37 @@ def test_the_plural_spelling_of_cherry_blossom_still_matches():
     found = match("Sonny Angel Flower Series Cherry Blossoms", SONNY_ANGEL)
     assert found.name == "Cherry Blossom"
     assert found.series == "Flower Series"
+
+
+# --- Cat Life Series --------------------------------------------------------
+
+def test_cat_life_figures_are_loaded_with_two_rarity_tiers():
+    """Two independent sources (sonnyangel.com's own release post and
+    Toysez) agreed on the same 14: 9 base patterns, 3 Lucky, 2 Secret."""
+    cats = [e for e in entries_for(SONNY_ANGEL) if e.series == "Cat Life"]
+    assert len(cats) == 14
+    base = {e.name for e in cats if not e.is_secret}
+    assert base == {"Calico", "Silver Tabby", "Tuxedo", "Siamese", "White",
+                    "Brown & Black", "Bluish Gray", "Red Tabby", "Black"}
+    secrets = {e.name for e in cats if e.is_secret}
+    assert secrets == {"Lucky Orange", "Lucky Pink", "Lucky Purple",
+                       "Happy Pink", "Happy Pink Robby Angel"}
+
+
+def test_cat_life_series_alias_resolves_to_the_master_lists_short_name():
+    """The master list's raw export shortens this to "Cat Life"; every
+    retailer, and the brand's own product page, calls it "Cat Life
+    Series"."""
+    found = match("Sonny Angel Cat Life Series Tuxedo", SONNY_ANGEL)
+    assert found.name == "Tuxedo"
+    assert found.series == "Cat Life"
+
+
+def test_a_lucky_figure_is_flagged_secret_same_as_a_true_secret():
+    """The brand distinguishes "Lucky" from "Secret" as separate rarity
+    tiers, but this vocabulary only has one is_secret flag -- both are
+    rare pulls that price like a secret, so both set it."""
+    lucky = match("Sonny Angel Cat Life Series Lucky Orange", SONNY_ANGEL)
+    secret = match("Sonny Angel Cat Life Happy Pink Robby Angel", SONNY_ANGEL)
+    assert lucky.is_secret is True
+    assert secret.is_secret is True
