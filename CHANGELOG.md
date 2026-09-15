@@ -3,6 +3,48 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — A release calendar with something on it, and an obsolescence sweep
+
+**The release calendar is no longer a flat add-only table.** It shipped
+with no way to fix a typo or mark something released short of the
+database, and 0 rows to look at. Now: `/release-calendar/{id}/edit` and
+`/delete` (same validation-and-404 pattern as the shop-listing editor),
+and every entry gets a status pill computed from today's date against its
+release date and supplier deadline -- *order deadline soon* (≤7 days,
+red inside 2), *deadline passed*, *releasing soon* (≤14 days), *upcoming*,
+*released* -- with rows sorted urgent-first instead of insertion order, so
+the thing that needs a PO this week is what you see first, not buried
+under everything else. Seeded with the two confirmed upcoming English
+Pokemon TCG releases (cross-checked across two independent sources):
+30th Celebration ETB (2026-09-16) and Mega Evolution: Delta Reign ETB
+(2026-11-06, order by 2026-10-24) -- `scripts/seed_release_calendar.py`,
+idempotent, safe to re-run.
+
+- 18 new tests (7 for edit/delete/status/sort, 3 for the seed script, plus
+  the pill-styling gap the first pass of this missed -- `.listing-actions`
+  was only ever defined in `shop_listings_admin.py`'s own stylesheet, not
+  this file's). Full suite (1439) green.
+
+**Obsolescence sweep**, per request -- found and cleared:
+
+- `automation_control/docker_broker/` -- dead directory, source already
+  gone in an earlier uncommitted diff, nothing left but a stale
+  `__pycache__` and zero references anywhere in the app. Removed; app
+  still imports clean.
+- Root-level eBay File Exchange CSVs and ad-hoc reports -- all
+  regenerable from the scripts that write them, none of it source.
+  Gitignored rather than deleted, so nothing on disk is lost.
+- Two scan-queue sheets that had been stuck for a week, each a scan of a
+  stray knife/letter-opener rather than cards (confirmed by looking at
+  the actual images, not just trusting the ingest heuristic that flagged
+  them as held). Moved to `scan_ingest_data/discarded/`, out of the
+  processing queue.
+
+Flagged for a decision rather than acted on: `backups/` has grown to
+1.1GB of mostly full-DB snapshots from this week's corrections; three
+scan sheets remain genuinely held (one recoverable 3x3 Prismatic
+Evolutions grid, two single-card scans of unclear intent).
+
 ## 2026-09-15 — Edit a listing, and three "eBay ..." labels that read as one
 
 **A shop listing can be edited.** Fixing Kappa's stale price meant hand-

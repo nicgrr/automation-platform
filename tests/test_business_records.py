@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from automation_control.api import app
@@ -65,6 +65,94 @@ def test_add_a_release_calendar_entry(client):
     listing = client.get("/release-calendar")
     assert "One Piece OP18 Booster Box" in listing.text
     assert "2026-11-01" in listing.text
+
+
+# --- release calendar: editing, deleting, urgency ------------------------
+
+def test_a_release_can_be_edited(client, session):
+    from automation_control.models import ReleaseCalendarEntry
+
+    client.post("/release-calendar", data={
+        "product_name": "Delta Reign ETB", "release_date": "2026-11-06",
+        "supplier_deadline": "", "wholesale_price": "", "retail_price": "", "ordered_quantity": "",
+    })
+    entry_id = session.scalars(select(ReleaseCalendarEntry)).one().id
+
+    resp = client.post(f"/release-calendar/{entry_id}/edit", data={
+        "product_name": "Delta Reign ETB (corrected)", "release_date": "2026-11-13",
+        "supplier_deadline": "2026-10-24", "wholesale_price": "50", "retail_price": "80", "ordered_quantity": "3",
+    }, follow_redirects=False)
+
+    assert resp.status_code == 303
+    session.expire_all()
+    entry = session.get(ReleaseCalendarEntry, entry_id)
+    assert entry.product_name == "Delta Reign ETB (corrected)"
+    assert entry.release_date == "2026-11-13"
+    assert entry.ordered_quantity == 3
+
+
+def test_editing_an_unknown_entry_404s(client):
+    resp = client.post("/release-calendar/does-not-exist/edit",
+                       data={"product_name": "X", "release_date": "", "supplier_deadline": "",
+                             "wholesale_price": "", "retail_price": "", "ordered_quantity": ""})
+    assert resp.status_code == 404
+
+
+def test_a_release_can_be_deleted(client, session):
+    from automation_control.models import ReleaseCalendarEntry
+
+    client.post("/release-calendar", data={
+        "product_name": "Cancelled Order", "release_date": "2026-12-01",
+        "supplier_deadline": "", "wholesale_price": "", "retail_price": "", "ordered_quantity": "",
+    })
+    entry_id = session.scalars(select(ReleaseCalendarEntry)).one().id
+
+    resp = client.post(f"/release-calendar/{entry_id}/delete", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert session.get(ReleaseCalendarEntry, entry_id) is None
+
+
+def test_deleting_an_unknown_entry_404s(client):
+    resp = client.post("/release-calendar/does-not-exist/delete")
+    assert resp.status_code == 404
+
+
+def test_an_approaching_deadline_is_flagged_urgent_on_the_page(client):
+    from datetime import date, timedelta
+
+    soon = (date.today() + timedelta(days=2)).isoformat()
+    client.post("/release-calendar", data={
+        "product_name": "Urgent ETB", "release_date": "2027-01-01",
+        "supplier_deadline": soon, "wholesale_price": "", "retail_price": "", "ordered_quantity": "",
+    })
+    page = client.get("/release-calendar").text
+    assert "order deadline soon" in page
+    assert "pill bad" in page
+
+
+def test_a_past_release_is_labelled_released_not_upcoming(client):
+    client.post("/release-calendar", data={
+        "product_name": "Old ETB", "release_date": "2020-01-01",
+        "supplier_deadline": "", "wholesale_price": "", "retail_price": "", "ordered_quantity": "",
+    })
+    page = client.get("/release-calendar").text
+    assert "released" in page
+
+
+def test_urgent_entries_sort_before_distant_ones(client):
+    client.post("/release-calendar", data={
+        "product_name": "Far Future ETB", "release_date": "2030-01-01",
+        "supplier_deadline": "", "wholesale_price": "", "retail_price": "", "ordered_quantity": "",
+    })
+    from datetime import date, timedelta
+    soon = (date.today() + timedelta(days=1)).isoformat()
+    client.post("/release-calendar", data={
+        "product_name": "Urgent ETB", "release_date": "2027-06-01",
+        "supplier_deadline": soon, "wholesale_price": "", "retail_price": "", "ordered_quantity": "",
+    })
+    page = client.get("/release-calendar").text
+    assert page.index("Urgent ETB") < page.index("Far Future ETB")
 
 
 def test_business_record_pages_require_login():

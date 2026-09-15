@@ -6,6 +6,7 @@ traffic-light calculation) or commerce.py (shares fee-rule lookups).
 """
 
 import uuid
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
 
@@ -200,24 +201,87 @@ def update_goal_progress(
 
 
 # --- Module 15: release calendar ---------------------------------------------
+#
+# Was a flat add-only table: no edit, no delete, and nothing seeding it,
+# so it launched at 0 rows with no way to fix a typo short of the
+# database. Two things changed: real edit/delete, matching the pattern
+# shop_listings_admin.py's listing editor already established, and two
+# genuinely upcoming English Pokemon TCG releases seeded in (see
+# seed_release_calendar.py) rather than an empty form -- cross-checked
+# against two independent release-calendar sources before landing, the
+# same rule every other seeded date in this app has followed.
+#
+# Dates are stored as plain "YYYY-MM-DD" strings (matching the <input
+# type=date> format and the model's own String(32) column) rather than a
+# real Date type -- consistent with how the row already worked, not
+# changed here. _parse_date below is what lets "how urgent is this"
+# comparisons happen without a schema change.
 
-@router.get("/release-calendar", response_class=HTMLResponse)
-def release_calendar_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    entries = session.scalars(select(ReleaseCalendarEntry).order_by(ReleaseCalendarEntry.release_date)).all()
-    rows = "".join(
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _release_status(entry: ReleaseCalendarEntry, today: date) -> tuple[str, str]:
+    """(urgency bucket, pill kind) -- the bucket controls which group of
+    the page an entry sorts into, the pill kind its colour."""
+    release = _parse_date(entry.release_date)
+    deadline = _parse_date(entry.supplier_deadline)
+    if release and release < today:
+        return "released", "neutral"
+    if deadline and deadline < today and (release is None or release >= today):
+        return "deadline passed", "bad"
+    if deadline is not None:
+        days = (deadline - today).days
+        if days <= 7:
+            return "order deadline soon", "bad" if days <= 2 else "warn"
+    if release is not None:
+        days = (release - today).days
+        if days <= 14:
+            return "releasing soon", "ok"
+    return "upcoming", "neutral"
+
+
+def _release_row(e: ReleaseCalendarEntry, today: date) -> str:
+    status, kind = _release_status(e, today)
+    return (
         "<tr>"
-        f"<td>{escape(e.product_name)}</td>"
+        f"<td><strong>{escape(e.product_name)}</strong> {pill(status, kind)}"
+        f"{f"<div class='muted'>{e.ordered_quantity} on order</div>" if e.ordered_quantity else ''}</td>"
         f"<td>{escape(e.release_date or '—')}</td>"
         f"<td>{escape(e.supplier_deadline or '—')}</td>"
         f"<td>{f'${e.wholesale_price:,.2f}' if e.wholesale_price else '—'}</td>"
         f"<td>{f'${e.retail_price:,.2f}' if e.retail_price else '—'}</td>"
-        f"<td>{e.ordered_quantity if e.ordered_quantity is not None else '—'}</td>"
+        f"<td class='listing-actions'>"
+        f"<a class='btn small ghost' href='/release-calendar/{escape(e.id)}/edit'>Edit</a>"
+        f"<form method='post' action='/release-calendar/{escape(e.id)}/delete' "
+        "onsubmit=\"return confirm('Remove this release from the calendar?');\">"
+        "<button class='btn small ghost' type='submit'>Delete</button></form>"
+        "</td>"
         "</tr>"
-        for e in entries
-    ) or "<tr><td colspan=6>No upcoming releases tracked yet.</td></tr>"
+    )
+
+
+@router.get("/release-calendar", response_class=HTMLResponse)
+def release_calendar_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+    today = date.today()
+    entries = session.scalars(select(ReleaseCalendarEntry)).all()
+
+    # Urgent first, not just date order -- an order deadline in 2 days
+    # matters more than sort position, the same reason job_health leads
+    # with what needs attention rather than an alphabetical service list.
+    order = {"order deadline soon": 0, "deadline passed": 0, "releasing soon": 1, "upcoming": 2, "released": 3}
+    entries = sorted(entries, key=lambda e: (order.get(_release_status(e, today)[0], 2),
+                                             _parse_date(e.release_date) or date.max))
+
+    rows = "".join(_release_row(e, today) for e in entries) or "<tr><td colspan=6>No upcoming releases tracked yet.</td></tr>"
     table = (
         "<div class='panel'><div class='table-wrap'><table>"
-        "<thead><tr><th>Product</th><th>Release date</th><th>Order deadline</th><th>Wholesale</th><th>Retail</th><th>Ordered</th></tr></thead>"
+        "<thead><tr><th>Product</th><th>Release date</th><th>Order deadline</th><th>Wholesale</th><th>Retail</th><th></th></tr></thead>"
         f"<tbody>{rows}</tbody></table></div></div>"
     )
     form = (
@@ -231,7 +295,11 @@ def release_calendar_page(user: str = Depends(require_dashboard_user), session: 
         "<label>Ordered quantity<input name='ordered_quantity' type='number'></label>"
         "<button type='submit'>Add</button></form></div>"
     )
-    body = brand_header("Release calendar") + "<p class='subtitle'>Module 15 -- upcoming releases and supplier ordering deadlines.</p>" + table + form + _STYLE
+    body = (
+        brand_header("Release calendar")
+        + "<p class='subtitle'>Upcoming product releases and supplier ordering deadlines -- soonest deadline first.</p>"
+        + table + form + _STYLE
+    )
     return HTMLResponse(page("EzBay — Release calendar", body))
 
 
@@ -247,6 +315,60 @@ def create_release_entry(
         retail_price=_dec(retail_price) if retail_price.strip() else None,
         ordered_quantity=int(ordered_quantity) if ordered_quantity.strip() else None,
     ))
+    session.commit()
+    return RedirectResponse("/release-calendar", status_code=303)
+
+
+@router.get("/release-calendar/{entry_id}/edit", response_class=HTMLResponse)
+def edit_release_entry_form(
+    entry_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+) -> HTMLResponse:
+    entry = session.get(ReleaseCalendarEntry, entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="release calendar entry not found")
+    body = (
+        brand_header("Edit release")
+        + f"<div class='panel'><form method='post' action='/release-calendar/{escape(entry.id)}/edit' class='calc-form'>"
+        + f"<label>Product<input name='product_name' value='{escape(entry.product_name)}' required></label>"
+        + f"<label>Release date<input name='release_date' type='date' value='{escape(entry.release_date or '')}'></label>"
+        + f"<label>Supplier order deadline<input name='supplier_deadline' type='date' value='{escape(entry.supplier_deadline or '')}'></label>"
+        + f"<label>Wholesale price<input name='wholesale_price' type='number' step='0.01' value='{entry.wholesale_price or ''}'></label>"
+        + f"<label>Retail price<input name='retail_price' type='number' step='0.01' value='{entry.retail_price or ''}'></label>"
+        + f"<label>Ordered quantity<input name='ordered_quantity' type='number' value='{entry.ordered_quantity if entry.ordered_quantity is not None else ''}'></label>"
+        + "<div class='listing-actions'><button type='submit'>Save</button>"
+        + "<a class='btn small ghost' href='/release-calendar'>Cancel</a></div>"
+        + "</form></div>" + _STYLE
+    )
+    return HTMLResponse(page("EzBay — Edit release", body))
+
+
+@router.post("/release-calendar/{entry_id}/edit")
+def edit_release_entry_save(
+    entry_id: str, product_name: str = Form(...), release_date: str = Form(""), supplier_deadline: str = Form(""),
+    wholesale_price: str = Form(""), retail_price: str = Form(""), ordered_quantity: str = Form(""),
+    user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+):
+    entry = session.get(ReleaseCalendarEntry, entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="release calendar entry not found")
+    entry.product_name = product_name
+    entry.release_date = release_date or None
+    entry.supplier_deadline = supplier_deadline or None
+    entry.wholesale_price = _dec(wholesale_price) if wholesale_price.strip() else None
+    entry.retail_price = _dec(retail_price) if retail_price.strip() else None
+    entry.ordered_quantity = int(ordered_quantity) if ordered_quantity.strip() else None
+    session.commit()
+    return RedirectResponse("/release-calendar", status_code=303)
+
+
+@router.post("/release-calendar/{entry_id}/delete")
+def delete_release_entry(
+    entry_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+):
+    entry = session.get(ReleaseCalendarEntry, entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="release calendar entry not found")
+    session.delete(entry)
     session.commit()
     return RedirectResponse("/release-calendar", status_code=303)
 
@@ -269,4 +391,5 @@ _STYLE = """<style>
 .goal-form input{flex:1;background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:8px;padding:8px;color:var(--text)}
 .goal-form button{padding:8px 14px;border-radius:8px;border:none;background:var(--accent-2);color:#fff;font-weight:700;cursor:pointer}
 .muted{color:var(--text-dim);font-size:13px}
+.listing-actions{display:flex;gap:6px}
 </style>"""

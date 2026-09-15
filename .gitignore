@@ -31,3 +31,12 @@ storefront/.generated-assets/
 static/personal_collection_photos/*
 !static/personal_collection_photos/.gitkeep
 
+
+# Generated eBay File Exchange exports and ad-hoc CSV reports -- all
+# reproducible from the scripts that made them (export_ebay_bulk_listing.py,
+# convert_to_ebay_template.py, export_cards_by_set_review.py), none of it
+# source. Keeps them out of `git status` without deleting anything on disk.
+/ebay_bulk_listing*.csv
+/ebay_variation*.csv
+/ebay-category-listing-template.csv
+/cards_by_set_review.csv
