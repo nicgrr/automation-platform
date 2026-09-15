@@ -3,6 +3,46 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — NL Vault gets a background
+
+The page canvas was flat white -- `body{background:var(--paper)}` -- behind
+an otherwise "playful, colourful collectibles-store look" (the file's own
+words). Asked for something with the energy of a dense anime-poster
+collage: bold saturated colour, layered composition, diagonal motion.
+
+Not literal character art -- reproducing other artists' copyrighted
+characters on a storefront that sells product isn't something to build,
+collage reference or not. What actually carries across is the *energy*:
+built from the four accent hues already used everywhere on this page
+(the same brass/teal/blue/pink as the buttons, tags and ribbon badge, not
+a fifth palette invented for this one thing) as large soft colour blobs
+placed asymmetrically across the viewport, plus a fine dot-grid texture
+for the pop-art/print quality a poster collage has up close. Pure CSS,
+zero new assets -- the file's own rule ("no build step") holds.
+
+Every real surface -- the ink header, white product cards, white panels
+-- stays fully opaque, so the background can be this bold without ever
+touching legibility: it only shows in the margins and the gaps between
+cards. `body::before`, `position:fixed`, so the blobs hold their place
+as the page scrolls past a long product grid rather than tiling
+awkwardly downward.
+
+The hero band (the wordmark, "Fresh in the vault") gets a bolder version
+of the same system rather than any new foreground shapes -- a prior full
+card showcase in that exact spot was pulled for reading as clutter (see
+the file's own history), so the fix here is depth and colour behind the
+existing calm layout, not more content competing with the wordmark for
+attention.
+
+- All 82 existing storefront tests pass unchanged -- pure background CSS,
+  no HTML content touched. Full suite (1426) green.
+
+**Not done here:** the live storefront process (`storefront.app:app` on
+:8090) has no systemd unit and isn't running under tmux/screen -- a
+detached background process from four days ago. Restarting it to pick up
+this change means a few seconds of downtime for real shoppers, which
+needs your say-so rather than mine.
+
 ## 2026-09-15 — Working through the "ready to build" checklist
 
 Five items, one already done, one genuinely new bug found along the way.

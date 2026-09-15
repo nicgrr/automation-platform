@@ -32,9 +32,53 @@ STYLE = """<style>
 }
 *{box-sizing:border-box}
 body{
-  margin:0;background:var(--paper);color:var(--ink);position:relative;
+  margin:0;background:var(--bone);color:var(--ink);position:relative;
   font-family:Nunito,ui-sans-serif,system-ui,-apple-system,sans-serif;
   line-height:1.55;-webkit-font-smoothing:antialiased;
+}
+
+/* ---- page background: collage energy, kept to the negative space ----
+   Every real surface on this page -- the ink header, white cards, white
+   panels -- is fully opaque, so this can be as bold as it likes without
+   ever touching legibility: it only ever shows in the margins and the
+   gaps between cards. Built from the four accent hues already in use
+   everywhere else (buttons, tags, the ribbon badge) rather than a fifth
+   palette invented just for this, so a card sitting on it always reads
+   as the same shop.
+
+   Fixed, not scrolled: the blobs stay put as the page scrolls past them,
+   the way a poster's background does rather than a repeating pattern
+   tiling awkwardly down a long product grid. Two layers -- soft colour
+   blobs for depth and movement, a fine dot grid for the pop-art/print
+   texture an anime-poster collage actually has up close -- both pure CSS,
+   no image assets, matching this file's own no-build-step rule.
+   @media (prefers-reduced-motion) is irrelevant here: nothing animates,
+   it's a static backdrop. */
+body::before{
+  content:'';position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(560px 480px at 8% -6%, rgba(255,93,143,.20), transparent 60%),
+    radial-gradient(620px 520px at 96% 8%, rgba(47,111,237,.16), transparent 58%),
+    radial-gradient(520px 460px at 88% 92%, rgba(15,158,148,.18), transparent 60%),
+    radial-gradient(480px 420px at 2% 88%, rgba(179,133,47,.16), transparent 58%),
+    radial-gradient(900px 700px at 50% 40%, rgba(255,93,143,.05), transparent 70%),
+    repeating-radial-gradient(circle at 0 0, rgba(21,17,26,.05) 0 1.6px, transparent 1.6px 26px),
+    var(--bone);
+  background-repeat:no-repeat,no-repeat,no-repeat,no-repeat,no-repeat,repeat,no-repeat;
+}
+@media (max-width:720px){
+  /* Same four corners, pulled in so a blob doesn't spill off-screen and
+     read as a flat colour bar on a narrow viewport. */
+  body::before{
+    background:
+      radial-gradient(340px 300px at 0% -8%, rgba(255,93,143,.20), transparent 62%),
+      radial-gradient(360px 320px at 100% 10%, rgba(47,111,237,.16), transparent 60%),
+      radial-gradient(320px 300px at 92% 96%, rgba(15,158,148,.18), transparent 62%),
+      radial-gradient(300px 280px at 0% 94%, rgba(179,133,47,.16), transparent 60%),
+      repeating-radial-gradient(circle at 0 0, rgba(21,17,26,.05) 0 1.4px, transparent 1.4px 22px),
+      var(--bone);
+    background-repeat:no-repeat,no-repeat,no-repeat,no-repeat,repeat,no-repeat;
+  }
 }
 a{color:inherit;text-decoration:none}
 img{max-width:100%;display:block}
@@ -315,7 +359,21 @@ footer a:hover{color:var(--teal-dark)}
    What replaced it, 2026-09-10, isn't that -- two large, deliberate
    panes (trading cards / collectibles), not a strip, so it reads as one
    curated visual statement rather than more inventory to parse. */
-.hero-banner{background:linear-gradient(180deg,var(--bone) 0%,var(--paper) 100%)}
+/* The one spot on the page that IS meant to feel like the poster: same
+   four hues, no new shapes (a prior full showcase here read as clutter
+   and got pulled -- see the note above), just more of what the page
+   background already does, closer and slightly bolder, so the wordmark
+   sits on the most energetic point of the canvas rather than a plain
+   fade. Layered over the page's own body::before rather than replacing
+   it -- scroll past the hero and the same system continues underneath. */
+.hero-banner{
+  position:relative;
+  background:
+    radial-gradient(70% 130% at 14% 8%, rgba(255,93,143,.26), transparent 62%),
+    radial-gradient(65% 120% at 86% 100%, rgba(47,111,237,.22), transparent 60%),
+    radial-gradient(55% 100% at 50% 50%, rgba(15,158,148,.14), transparent 65%),
+    linear-gradient(180deg, rgba(250,247,242,.4) 0%, var(--bone) 100%);
+}
 .hero-inner{
   max-width:1180px;margin:0 auto;padding:64px 22px 56px;
   display:flex;flex-direction:column;align-items:center;text-align:center;
