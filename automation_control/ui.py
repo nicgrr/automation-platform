@@ -286,6 +286,7 @@ ADMIN_NAV = [
         ("/market-search", "Market search"),
         ("/deal-check", "Deal check"),
         ("/buying-calculator", "Buying calculator"),
+        ("/ebay-export", "eBay export"),
         ("/export", "Export data"),
     ], False),
     ("Not set up yet", [

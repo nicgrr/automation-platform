@@ -110,6 +110,15 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
     m = pending[0]
     thumb = f"<img src='/inventory-audit/image/{escape(m['item_id'])}' alt='' loading='lazy' decoding='async'>"
 
+    # The refile form used to make a human retype the set code and number
+    # by hand off the photo, even though "looks like" is exactly that
+    # answer already sitting in the mismatch row -- so pre-fill it as a
+    # one-click confirm rather than a blank form next to its own answer.
+    # Still editable, and still requires the click: this never auto-submits.
+    looks_like_card = session.get(CatalogCard, m["looks_like_id"])
+    suggested_set_code = (looks_like_card.card_set.code or looks_like_card.set_id) if looks_like_card and looks_like_card.card_set else ""
+    suggested_number = looks_like_card.number if looks_like_card else ""
+
     body = (
         header
         + "<div class='audit-card'>"
@@ -139,13 +148,17 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
         + "<div class='audit-prompt'>Or, if it's the wrong card entirely -- re-file it</div>"
         + "<form method='post' action='/inventory-audit/refile' class='audit-refile-form'>"
         + f"<input type='hidden' name='item_id' value='{escape(m['item_id'])}'>"
-        + "<input name='set_code' placeholder='Set code, e.g. WHT' required>"
-        + "<input name='number' placeholder='Number, e.g. 055' required>"
+        + f"<input name='set_code' value='{escape(suggested_set_code)}' placeholder='Set code, e.g. WHT' required>"
+        + f"<input name='number' value='{escape(suggested_number)}' placeholder='Number, e.g. 055' required>"
         + "<button class='audit-btn audit-btn-refile' type='submit'>Re-file to this card</button>"
         + "</form>"
-        + "<p class='audit-refile-hint'>Read the set code and number straight off the photo -- "
-          "this drops any listing built for the wrong card and re-owns the item under the right one, "
-          "merging into an existing holding of that card if you already have one.</p>"
+        + ("<p class='audit-refile-hint'>Pre-filled from &ldquo;looks like&rdquo; above -- check it against "
+           "the photo before confirming. This drops any listing built for the wrong card and re-owns the "
+           "item under the right one, merging into an existing holding if you already have one.</p>"
+           if suggested_set_code else
+           "<p class='audit-refile-hint'>Read the set code and number straight off the photo -- "
+           "this drops any listing built for the wrong card and re-owns the item under the right one, "
+           "merging into an existing holding of that card if you already have one.</p>")
         + "</div></div>"
         + _STYLE
     )

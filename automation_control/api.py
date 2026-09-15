@@ -42,6 +42,7 @@ from .scan_ingest_status import router as scan_ingest_status_router
 from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, JobRead
 from .sealed_economics import router as sealed_economics_router
 from .search import router as search_router
+from .ebay_bulk_export import router as ebay_bulk_export_router
 from .ebay_listings import router as ebay_listings_router
 from .settings_page import router as settings_page_router
 from .shop_admin import router as shop_admin_router
@@ -97,6 +98,7 @@ app.include_router(inventory_audit_router)
 app.include_router(search_router)
 app.include_router(settings_page_router)
 app.include_router(ebay_listings_router)
+app.include_router(ebay_bulk_export_router)
 app.include_router(buying_router)
 app.include_router(commerce_router)
 app.include_router(business_records_router)

@@ -1,0 +1,13 @@
+[Unit]
+Description=EzBay daily eBay active-listings cache refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ezbay
+Group=ezbay
+WorkingDirectory=/home/nic/automation-platform
+ExecStart=/bin/bash /home/nic/automation-platform/scripts/run-ebay-listings-refresh.sh
+StandardOutput=append:/home/nic/automation-platform/scan_ingest_data/logs/ebay-listings-refresh.log
+StandardError=append:/home/nic/automation-platform/scan_ingest_data/logs/ebay-listings-refresh.log

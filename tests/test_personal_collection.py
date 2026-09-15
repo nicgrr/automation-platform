@@ -42,6 +42,25 @@ def make_personal_collection_item(session, name="Roronoa Zoro", *, price=None, i
     return inv_id, item_id
 
 
+def test_list_for_sale_buttons_share_one_form_instead_of_one_each(client, session):
+    """810 near-identical single-button forms (one per row) were most of
+    this page's DOM weight -- a real cost on a phone even though the raw
+    HTML bytes barely change. Every row's button now references one
+    shared external form via form=/formaction= rather than carrying its
+    own <form>, and each button must still point at its own row's URL."""
+    inv_a, _ = make_personal_collection_item(session, "Roronoa Zoro", price="10")
+    inv_b, _ = make_personal_collection_item(session, "Nami", price="20")
+
+    page = client.get("/personal-collection").text
+
+    # Exactly one shared form, not one per row -- the old pattern being fixed.
+    assert page.count("id='pc-list-form'") == 1
+    assert f"<form method='post' action='/personal-collection/{inv_a}/list-for-sale'>" not in page
+    assert f"<form method='post' action='/personal-collection/{inv_b}/list-for-sale'>" not in page
+    assert f"form='pc-list-form' formaction='/personal-collection/{inv_a}/list-for-sale'" in page
+    assert f"form='pc-list-form' formaction='/personal-collection/{inv_b}/list-for-sale'" in page
+
+
 def test_page_lists_personal_collection_items(client, session):
     make_personal_collection_item(session, "Roronoa Zoro")
     resp = client.get("/personal-collection")

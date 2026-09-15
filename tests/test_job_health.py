@@ -149,3 +149,13 @@ def test_a_systemctl_that_will_not_run_is_survived(monkeypatch):
 @pytest.mark.parametrize("value", ["", "n/a", "0", "garbage", "Mon"])
 def test_unparseable_timestamps_are_none(value):
     assert job_health._parse_timestamp(value) is None
+
+
+def test_ebay_listings_cache_is_one_of_the_monitored_jobs():
+    """Added alongside its timer, the same day: the dashboard widget and
+    /settings' listing count were only ever as fresh as the last manual
+    click before this timer existed."""
+    from automation_control.job_health import JOBS
+
+    labels = [job.label for job in JOBS]
+    assert "eBay listings cache" in labels

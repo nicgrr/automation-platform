@@ -204,8 +204,15 @@ def _row(item: InventoryItem, catalog_item: CatalogItem, tcg_card: TcgCard | Non
         f"<td>{_money(item.allocated_cost_basis)}</td>"
         f"<td>{_money(price)}</td>"
         f"<td class='pc-actions'>"
-        f"<form method='post' action='/personal-collection/{escape(item.id)}/list-for-sale'>"
-        "<button class='btn small'>List for sale</button></form></td>"
+        # No form here -- a nested <form> inside the upload form's row
+        # isn't valid HTML, and 407 near-identical single-button forms
+        # (one per row, all POSTing nothing but the item id already in
+        # their own URL) was most of this page's 810-form, 319KB weight.
+        # HTML5's `form=`/`formaction=` let a button submit an external
+        # form to its own row's URL -- see pc-list-form below -- so this
+        # collapses to one shared form and 407 buttons that reference it.
+        f"<button class='btn small' form='pc-list-form' "
+        f"formaction='/personal-collection/{escape(item.id)}/list-for-sale'>List for sale</button></td>"
         "</tr>"
     )
 
@@ -282,6 +289,10 @@ def personal_collection_page(
         + note
         + f"<div class='filter-tabs'>{game_tabs}</div>"
         + f"<div class='listing-toolbar'>{search_form}</div>"
+        # Empty and shared: every "List for sale" button across every row
+        # references this one form via form='pc-list-form' rather than
+        # each carrying its own -- see _row's comment for why.
+        + "<form id='pc-list-form' method='post'></form>"
         + "<div class='panel'><div class='table-wrap'><table><thead><tr>"
         + "<th></th><th>Item</th><th>Qty</th><th>Cost paid</th><th>Price</th><th></th>"
         + f"</tr></thead><tbody>{rows}</tbody></table></div></div>"

@@ -264,3 +264,41 @@ def test_a_second_card_sharing_a_printed_number_is_skipped_not_a_colliding_varia
     assert "sku-alt" in skipped[0]
     assert "148" in skipped[0]
 
+
+
+def test_a_field_missing_from_this_categorys_template_is_dropped_not_a_crash(tmp_path):
+    """Confirmed live against the real downloaded template: this account's
+    Trading Cards category has no C:Rarity column, even though convert_row
+    emits it when a card's rarity is known. DictWriter's strict "no extra
+    keys" check would otherwise fail the whole export over one optional
+    field a different category's template might well support."""
+    import subprocess
+    import sys
+
+    columns = list(convert_row(_row(), _args()))
+    action = "*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8)"
+    # A template deliberately missing C:Rarity, the way the real one is.
+    header = [action] + [c for c in columns if c not in (action, "C:Rarity")]
+
+    template = tmp_path / "template.csv"
+    template.write_bytes(
+        ("\ufeffInfo,Version=1.0.0,Template=fx_category_template_EBAY_AU\r"
+         + ",".join(header) + "\r").encode("utf-8")
+    )
+    source = tmp_path / "in.csv"
+    source.write_text(
+        "sku,title,description,condition,price,currency,quantity,weight_grams,image_url,shipping_policy,set_name,rarity\n"
+        "abc,Abra #54,a card,New,2.34,AUD,1,15,http://x/y.png,letter,Mega Evolution,Rare\n",
+        encoding="utf-8")
+    out = tmp_path / "out.csv"
+
+    result = subprocess.run([sys.executable, "-m", "scripts.convert_to_ebay_template",
+                            "--template", str(template), "--in", str(source), "--out", str(out),
+                            "--location", "Sydney", "--dispatch-days", "1",
+                            "--payment-policy", "P", "--return-policy", "R"],
+                           capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    lines = out.read_bytes().decode("utf-8-sig").splitlines()
+    assert "C:Rarity" not in lines[1]  # the header the row was written against
+    assert lines[2].startswith("Add,")  # the row itself still made it through

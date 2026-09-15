@@ -3,6 +3,64 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — Working through the "ready to build" checklist
+
+Five items, one already done, one genuinely new bug found along the way.
+
+**Photo audit fix button** -- already built. `/inventory-audit/refile`
+existed, fully wired, with its own merge-or-create logic and a button on
+the page -- someone (uncommitted work in the tree) had already closed this
+gap since the original audit. Correcting the checklist rather than
+duplicating it. What was still missing: the form made you retype the set
+code and number off the photo by hand, even though "looks like" is
+already that answer sitting in the flagged row. Pre-filled now, still
+editable, still requires a real click to confirm.
+
+**One-action eBay export** -- `/ebay-export`. Chains
+`export_ebay_bulk_listing.py` and `convert_to_ebay_template.py` (both
+given the standard `main(argv)` signature so they can be called in-process
+rather than shelled out to) and hands back the finished File Exchange CSV
+as a download. Verified end to end against the real account, which caught
+two real bugs: the route itself forgot to pass the letter/parcel shipping
+policy names through (would have silently fallen back to placeholders
+eBay rejects), and separately, uncommitted work-in-progress in
+`convert_to_ebay_template.py` (real variation-listing support, verified
+against a live competitor listing) crashed on a `C:Rarity` field this
+account's actual downloaded template doesn't have a column for -- fixed
+by dropping any field a row emits that the template doesn't support,
+rather than failing the whole export over one optional item specific.
+
+**A timer for the eBay listings cache** -- `ebay-listings-refresh.timer`,
+daily 03:31. The refresh logic was extracted out of the "Refresh from
+eBay" button into `refresh_from_ebay()`, shared by the route and the new
+`scripts/refresh_ebay_listings.py`, so the cache can't drift depending on
+which one last ran it. Added to `job_health.py` alongside the other four
+jobs. Running it live surfaced real news: **17 active listings now**, up
+from 2 -- the eBay upload from a few days ago evidently went through.
+
+**Personal Collection's page weight** -- 810 forms (2 per row x 405 rows)
+cut to 407: every "List for sale" button now references one shared form
+via HTML5's `form=`/`formaction=` instead of carrying its own `<form>`,
+which is valid where a per-file-input upload form genuinely can't be
+consolidated the same way. DOM element count roughly halves; raw page
+weight barely moves, since the fix targets element count, not bytes --
+reporting that plainly rather than as a KB win it isn't.
+
+**Dashboard performance** -- diagnosed, not yet fixed. Profiled the route
+directly rather than guessing: `_latest_prices` + `_latest_ebay_prices`
+account for ~73% of render time, because both pull every historical
+`card_prices` row for every held card into Python and pick the latest by
+hand, rather than a SQL-side "latest per group" query -- a reasonable
+call when the comment above them was written, now costing 25,000+ row
+loads against a table that has grown to 41,868 rows and keeps growing via
+the pricing timers built this week. Shared by 6 modules
+(quick_price/analytics/deal_check/dashboard/inventory_review/market_search),
+so a rewrite is correctness-sensitive and deserves its own dedicated,
+tested pass rather than a rushed inline change alongside everything else
+today.
+
+- 15 new tests across the five items. Full suite (1426) green.
+
 ## 2026-09-15 — Cat Life Series
 
 14 figures added -- 9 base coat patterns plus two separate rarity tiers,

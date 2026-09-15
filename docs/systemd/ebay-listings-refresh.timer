@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh the eBay active-listings cache daily
+
+[Timer]
+# A few minutes after the eBay price refresh (03:17) and well clear of the
+# noon pokemonpricetracker backfill and the ten-minutely order import --
+# same reasoning as ebay-price-import.timer's own placement.
+OnCalendar=*-*-* 03:31:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

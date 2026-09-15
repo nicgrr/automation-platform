@@ -86,7 +86,7 @@ LOT_PACKAGING_GRAMS = 80
 # toploadered card plus its envelope and stiffener.
 SINGLE_CARD_WEIGHT_GRAMS = 15
 
-FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name"]
+FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total"]
 
 
 def single_set_name(session, item: CatalogItem | None) -> str:
@@ -97,6 +97,30 @@ def single_set_name(session, item: CatalogItem | None) -> str:
         return ""
     card_set = session.get(CardSet, tcg.set_id)
     return card_set.name if card_set else ""
+
+
+def single_set_total(session, item: CatalogItem | None) -> str:
+    """The set's own printed total (e.g. 162 for Temporal Forces) -- used
+    to format a variation value the way real sellers do it, "001/162
+    Pineco" rather than a bare number, confirmed against a real
+    successful competitor listing (2026-09-14)."""
+    if item is None:
+        return ""
+    tcg = session.get(TcgCard, item.id)
+    if tcg is None or not tcg.set_id:
+        return ""
+    card_set = session.get(CardSet, tcg.set_id)
+    if card_set is None:
+        return ""
+    total = card_set.printed_total or card_set.total
+    return str(total) if total else ""
+
+
+def single_rarity(session, item: CatalogItem | None) -> str:
+    if item is None:
+        return ""
+    tcg = session.get(TcgCard, item.id)
+    return (tcg.rarity or "") if tcg else ""
 
 
 def single_image_url(session, listing: ShopListing, item: CatalogItem | None) -> str | None:
@@ -162,6 +186,58 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
             "image_url": url,
             "shipping_policy": letter_policy,
             "set_name": single_set_name(session, item),
+            "rarity": single_rarity(session, item),
+            "set_total": single_set_total(session, item),
+        })
+    return rows, skipped
+
+
+def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: str,
+                          max_price: Decimal = Decimal("2")) -> tuple[list[dict], list[str]]:
+    """The exact inverse population of build_single_rows's lot-overlap
+    exclusion: cheap commons whose set already has an active Bulk Master
+    lot. Those are real, sellable cards -- today a buyer can only get one
+    at random inside a lot of 30, with no way to pick a specific card.
+    This is the candidate list for one eBay variation listing per set (see
+    convert_to_ebay_template.py's build_variation_group), letting a buyer
+    choose exactly which card they want at its own price, instead of
+    either the anonymous lot or no individual listing at all.
+
+    Row shape matches build_single_rows exactly (same downstream CSV,
+    grouped by set_name once read back) -- each row is still one real
+    card with its own sku/price/quantity/photo, just destined to become a
+    variation of a shared parent listing rather than its own listing.
+    """
+    listings = session.scalars(
+        select(ShopListing).where(ShopListing.status == status, ShopListing.price <= max_price)
+        .order_by(ShopListing.title)
+    ).all()
+    lot_set_ids = _lot_covered_set_ids(session, status)
+
+    rows, skipped = [], []
+    for listing in listings:
+        tcg = session.get(TcgCard, listing.catalog_item_id)
+        if not (tcg and tcg.set_id in lot_set_ids):
+            continue  # not the lot-covered population this export targets
+        item = session.get(CatalogItem, listing.catalog_item_id)
+        url = single_image_url(session, listing, item)
+        if not url:
+            skipped.append(f"{listing.title} ({listing.id}) -- no publicly-hosted image on file")
+            continue
+        rows.append({
+            "sku": listing.id,
+            "title": listing.title,
+            "description": listing.description or listing.title,
+            "condition": listing.condition or "",
+            "price": f"{listing.price:.2f}",
+            "currency": listing.currency,
+            "quantity": listing.quantity,
+            "weight_grams": SINGLE_CARD_WEIGHT_GRAMS,
+            "image_url": url,
+            "shipping_policy": letter_policy,
+            "set_name": single_set_name(session, item),
+            "rarity": single_rarity(session, item),
+            "set_total": single_set_total(session, item),
         })
     return rows, skipped
 
@@ -189,11 +265,13 @@ def build_lot_rows(session, *, status: ShopListingStatus, lot_max_cards: int,
             "image_url": lot.image_url,
             "shipping_policy": lot_shipping_policy(lot.card_count, lot_max_cards, letter_policy, parcel_policy),
             "set_name": lot.card_set.name if lot.card_set else "",
+            "rarity": "",
+            "set_total": "",
         })
     return rows, skipped
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--status", default="active", choices=[s.value for s in ShopListingStatus],
                         help="only export rows in this status (default: active)")
@@ -206,6 +284,9 @@ def main() -> int:
                         help="your real eBay shipping Business Policy name for a lot over --lot-max-cards")
     parser.add_argument("--singles-only", action="store_true", help="skip Bulk Master lots")
     parser.add_argument("--lots-only", action="store_true", help="skip individual single-card listings")
+    parser.add_argument("--variations", action="store_true",
+                        help="export the lot-covered commons as variation candidates instead of singles/lots -- "
+                             "see build_variation_rows and convert_to_ebay_template.py's --variations flag")
     parser.add_argument("--lot-overlap-max-price", type=Decimal, default=Decimal("2"),
                         help="a single at or under this price, from a set that already has an active bulk lot, is "
                              "assumed to be the same physical cards the lot promises and is excluded to avoid "
@@ -213,10 +294,10 @@ def main() -> int:
                              "negative number to disable this check entirely.")
     parser.add_argument("--out", default="ebay_bulk_listing.csv", help="output CSV path")
     parser.add_argument("--dry-run", action="store_true", help="print what would be exported, write nothing")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    if args.singles_only and args.lots_only:
-        parser.error("--singles-only and --lots-only are mutually exclusive")
+    if sum([args.singles_only, args.lots_only, args.variations]) > 1:
+        parser.error("--singles-only, --lots-only, and --variations are mutually exclusive")
 
     if DEFAULT_LETTER_POLICY == args.letter_policy or DEFAULT_PARCEL_POLICY == args.parcel_policy:
         print("NOTE: using a placeholder shipping policy name -- pass --letter-policy/--parcel-policy "
@@ -226,17 +307,21 @@ def main() -> int:
     with SessionLocal() as session:
         rows: list[dict] = []
         skipped: list[str] = []
-        if not args.lots_only:
-            overlap_price = args.lot_overlap_max_price if args.lot_overlap_max_price >= 0 else None
-            r, s = build_single_rows(session, status=status, letter_policy=args.letter_policy,
-                                     lot_overlap_max_price=overlap_price)
-            rows += r
-            skipped += s
-        if not args.singles_only:
-            r, s = build_lot_rows(session, status=status, lot_max_cards=args.lot_max_cards,
-                                  letter_policy=args.letter_policy, parcel_policy=args.parcel_policy)
-            rows += r
-            skipped += s
+        if args.variations:
+            rows, skipped = build_variation_rows(session, status=status, letter_policy=args.letter_policy,
+                                                 max_price=args.lot_overlap_max_price)
+        else:
+            if not args.lots_only:
+                overlap_price = args.lot_overlap_max_price if args.lot_overlap_max_price >= 0 else None
+                r, s = build_single_rows(session, status=status, letter_policy=args.letter_policy,
+                                         lot_overlap_max_price=overlap_price)
+                rows += r
+                skipped += s
+            if not args.singles_only:
+                r, s = build_lot_rows(session, status=status, lot_max_cards=args.lot_max_cards,
+                                      letter_policy=args.letter_policy, parcel_policy=args.parcel_policy)
+                rows += r
+                skipped += s
 
     if args.dry_run:
         print(f"would export {len(rows)} row(s):")

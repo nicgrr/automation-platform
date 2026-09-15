@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     ebay_fulfillment_policy_id: str | None = None
     ebay_return_policy_id: str | None = None
     ebay_merchant_location_key: str | None = None
+    # The File Exchange bulk-upload path (scripts/export_ebay_bulk_listing.py
+    # + scripts/convert_to_ebay_template.py) needs a different shape of the
+    # same information: human-readable Business Policy *names*, the ones
+    # printed in Seller Hub, not the numeric policy *ids* the Sell API takes
+    # above -- eBay gives no API to translate one into the other, so these
+    # are a second, separate set of values rather than derived from the ids.
+    ebay_ship_from_location: str | None = None
+    ebay_dispatch_days: int | None = None
+    ebay_listing_payment_policy_name: str | None = None
+    ebay_listing_return_policy_name: str | None = None
+    ebay_letter_shipping_policy_name: str | None = None
+    ebay_parcel_shipping_policy_name: str | None = None
     listing_pipeline_output_dir: str = "listing_pipeline_data/output"
     listing_pipeline_config_path: str = "listing_pipeline_data/config.toml"
     # Stripe Checkout for the NL Vault storefront. Absent by default: the

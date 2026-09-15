@@ -42,7 +42,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .ebay_oauth import OAuthError, ebay_services, valid_user_access_token
-from .models import CatalogItem, EbayListing, InventoryItem
+from .models import CatalogCard, CatalogItem, EbayListing, InventoryItem
 from .ui import brand_header, page
 
 router = APIRouter()
@@ -147,7 +147,13 @@ STALE_AFTER_DAYS = 21
 # short enough excludes noisy generic suffixes (ex, V, GX) without a
 # hand-maintained stopword list doing all the work alone.
 _MIN_TOKEN_LEN = 5
-_GENERIC_WORDS = {"mega", "shiny", "energy", "promo", "cards", "pokemon"}
+_GENERIC_WORDS = {
+    "mega", "shiny", "energy", "promo", "cards", "pokemon",
+    # Regional-form prefixes: often longer than the species name that
+    # follows them ("Paldean Tauros"), and generic enough to collide with
+    # a set name that uses the same word ("Paldean Fates").
+    "paldean", "galarian", "alolan", "hisuian",
+}
 
 
 def _listing_age_days(row: EbayListing) -> int | None:
@@ -174,24 +180,43 @@ def _distinctive_word(name: str) -> str | None:
 
 
 def _owned_card_names(session: Session) -> list[str]:
-    """Every catalog item with real stock on hand (quantity > 0). Joined on
-    the id CatalogCard and CatalogItem share (confirmed against svp-196:
-    same id, both tables) rather than InventoryItem.catalog_item_id, which
-    isn't backfilled for cards committed by scan-ingest -- see
-    InventoryItem's docstring."""
+    """Every Pokemon (not Trainer/Energy) catalog item with real stock on
+    hand (quantity > 0). Joined on the id CatalogCard and CatalogItem share
+    (confirmed against svp-196: same id, both tables) rather than
+    InventoryItem.catalog_item_id, which isn't backfilled for cards
+    committed by scan-ingest -- see InventoryItem's docstring.
+
+    Restricted to supertype Pokemon: Trainer/Energy names are exactly the
+    ones that collide with unrelated words -- "Ultra Ball" against "...
+    Ultra Rare...", "Paldean Student" against "Paldean Fates" (a set name,
+    not the card) -- because their vocabulary is generic and reused across
+    hundreds of unrelated cards and set names. A species name like
+    "Kangaskhan" essentially never collides by accident.
+    """
     rows = session.execute(
-        select(CatalogItem.name).join(InventoryItem, InventoryItem.card_id == CatalogItem.id)
-        .where(InventoryItem.quantity > 0).distinct()
+        select(CatalogItem.name).select_from(InventoryItem)
+        .join(CatalogCard, CatalogCard.id == InventoryItem.card_id)
+        .join(CatalogItem, CatalogItem.id == InventoryItem.card_id)
+        .where(InventoryItem.quantity > 0, CatalogCard.supertype == "Pokémon")
+        .distinct()
     ).all()
     return [r[0] for r in rows]
 
 
-def _bundle_overlaps(session: Session, rows: list[EbayListing]) -> list[tuple[EbayListing, str]]:
-    """Listings whose title very likely names a card also sitting in local
-    inventory -- e.g. a bundle listing built from cards that are (or look
-    like) the same physical copies scan-ingest already has on hand. This is
-    a title-text heuristic, not a SKU link, so it's a flag to go check by
-    eye, not a guaranteed duplicate."""
+def _bundle_overlaps(session: Session, rows: list[EbayListing]) -> list[tuple[EbayListing, list[str]]]:
+    """Listings whose title names *two or more* cards also sitting in local
+    inventory -- e.g. a bundle built from cards that are (or look like) the
+    same physical copies scan-ingest already has on hand.
+
+    Requiring 2+ hits, not 1, is deliberate: a single name match is nearly
+    always noise once inventory has a few hundred distinct cards in it (a
+    first pass flagged 11 of 17 real listings, mostly on generic collisions
+    like "Ultra Ball" matching "...Ultra Rare..." or "Pikachu" matching
+    itself, since almost any common name shows up somewhere by chance).
+    Two independent names both landing in the same title is a much rarer
+    coincidence -- it's what made the original Zapdos-ex/Kangaskhan bundle
+    a real find rather than a guess.
+    """
     tokens: dict[str, str] = {}
     for name in _owned_card_names(session):
         word = _distinctive_word(name)
@@ -200,19 +225,20 @@ def _bundle_overlaps(session: Session, rows: list[EbayListing]) -> list[tuple[Eb
     flagged = []
     for row in rows:
         title_lower = row.title.lower()
-        match = next((name for token, name in tokens.items() if re.search(rf"\b{re.escape(token)}\b", title_lower)), None)
-        if match:
-            flagged.append((row, match))
+        matches = [name for token, name in tokens.items() if re.search(rf"\b{re.escape(token)}\b", title_lower)]
+        if len(matches) >= 2:
+            flagged.append((row, matches))
     return flagged
 
 
 def _recommendations_html(session: Session, rows: list[EbayListing]) -> str:
     items = []
-    for row, name in _bundle_overlaps(session, rows):
+    for row, names in _bundle_overlaps(session, rows):
+        names_html = ", ".join(f"<b>{escape(n)}</b>" for n in names)
         items.append(
-            f"<li class='rec warn'>{escape(row.title)}<br><span class='rec-detail'>looks like it may include "
-            f"<b>{escape(name)}</b>, which is also recorded as in-stock inventory &mdash; "
-            "worth checking it isn't the same physical card counted twice.</span></li>"
+            f"<li class='rec warn'>{escape(row.title)}<br><span class='rec-detail'>names {names_html}, "
+            "all also recorded as in-stock inventory &mdash; "
+            "worth checking these aren't the same physical cards counted twice.</span></li>"
         )
     for row in rows:
         age = _listing_age_days(row)
@@ -271,27 +297,39 @@ def ebay_listings_page(request: Request, refreshed: str = "", error: str = "",
     return HTMLResponse(page("EzBay — eBay listings", body))
 
 
-@router.post("/ebay-listings/refresh")
-async def ebay_listings_refresh(request: Request, user: str = Depends(require_dashboard_user),
-                                session: Session = Depends(get_session)) -> RedirectResponse:
-    settings = request.app.state.settings
+async def refresh_from_ebay(session: Session, settings, user: str) -> int:
+    """Fetches the current ActiveList from eBay and upserts it. Shared by
+    the web route (a human clicking Refresh) and
+    scripts/refresh_ebay_listings.py (the daily timer) -- one
+    implementation, so the cache can't drift depending on which one last
+    ran it. Raises OAuthError/EbayApiError on failure; callers decide how
+    to surface that (a redirect with an error message for the route, a
+    non-zero exit for the timer)."""
     cipher, oauth = ebay_services(settings)
-    try:
-        token = await valid_user_access_token(session, cipher, oauth)
-        adapter = EbayTradingReadAdapter(token, settings.ebay_client_id, environment=settings.ebay_env,
-                                         marketplace_id=settings.ebay_marketplace_id)
-        listings = await adapter.get_active_listings()
-    except (OAuthError, EbayApiError) as exc:
-        record_event(session, actor_type="user", actor_id=user, action="ebay.trading_listings.read",
-                     resource_type="ebay_listing", resource_id=None, outcome="failed",
-                     correlation_id=_correlation_id(), details={"error": str(exc)})
-        from urllib.parse import quote
-        return RedirectResponse(f"/ebay-listings?error={quote(str(exc))}", status_code=303)
-
+    token = await valid_user_access_token(session, cipher, oauth)
+    adapter = EbayTradingReadAdapter(token, settings.ebay_client_id, environment=settings.ebay_env,
+                                     marketplace_id=settings.ebay_marketplace_id)
+    listings = await adapter.get_active_listings()
     count = _upsert(session, listings)
     record_event(session, actor_type="user", actor_id=user, action="ebay.trading_listings.read",
                 resource_type="ebay_listing", resource_id=None, outcome="success",
                 correlation_id=_correlation_id(), details={"count": count})
+    return count
+
+
+@router.post("/ebay-listings/refresh")
+async def ebay_listings_refresh(request: Request, user: str = Depends(require_dashboard_user),
+                                session: Session = Depends(get_session)) -> RedirectResponse:
+    from urllib.parse import quote
+
+    settings = request.app.state.settings
+    try:
+        await refresh_from_ebay(session, settings, user)
+    except (OAuthError, EbayApiError) as exc:
+        record_event(session, actor_type="user", actor_id=user, action="ebay.trading_listings.read",
+                     resource_type="ebay_listing", resource_id=None, outcome="failed",
+                     correlation_id=_correlation_id(), details={"error": str(exc)})
+        return RedirectResponse(f"/ebay-listings?error={quote(str(exc))}", status_code=303)
     return RedirectResponse("/ebay-listings?refreshed=1", status_code=303)
 
 

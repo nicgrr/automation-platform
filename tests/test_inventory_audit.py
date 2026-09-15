@@ -301,6 +301,30 @@ def test_refile_form_is_present_on_the_review_page(client, mismatched_item):
     assert "Re-file to this card" in response.text
 
 
+def test_refile_form_is_prefilled_from_the_audits_own_suggestion(client, session, mismatched_item):
+    """The audit already knows the answer -- "looks like" -- so retyping
+    it off the photo is unnecessary work. Confirming still takes a real
+    click; this only saves the typing."""
+    session.add(CardSet(id="set1", code="WHT", name="Card Set One"))
+    session.commit()
+
+    response = client.get("/inventory-audit")
+
+    assert "value='WHT'" in response.text
+    assert "value='2'" in response.text
+    assert "Pre-filled from" in response.text
+
+
+def test_refile_form_falls_back_to_placeholders_when_theres_nothing_to_suggest(client, mismatched_item):
+    """No CardSet row cached for the suggested card -- the fixture case
+    above without the CardSet added. Must degrade to an empty, typeable
+    form rather than crash or show a blank confirmation with no hint."""
+    response = client.get("/inventory-audit")
+
+    assert "value=''" in response.text or "placeholder='Set code" in response.text
+    assert "Read the set code and number straight off the photo" in response.text
+
+
 def test_review_requires_login():
     app.dependency_overrides.clear()
     client = TestClient(app)
