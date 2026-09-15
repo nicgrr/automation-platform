@@ -3,6 +3,35 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-09-15 — Edit a listing, and three "eBay ..." labels that read as one
+
+**A shop listing can be edited.** Fixing Kappa's stale price meant hand-
+editing the database, because nothing in the app could re-touch a
+listing's title or price after it was created. `/shop-listings/{id}/edit`
+-- title, price, quantity, condition -- with real validation (empty
+title, non-numeric or non-positive price, negative quantity all rejected
+with a clear message, not a 500) and every change recorded with its
+before/after values, the same as the correction made by hand. Not gated
+on status: a withdrawn or sold-out listing's data can be just as wrong as
+an active one's, so "Edit" is on every row regardless.
+
+**Navigation**, on inspection, split into two different things:
+
+- *The storefront's* links and its nav-drawer toggle -- checked both by
+  walking every page and testing every href against the real route table,
+  same method as the original admin-app audit. Clean: nothing broken.
+- *The admin drawer* had a real, self-inflicted problem: three items
+  added today for three different eBay features all read as
+  "eBay ... something" sitting next to each other --
+  "eBay listing drafts", "eBay listings", "eBay export" -- with no way to
+  tell from the label alone which shows what's actually live, which is
+  an unpublished draft, and which is the bulk-upload file builder.
+  Renamed to name the function: "eBay drafts (unpublished)", "eBay live
+  listings", "eBay bulk upload file" -- and the on-page headers/titles
+  now match, so what you land on says the same thing the drawer promised.
+
+- 27 new tests for the edit form. Full suite (1437) green.
+
 ## 2026-09-15 — NL Vault gets a background
 
 The page canvas was flat white -- `body{background:var(--paper)}` -- behind

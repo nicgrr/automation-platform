@@ -164,3 +164,113 @@ def test_bulk_activate_respects_the_search_query(client, session):
 def test_nav_links_to_the_new_page(client, session):
     body = client.get("/dashboard").text
     assert "href='/shop-listings'" in body
+
+
+# --- editing a listing ------------------------------------------------
+# The real bug this closes: a listing created while a collectible was
+# (wrongly) flagged secret sat live at ~9.6x its correct price for a week
+# after the flag was fixed, because nothing else could re-touch an
+# already-created listing's title or price.
+
+def test_the_edit_form_shows_current_values(client, session):
+    listing_id = make_listing(session, "Kappa", status=ShopListingStatus.ACTIVE, price="173.37")
+    page = client.get(f"/shop-listings/{listing_id}/edit").text
+    assert "value='Kappa #1'" in page
+    assert "value='173.37'" in page
+
+
+def test_saving_corrects_title_and_price(client, session):
+    listing_id = make_listing(session, "Kappa", status=ShopListingStatus.ACTIVE, price="173.37")
+
+    resp = client.post(f"/shop-listings/{listing_id}/edit",
+                       data={"title": "Kappa", "price": "18.04", "quantity": "1", "condition": "New"},
+                       follow_redirects=False)
+
+    assert resp.status_code == 303
+    session.expire_all()
+    listing = session.get(ShopListing, listing_id)
+    assert listing.title == "Kappa"
+    assert listing.price == Decimal("18.04")
+
+
+def test_editing_redirects_back_to_the_listings_status_filter(client, session):
+    listing_id = make_listing(session, "Kappa", status=ShopListingStatus.WITHDRAWN, price="10.00")
+    resp = client.post(f"/shop-listings/{listing_id}/edit",
+                       data={"title": "Kappa", "price": "10.00", "quantity": "1", "condition": ""},
+                       follow_redirects=False)
+    assert resp.headers["location"] == "/shop-listings?status=withdrawn"
+
+
+def test_an_empty_title_is_rejected(client, session):
+    listing_id = make_listing(session, "Kappa", price="10.00")
+    resp = client.post(f"/shop-listings/{listing_id}/edit",
+                       data={"title": "   ", "price": "10.00", "quantity": "1", "condition": ""},
+                       follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=" in resp.headers["location"]
+    session.expire_all()
+    assert session.get(ShopListing, listing_id).title != ""
+
+
+def test_a_zero_or_negative_price_is_rejected(client, session):
+    listing_id = make_listing(session, "Kappa", price="10.00")
+    for bad_price in ("0", "-5"):
+        resp = client.post(f"/shop-listings/{listing_id}/edit",
+                           data={"title": "Kappa", "price": bad_price, "quantity": "1", "condition": ""},
+                           follow_redirects=False)
+        assert "error=" in resp.headers["location"]
+    session.expire_all()
+    assert session.get(ShopListing, listing_id).price == Decimal("10.00")
+
+
+def test_a_non_numeric_price_is_rejected_cleanly(client, session):
+    listing_id = make_listing(session, "Kappa", price="10.00")
+    resp = client.post(f"/shop-listings/{listing_id}/edit",
+                       data={"title": "Kappa", "price": "not-a-number", "quantity": "1", "condition": ""},
+                       follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=" in resp.headers["location"]
+
+
+def test_a_negative_quantity_is_rejected(client, session):
+    listing_id = make_listing(session, "Kappa", price="10.00")
+    resp = client.post(f"/shop-listings/{listing_id}/edit",
+                       data={"title": "Kappa", "price": "10.00", "quantity": "-1", "condition": ""},
+                       follow_redirects=False)
+    assert "error=" in resp.headers["location"]
+
+
+def test_editing_works_regardless_of_status(client, session):
+    """Correcting a wrong title or price isn't gated on the listing still
+    being a draft or active -- a withdrawn or sold-out row's data can be
+    just as wrong."""
+    for status in (ShopListingStatus.WITHDRAWN, ShopListingStatus.SOLD_OUT, ShopListingStatus.DRAFT):
+        listing_id = make_listing(session, f"Item-{status.value}", status=status, price="5.00")
+        resp = client.post(f"/shop-listings/{listing_id}/edit",
+                           data={"title": "Corrected", "price": "9.99", "quantity": "1", "condition": ""})
+        session.expire_all()
+        assert session.get(ShopListing, listing_id).title == "Corrected"
+
+
+def test_editing_an_unknown_listing_404s(client, session):
+    resp = client.post("/shop-listings/does-not-exist/edit",
+                       data={"title": "X", "price": "1.00", "quantity": "1", "condition": ""})
+    assert resp.status_code == 404
+
+
+def test_an_edit_records_before_and_after_values(client, session):
+    from automation_control.models import AuditEvent
+
+    listing_id = make_listing(session, "Kappa", status=ShopListingStatus.ACTIVE, price="173.37")
+    client.post(f"/shop-listings/{listing_id}/edit",
+               data={"title": "Kappa", "price": "18.04", "quantity": "1", "condition": ""})
+
+    event = session.query(AuditEvent).filter_by(action="shop_listing.edit").one()
+    assert event.details["before"]["price"] == "173.37"
+    assert event.details["after"]["price"] == "18.04"
+
+
+def test_the_row_links_to_edit_regardless_of_status(client, session):
+    listing_id = make_listing(session, "Kappa", status=ShopListingStatus.WITHDRAWN, price="10.00")
+    page = client.get("/shop-listings?status=withdrawn").text
+    assert f"href='/shop-listings/{listing_id}/edit'" in page

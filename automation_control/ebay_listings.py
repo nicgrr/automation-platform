@@ -279,7 +279,7 @@ def ebay_listings_page(request: Request, refreshed: str = "", error: str = "",
     )
 
     body = (
-        brand_header("eBay listings")
+        brand_header("eBay live listings")
         + "<p class='subtitle'>What eBay's own Seller Hub would show under Active -- read via "
           "GetMyeBaySelling, which sees a listing regardless of how it was created (Relist, bulk "
           "upload, or through this app). This is a cache: it only updates when you click Refresh.</p>"
@@ -294,7 +294,7 @@ def ebay_listings_page(request: Request, refreshed: str = "", error: str = "",
         + "</div>"
         + _STYLE
     )
-    return HTMLResponse(page("EzBay — eBay listings", body))
+    return HTMLResponse(page("EzBay — eBay live listings", body))
 
 
 async def refresh_from_ebay(session: Session, settings, user: str) -> int:

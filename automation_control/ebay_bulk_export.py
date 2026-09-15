@@ -67,11 +67,11 @@ def ebay_export_page(request: Request, error: str = "",
             "(not the numeric ids /settings already checks) -- eBay has no API to look one up from the other, "
             "so they're typed once into config rather than asked for on every export.</p></div>"
         )
-        return HTMLResponse(page("EzBay — eBay export", brand_header("eBay export") + gate))
+        return HTMLResponse(page("EzBay — eBay bulk upload file", brand_header("eBay bulk upload file") + gate))
 
     error_html = f"<p class='linkfill-note bad'>{escape(error)}</p>" if error else ""
     body = (
-        brand_header("eBay export")
+        brand_header("eBay bulk upload file")
         + "<p class='subtitle'>Builds the File Exchange CSV Seller Hub accepts, in one click -- "
           "active shop listings, priced, categorised, and ready to upload.</p>"
         + error_html
@@ -85,7 +85,7 @@ def ebay_export_page(request: Request, error: str = "",
         + "<button type='submit'>Build &amp; download</button>"
         + "</form></div>"
     )
-    return HTMLResponse(page("EzBay — eBay export", body))
+    return HTMLResponse(page("EzBay — eBay bulk upload file", body))
 
 
 def _record(session: Session, user: str, correlation_id: str, outcome: str, details: dict) -> None:

@@ -128,12 +128,12 @@ def listings_list(request: Request, user: str = Depends(require_dashboard_user),
     note = "<p class='subtitle'>Building listings in the background -- this page refreshes automatically.</p>" if request.query_params.get("building") else ""
 
     body = (
-        brand_header("Listing review")
+        brand_header("Draft listings")
         + note
         + f"<div class='panel'><h2>Draft listings ({len(drafts)})</h2><ul class='events'>{rows}</ul>"
         + "<form method='post' action='/listings/build'><button>Build from approved cards</button></form></div>"
     )
-    return HTMLResponse(page("EzBay — Listing review", body, head_extra=head_extra))
+    return HTMLResponse(page("EzBay — Draft listings", body, head_extra=head_extra))
 
 
 @router.get("/review/{listing_id}")
@@ -144,7 +144,7 @@ def listing_review_form(listing_id: str, user: str = Depends(require_dashboard_u
 
     images_html = "".join(f"<img src='{escape(url)}' style='max-width:180px;border-radius:8px;margin:4px'>" for url in listing.image_urls)
     body = (
-        brand_header("Listing review")
+        brand_header("Draft listings")
         + "<div class='panel'>"
         + f"<h2>{escape(listing.custom_label)}</h2>"
         + f"<p>{images_html}</p>"
@@ -158,7 +158,7 @@ def listing_review_form(listing_id: str, user: str = Depends(require_dashboard_u
         + "<button name='action' value='reject' style='background:var(--danger);color:#fff'>Reject</button>"
         + "</div></form></div>"
     )
-    return HTMLResponse(page("EzBay — Listing review", body))
+    return HTMLResponse(page("EzBay — Draft listings", body))
 
 
 @router.post("/review/{listing_id}")
