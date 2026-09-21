@@ -11,6 +11,20 @@ source), with an optional margin over it. Anything with no price signal
 at all is skipped rather than guessed at, since a wrong price in a public
 shop is a real-money mistake.
 
+A cheap single from a set that already has an active Bulk Master lot is
+skipped too, the same exclusion export_ebay_bulk_listing.py's
+build_single_rows already applies for eBay: build_bulk_lots.py sweeps
+those commons into the lot without reserving specific inventory rows, so
+listing one individually here risks selling the same physical card twice.
+Only --min-price's default of $5 protected against this by coincidence
+before (bulk commons are $2 or under) -- a lower --min-price, or a card's
+market price drifting above $2 after its set was already swept into a
+lot, would have listed it individually anyway. This makes the exclusion
+real rather than accidental. A single priced above --lot-overlap-max-price
+in that same set wasn't lot-eligible in the first place and still lists
+normally -- a valuable rare doesn't get held back just because its set
+also has a bulk lot of its cheap commons.
+
 That market-based price is then floored at what fulfilment actually
 costs -- postage, packaging, payment fees, plus the target margin from
 ShopCostConfig (see shop_pricing.py) -- so a listing can never be priced
@@ -49,13 +63,29 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import SessionLocal
 from automation_control.models import (
-    CardPrice, CatalogCard, CatalogItem, InventoryItem, ShippingRate, ShippingZone,
-    ShopListing, ShopListingStatus,
+    BulkLot, CardPrice, CatalogCard, CatalogItem, InventoryItem, ShippingRate, ShippingZone,
+    ShopListing, ShopListingStatus, TcgCard,
 )
 from automation_control.shop_pricing import default_costs, price_floor
 
 PREFERRED_SOURCES = ["ebay_active_low", "optcgapi_market", "pokemonpricetracker_market"]
 MAX_MARKUP = Decimal("2")
+DEFAULT_LOT_OVERLAP_MAX_PRICE = Decimal("2")
+
+
+def _lot_covered_set_ids(session: Session, status: ShopListingStatus) -> set[str]:
+    """Sets with an active Bulk Master lot -- see the module docstring on
+    why a cheap single from one of these sets is skipped rather than
+    listed. Same query as export_ebay_bulk_listing.py's own version;
+    duplicated rather than imported, matching this codebase's convention
+    of each listing script owning its pricing/eligibility logic
+    independently (see reprice_for_ebay.py's docstring on why it doesn't
+    reuse shop_pricing.price_floor either)."""
+    return {
+        set_id for (set_id,) in session.execute(
+            select(BulkLot.set_id).where(BulkLot.status == status, BulkLot.set_id.isnot(None))
+        ).all()
+    }
 
 
 def best_price(session: Session, catalog_item_id: str) -> tuple[Decimal, str] | None:
@@ -89,6 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=500, help="max listings to create in one run")
     parser.add_argument("--activate", action="store_true", help="publish immediately instead of creating drafts")
     parser.add_argument("--withdraw-all", action="store_true", help="take every listing off sale and exit")
+    parser.add_argument("--lot-overlap-max-price", type=Decimal, default=DEFAULT_LOT_OVERLAP_MAX_PRICE,
+                        help="a single at or under this price, from a set that already has an active bulk lot, is "
+                             "assumed to be the same physical cards the lot promises and is skipped to avoid "
+                             "double-selling (default 2, matching build_bulk_lots.py's own default). Pass a "
+                             "negative number to disable this check entirely.")
     args = parser.parse_args(argv)
 
     with SessionLocal() as session:

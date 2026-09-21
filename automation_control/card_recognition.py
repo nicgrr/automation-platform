@@ -192,6 +192,64 @@ def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int 
     return response.parsed_output.collectibles
 
 
+_ACCESSORY_PROMPT = (
+    "Identify every distinct card-supply/accessory product visible in this "
+    "photo -- things like card sleeves, toploaders, deck boxes, binders, "
+    "playmats, or card storage boxes for trading cards. There may be just "
+    "one, or several laid out together. For each, extract: brand (e.g. "
+    "\"Ultra Pro\", \"Dragon Shield\"), product_type (what kind of item it "
+    "is, e.g. \"Card Sleeves\", \"Toploaders\", \"Deck Box\", \"Binder\"), "
+    "pack_size (the count or size printed on the packaging, e.g. \"100ct\", "
+    "\"9-Pocket\", \"Standard Size\"), and color. If a field isn't clearly "
+    "identifiable, list its name in that item's unreadable_fields rather "
+    "than guessing a value for it. If nothing resembling a card-supply "
+    "product is clearly identifiable in the photo, return an empty list. "
+    "For each item, also return its bounding_box: [x_min, y_min, x_max, "
+    "y_max], each a fraction from 0 to 1 of the image's width (x) or height "
+    "(y), drawn tightly around just that one product (not others beside "
+    "it). This is used to crop each item into its own image for review, so "
+    "favor a slightly generous box over a tight one."
+)
+
+
+class ExtractedAccessory(BaseModel):
+    brand: str
+    product_type: str
+    pack_size: str
+    color: str
+    unreadable_fields: list[str]
+    bounding_box: list[float] | None = None
+
+
+class ExtractedAccessories(BaseModel):
+    accessories: list[ExtractedAccessory]
+
+
+def extract_accessory_details(photo_path: Path, api_key: str, max_tokens: int = 16384,
+                              context: str = "") -> list[ExtractedAccessory]:
+    """The card-supply counterpart to extract_collectible_details -- same
+    model, same single-image-plus-prompt shape, same contract: never raises
+    for "nothing recognizable in the photo" (an empty list), only for a
+    response that doesn't parse against the expected schema at all. The
+    caller (accessories.py) is what makes this non-destructive -- results
+    land in CapturedAccessory pending human confirmation, never straight
+    into the catalogue.
+    """
+    client = Anthropic(api_key=api_key)
+    response = client.messages.parse(
+        model=MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": [
+            _image_block(photo_path),
+            {"type": "text", "text": _ACCESSORY_PROMPT + (f"\n\n{context}" if context else "")},
+        ]}],
+        output_format=ExtractedAccessories,
+    )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return a response matching the expected schema for accessories")
+    return response.parsed_output.accessories
+
+
 _LISTING_PROMPT = (
     "The following is a marketplace listing for one or more trading cards -- "
     "either a screenshot/photo of the listing text, or the text itself. "

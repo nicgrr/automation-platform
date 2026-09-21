@@ -12,7 +12,7 @@ from decimal import Decimal
 import pytest
 
 from automation_control.adapters.ebay import EbayApiError
-from automation_control.adapters.ebay_trading import EbayTradingReadAdapter, parse_active_listings
+from automation_control.adapters.ebay_trading import EbayTradingReadAdapter, parse_active_listings, parse_item_condition
 
 SUCCESS_ONE_PAGE = """<?xml version='1.0' encoding='UTF-8'?>
 <GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents">
@@ -217,3 +217,51 @@ async def test_an_http_error_status_raises_ebayapierror():
     with pytest.raises(EbayApiError):
         await EbayTradingReadAdapter("tok", "app", environment="production",
                                      client=_ErrorClient()).get_active_listings()
+
+
+# --- get_item_condition / parse_item_condition: the Bulk Master lot condition-id lookup ---
+
+GET_ITEM_SUCCESS = """<?xml version='1.0' encoding='UTF-8'?>
+<GetItemResponse xmlns="urn:ebay:apis:eBLBaseComponents">
+<Ack>Success</Ack>
+<Item>
+<ItemID>267900001111</ItemID>
+<PrimaryCategory><CategoryID>183455</CategoryID></PrimaryCategory>
+<ConditionID>3000</ConditionID>
+<ConditionDisplayName>Used</ConditionDisplayName>
+</Item>
+</GetItemResponse>"""
+
+GET_ITEM_FAILURE = """<?xml version='1.0' encoding='UTF-8'?>
+<GetItemResponse xmlns="urn:ebay:apis:eBLBaseComponents">
+<Ack>Failure</Ack><Errors>
+<ShortMessage>Invalid item ID.</ShortMessage>
+<LongMessage>The Item ID you provided is invalid.</LongMessage>
+<ErrorCode>17</ErrorCode><SeverityCode>Error</SeverityCode>
+</Errors>
+</GetItemResponse>"""
+
+
+def test_parse_item_condition_reads_the_numeric_id_and_display_name():
+    condition = parse_item_condition(GET_ITEM_SUCCESS)
+    assert condition.condition_id == "3000"
+    assert condition.condition_display_name == "Used"
+    assert condition.category_id == "183455"
+
+
+def test_parse_item_condition_raises_with_ebays_own_message_on_failure():
+    with pytest.raises(EbayApiError, match="invalid"):
+        parse_item_condition(GET_ITEM_FAILURE)
+
+
+@pytest.mark.asyncio
+async def test_get_item_condition_calls_getitem_with_the_right_item_id():
+    client = _FakeClient([GET_ITEM_SUCCESS])
+    adapter = EbayTradingReadAdapter("tok", "app-id", environment="production", client=client)
+
+    condition = await adapter.get_item_condition("267900001111")
+
+    assert condition.condition_id == "3000"
+    url, headers, body = client.calls[0]
+    assert headers["X-EBAY-API-CALL-NAME"] == "GetItem"
+    assert "<ItemID>267900001111</ItemID>" in body

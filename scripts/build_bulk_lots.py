@@ -28,6 +28,7 @@ from automation_control.models import (
 )
 from automation_control.shop_pricing import default_costs, price_floor
 from scripts.list_for_sale import best_price
+from scripts.reprice_for_ebay import DEFAULT_EBAY_FEE_PCT
 
 MIN_CARDS_PER_LOT = 5
 
@@ -47,6 +48,11 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"skip sets with fewer cards than this (default {MIN_CARDS_PER_LOT})")
     parser.add_argument("--activate", action="store_true", help="publish immediately instead of drafting")
     parser.add_argument("--clear", action="store_true", help="delete existing lots and exit")
+    parser.add_argument("--ebay-fee", type=float, default=float(DEFAULT_EBAY_FEE_PCT),
+                        help=f"eBay's final value fee percentage, used in place of the website's own ~1.75%% "
+                             f"Stripe rate when computing the floor -- lots are sold on eBay, not the website's "
+                             f"own checkout, and eBay's cut already bundles payment processing into this one "
+                             f"number (default {DEFAULT_EBAY_FEE_PCT}, matching reprice_for_ebay.py)")
     args = parser.parse_args(argv)
 
     with SessionLocal() as session:
@@ -63,10 +69,15 @@ def main(argv: list[str] | None = None) -> int:
         # grossed up for payment fees, plus the target margin. Assumes the
         # customer pays postage, which is the normal case -- the free
         # shipping threshold is flagged on /shop-pricing instead.
+        # payment_pct is eBay's own final value fee (--ebay-fee), not the
+        # website's ~1.75% Stripe rate default_costs() would otherwise use --
+        # these lots are sold on eBay, and eBay's real cut is roughly 7x
+        # higher, so reusing the Stripe figure understated the true floor.
         au_rate = session.scalar(select(ShippingRate).where(ShippingRate.zone == ShippingZone.AU).limit(1))
         floor_model = price_floor(
             default_costs(session),
             shipping_charged=Decimal(str(au_rate.price)) if au_rate else Decimal("0"),
+            payment_pct=Decimal(str(args.ebay_fee)),
         )
         price_floor_value = floor_model.floor
         print(f"floor: ${price_floor_value} (break-even ${floor_model.break_even} "

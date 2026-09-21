@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from .auth import require_dashboard_user
 from .database import get_session
 from .models import (
+    CapturedAccessory,
     CapturedCard,
     CapturedCollectible,
     CardCaptureStatus,
@@ -100,6 +101,11 @@ def queue_counts(session: Session, settings) -> dict[str, int | None]:
             select(func.count())
             .select_from(CapturedCollectible)
             .where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)
+        ),
+        "/accessories/review": session.scalar(
+            select(func.count())
+            .select_from(CapturedAccessory)
+            .where(CapturedAccessory.status == CardCaptureStatus.PENDING_REVIEW)
         ),
         "/cards/review": session.scalar(
             select(func.count())

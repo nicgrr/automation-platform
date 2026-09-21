@@ -39,6 +39,7 @@ from .database import get_session
 from .images import serve_image, serve_thumb
 from .models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem
 from .scan_ingest import fx
+from .scan_ingest.commit import _catalog_item_id_for
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -55,7 +56,7 @@ SET_SORTS = {
     "value": "Value",
     "progress": "Most collected",
 }
-CARD_SORTS = {"number": "Card number", "value_desc": "Value", "quantity_desc": "Most copies"}
+CARD_SORTS = {"number": "Card number", "value_desc": "Value", "quantity_desc": "Most copies", "rarity": "Rarity"}
 
 # What a manually-added card is assumed to be. Scanning records the real
 # condition; this is only for "I own this but never scanned it".
@@ -71,7 +72,10 @@ _VARIANT_BY_TCG_KEY = {
     "holofoil": CardVariant.HOLO,
     "1stEditionHolofoil": CardVariant.HOLO,
 }
-_VARIANT_ORDER = {CardVariant.NORMAL: 0, CardVariant.REVERSE_HOLO: 1, CardVariant.HOLO: 2}
+_VARIANT_ORDER = {
+    CardVariant.NORMAL: 0, CardVariant.REVERSE_HOLO: 1, CardVariant.HOLO: 2,
+    CardVariant.POKEBALL_PATTERN: 3, CardVariant.MASTERBALL_PATTERN: 4,
+}
 
 
 def _variants_for(card: CatalogCard, owned: set[CardVariant]) -> list[CardVariant]:
@@ -160,7 +164,7 @@ def _sort_control(options: dict[str, str], current: str, name: str = "sort") -> 
 
 
 def _edit_controls(set_id: str, card: CatalogCard, variant: CardVariant,
-                   quantity: int, sort: str, owned_only: str) -> str:
+                   quantity: int, sort: str, show_owned_only: bool) -> str:
     """Per-card quantity controls.
 
     Every button is its own form post rather than JavaScript, so the page
@@ -168,7 +172,7 @@ def _edit_controls(set_id: str, card: CatalogCard, variant: CardVariant,
     normal browser action. `back` carries the current view so a change
     doesn't dump you at the top of an unfiltered set.
     """
-    back = f"/inventory/set/{escape(set_id)}?sort={escape(sort)}" + ("&owned_only=1" if owned_only else "")
+    back = f"/inventory/set/{escape(set_id)}?sort={escape(sort)}&owned_only={'1' if show_owned_only else '0'}"
     common = (
         f"<input type='hidden' name='card_id' value='{escape(card.id)}'>"
         f"<input type='hidden' name='variant' value='{escape(variant.value)}'>"
@@ -218,7 +222,6 @@ def inventory_sets(
     if not owned:
         body = (
             brand_header("Inventory")
-            + "<p class='subtitle'>Cards committed by the scan-ingest pipeline.</p>"
             + "<div class='panel'><p>Nothing scanned yet. Press the scanner button and the "
               "background service will do the rest.</p></div>"
         )
@@ -290,7 +293,9 @@ def inventory_sets(
             "</a>"
         )
 
-    rate_note = "" if fx.is_live() else " (approximate rate — live FX unavailable)"
+    rate_note = "" if fx.is_live() else (
+        "<p class='subtitle'>Values use an approximate AUD rate — live FX unavailable.</p>"
+    )
     stat_grid = (
         "<div class='stat-grid'>"
         f"<div class='stat-card'><div class='label'>Sets</div><div class='value'>{len(rows)}</div></div>"
@@ -303,8 +308,7 @@ def inventory_sets(
 
     body = (
         brand_header("Inventory")
-        + f"<p class='subtitle'>Cards committed by the scan-ingest pipeline. Values are rough "
-          f"pokemontcg.io estimates converted to AUD{rate_note} — not listing prices.</p>"
+        + rate_note
         + stat_grid
         + "<div class='toolbar'>"
         + "<input id='set-search' class='search-box' type='search' placeholder='Search sets…' autocomplete='off'>"
@@ -325,7 +329,7 @@ def inventory_set(
     request: Request,
     variant: str = Query(""),
     sort: str = Query("number"),
-    owned_only: str = Query(""),
+    owned_only: str = Query("1"),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
@@ -334,6 +338,12 @@ def inventory_set(
         raise HTTPException(status_code=404, detail=f"unknown set: {set_id!r}")
     if sort not in CARD_SORTS:
         sort = "number"
+    # Defaults to owned-only: seeing your own 15 cards against an unfiltered
+    # 200-card set is the common case, and "Show all cards" is one tap away.
+    # "0" must mean off, not just an empty string -- Query("1") makes an
+    # untouched param the string "1", so a bare `if owned_only:` would also
+    # treat an explicit ?owned_only=0 as on.
+    show_owned_only = owned_only not in ("", "0")
 
     variant_filter: CardVariant | None = None
     if variant:
@@ -368,7 +378,7 @@ def inventory_set(
                 continue
             held = held_by.get((card.id, variant), [])
             quantity = sum(i.quantity for i in held)
-            if owned_only and not quantity:
+            if show_owned_only and not quantity:
                 continue
             # The variant-accurate price wins when there is one; the eBay
             # figure fills the gap when there isn't, rather than showing
@@ -388,6 +398,13 @@ def inventory_set(
         rows.sort(key=lambda r: r["price"] or 0.0, reverse=True)
     elif sort == "quantity_desc":
         rows.sort(key=lambda r: (-r["quantity"], _sort_number(r["card"].number)))
+    elif sort == "rarity":
+        # Groups EX, Special Illustration Rare, etc. together -- rarity
+        # already comes from the catalog (CatalogCard.rarity), this just
+        # surfaces it as a way to browse rather than a printing choice
+        # (unlike Normal/Holo/Reverse Holo, a card's rarity isn't a
+        # separate physical copy to hold, so it stays out of CardVariant).
+        rows.sort(key=lambda r: (r["card"].rarity or "Unknown", _sort_number(r["card"].number)))
     else:
         rows.sort(key=lambda r: (_sort_number(r["card"].number), _VARIANT_ORDER.get(r["variant"], 9)))
 
@@ -395,7 +412,7 @@ def inventory_set(
     total_copies = sum(i.quantity for i in items)
     total_value = sum((r["price"] or 0.0) * r["quantity"] for r in rows)
 
-    tiles = []
+    card_rows = []
     for row in rows:
         card, variant, quantity, held = row["card"], row["variant"], row["quantity"], row["held"]
         # Your own scan is the face when you own the card, reference art
@@ -414,7 +431,7 @@ def inventory_set(
             face = "<span class='no-art'>no image</span>"
         # An owned card's face links to your own scan; an unowned one has
         # nothing to show, so it stays inert rather than a dead link. The
-        # tile itself is never a link -- it holds the edit controls, and
+        # row itself is never a link -- it holds the edit controls, and
         # buttons inside an anchor is not valid markup.
         scan_href = f"/inventory/image/{held[0].id}" if held and held[0].scan_image_path else None
         face_block = (
@@ -428,38 +445,46 @@ def inventory_set(
         # page, so filtering it is a keystroke rather than a request.
         haystack = f"{card.name} {card.number} {card.rarity or ''} {variant.value}".lower()
 
-        tiles.append(
-            f"<div class='card-tile{'' if quantity else ' unowned'}' data-find='{escape(haystack)}'>"
-            f"{face_block}"
-            f"<div class='card-name'>{escape(card.name)}</div>"
-            f"<div class='card-sub'>{escape(card_set.name)}</div>"
-            f"<div class='card-sub'>{escape(card.rarity or 'Unknown')} &bull; {escape(card.number)}/{printed}</div>"
-            f"<div class='card-sub'>{escape(variant.value.replace('_', ' ').title())}</div>"
-            f"<div class='card-price'>{_money(row['price'])}"
+        price_block = (
+            f"<span class='card-price'>{_money(row['price'])}</span>"
             + ("<span class='price-src'>eBay</span>" if row["from_ebay"] else "")
-            + "</div>"
             + (
-                f"<div class='card-ebay'>eBay low {_money(row['ebay_price'])}</div>"
+                f"<span class='card-ebay'>eBay low {_money(row['ebay_price'])}</span>"
                 if row["ebay_price"] is not None and not row["from_ebay"] else ""
             )
-            + f"<div class='card-qty{'' if quantity else ' zero'}'>Qty: {quantity}</div>"
-            + _edit_controls(set_id, card, variant, quantity, sort, owned_only)
-            + "</div>"
         )
 
+        card_rows.append(
+            f"<div class='card-row{'' if quantity else ' unowned'}' data-find='{escape(haystack)}'>"
+            f"{face_block}"
+            "<div class='card-info'>"
+            f"<div class='card-name'>{escape(card.name)}</div>"
+            f"<div class='card-sub'>#{escape(card.number)}/{printed} &bull; {escape(card.rarity or 'Unknown')} "
+            f"&bull; {escape(variant.value.replace('_', ' ').title())}</div>"
+            f"<div class='card-price-row'>{price_block}"
+            f"<span class='card-qty{'' if quantity else ' zero'}'>Qty: {quantity}</span></div>"
+            "</div>"
+            f"<div class='card-edit-wrap'>{_edit_controls(set_id, card, variant, quantity, sort, show_owned_only)}</div>"
+            "</div>"
+        )
+
+    missing = printed - distinct_owned
     header = (
         "<div class='set-header'>"
         + (f"<img class='set-header-logo' src='{escape(card_set.logo_url)}' alt=''>" if card_set.logo_url else "")
-        + "<div class='set-header-text'>"
         + f"<div class='set-header-name'>{escape(card_set.name)}</div>"
-        + f"<div class='set-meta'>Progress: {distinct_owned}/{printed}</div>"
-        + f"<div class='set-meta'>Total Value: <strong>{_money(total_value)}</strong> "
-          f"<span class='unit'>AUD</span> &middot; {total_copies} copies</div>"
-        + "</div></div>"
+        + "</div>"
+        + "<div class='stat-grid'>"
+        + f"<div class='stat-card'><div class='label'>Owned</div><div class='value'>{distinct_owned}/{printed}</div></div>"
+        + f"<div class='stat-card'><div class='label'>Missing</div><div class='value'>{missing}</div></div>"
+        + f"<div class='stat-card'><div class='label'>Total copies</div><div class='value'>{total_copies}</div></div>"
+        + f"<div class='stat-card'><div class='label'>Total value</div><div class='value'>{_money(total_value)}"
+          f"<div class='value-sub'>AUD</div></div></div>"
+        + "</div>"
     )
 
-    toggle_label = "Show all cards" if owned_only else "Owned only"
-    toggle_href = f"/inventory/set/{escape(set_id)}?sort={escape(sort)}" + ("" if owned_only else "&owned_only=1")
+    toggle_label = "Show all cards" if show_owned_only else "Owned only"
+    toggle_href = f"/inventory/set/{escape(set_id)}?sort={escape(sort)}&owned_only={'0' if show_owned_only else '1'}"
 
     body = (
         brand_header("Inventory")
@@ -472,7 +497,7 @@ def inventory_set(
         + _sort_control(CARD_SORTS, sort)
         + "</div>"
         + "<div class='found' id='found'></div>"
-        + (f"<div class='card-grid' id='card-grid'>{''.join(tiles)}</div>" if tiles
+        + (f"<div class='card-list' id='card-grid'>{''.join(card_rows)}</div>" if card_rows
            else "<div class='panel'><p>No cards to show.</p></div>")
         + _STYLE
         + _CARD_SEARCH_SCRIPT
@@ -526,7 +551,12 @@ def inventory_adjust(
 
     if action == "add":
         if item is None:
-            item = InventoryItem(card_id=card.id, variant=printing, condition=DEFAULT_CONDITION, quantity=1)
+            # catalog_item_id, not just card_id: this page's own totals are
+            # computed from it, so a row added here without it would be
+            # counted as a holding and valued at nothing. Same helper the
+            # scan-ingest commit path uses, for the same reason.
+            item = InventoryItem(card_id=card.id, variant=printing, condition=DEFAULT_CONDITION, quantity=1,
+                                 catalog_item_id=_catalog_item_id_for(session, card))
             session.add(item)
             outcome, quantity = "created", 1
         else:
@@ -633,51 +663,56 @@ a.set-tile:hover .set-art{transform:translateY(-2px);box-shadow:0 8px 20px rgba(
 .set-meta strong{color:var(--text)}
 
 .set-header{display:flex;gap:16px;align-items:center;background:var(--panel);
-  border:1px solid var(--panel-border);border-radius:14px;padding:16px 18px;margin-bottom:20px}
+  border:1px solid var(--panel-border);border-radius:14px;padding:16px 18px;margin-bottom:14px}
 .set-header-logo{width:120px;max-height:62px;object-fit:contain;background:#f4f5f7;
   border-radius:9px;padding:7px;flex:none}
-.set-header-name{font-size:17px;font-weight:650;margin-bottom:3px}
+.set-header-name{font-size:17px;font-weight:650}
 
-.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:18px;align-items:start}
-.card-tile{display:flex;flex-direction:column;gap:2px;text-decoration:none;color:var(--text);min-width:0;overflow:hidden;
-  background:var(--panel);border:1px solid var(--panel-border);border-radius:14px;padding:12px}
-a.card-tile:hover{border-color:var(--accent)}
-.card-tile>*{min-width:0;max-width:100%}
-.card-tile.unowned{opacity:.5}
-.card-face{position:relative;border-radius:9px;overflow:hidden;background:var(--surface-sunken);width:100%;
-  aspect-ratio:245/342;display:grid;place-items:center;margin-bottom:9px}
+.card-list{display:flex;flex-direction:column;gap:9px}
+.card-row{display:flex;align-items:center;gap:13px;text-decoration:none;color:var(--text);min-width:0;
+  background:var(--panel);border:1px solid var(--panel-border);border-radius:13px;padding:10px 12px}
+.card-row>*{min-width:0}
+.card-row.unowned{opacity:.55}
+.card-face{position:relative;flex:0 0 62px;width:62px;aspect-ratio:245/342;border-radius:8px;overflow:hidden;
+  background:var(--surface-sunken);display:grid;place-items:center}
 .card-face img{width:100%;height:100%;object-fit:contain;display:block}
-.no-art{color:var(--text-dim);font-size:12px}
-.face-tag{position:absolute;left:6px;bottom:6px;background:rgba(20,24,29,.7);color:#fff;
-  font-size:9.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
-  padding:2px 6px;border-radius:999px;pointer-events:none}
-.qty-badge{position:absolute;top:6px;right:6px;background:var(--accent);color:#fff;
-  font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px}
-.card-name{font-weight:650;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.card-sub{font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.card-price{font-size:15px;font-weight:600;margin-top:6px}
-.price-src{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
-  color:var(--accent);background:var(--neutral-bg);padding:1px 6px;border-radius:999px;margin-left:6px;vertical-align:middle}
-.card-ebay{font-size:11px;color:var(--text-dim);margin-top:2px}
-.card-qty{font-size:12px;color:var(--text-dim)}
-.card-qty.zero{color:var(--text-dim);opacity:.75}
+.no-art{color:var(--text-dim);font-size:10px;text-align:center;padding:0 4px}
+.face-tag{position:absolute;left:3px;bottom:3px;background:rgba(20,24,29,.7);color:#fff;
+  font-size:8.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;
+  padding:1px 5px;border-radius:999px;pointer-events:none}
+.qty-badge{position:absolute;top:3px;right:3px;background:var(--accent);color:#fff;
+  font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px}
 
-.card-edit{display:flex;align-items:center;gap:6px;margin-top:9px;max-width:none;min-width:0}
-.card-edit button{flex:0 0 auto;min-width:34px;padding:7px 9px;border-radius:8px;font-size:14px;
+.card-info{flex:1 1 auto;min-width:0}
+.card-name{font-weight:650;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-sub{font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+.card-price-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:5px}
+.card-price{font-size:14.5px;font-weight:650}
+.price-src{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--accent);background:var(--neutral-bg);padding:1px 6px;border-radius:999px;vertical-align:middle}
+.card-ebay{font-size:11px;color:var(--text-dim)}
+.card-qty{font-size:12px;color:var(--text-dim)}
+.card-qty.zero{opacity:.75}
+
+.card-edit-wrap{flex:0 0 auto}
+.card-edit{display:flex;align-items:center;gap:5px;max-width:none;min-width:0}
+.card-edit button{flex:0 0 auto;min-width:30px;padding:6px 8px;border-radius:8px;font-size:13px;
   font-weight:700;cursor:pointer;border:1px solid var(--panel-border);background:var(--surface-sunken);color:var(--text)}
 .card-edit button:hover{border-color:var(--accent);color:var(--accent)}
-.card-edit button.add{flex:1 1 auto;background:linear-gradient(120deg,var(--accent),var(--accent-2));
-  color:#fff;border:none}
-.card-edit button.ghost{flex:1 1 auto;font-size:12px;font-weight:600;color:var(--text-dim)}
+.card-edit button.add{background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  color:#fff;border:none;padding:8px 14px}
+.card-edit button.ghost{font-size:11px;font-weight:600;color:var(--text-dim)}
 .card-edit button.ghost:hover{border-color:var(--danger);color:var(--danger)}
-.card-edit .qty{flex:1 1 auto;text-align:center;font-size:14px;font-weight:650;font-variant-numeric:tabular-nums}
+.card-edit .qty{min-width:20px;text-align:center;font-size:14px;font-weight:650;font-variant-numeric:tabular-nums}
 .found{font-size:13px;color:var(--text-dim);margin:-8px 0 14px;min-height:1em}
 
 @media (max-width:560px){
   .set-grid{grid-template-columns:repeat(2,1fr);gap:14px}
   .set-art{height:84px}
-  .card-grid{grid-template-columns:repeat(2,1fr);gap:12px}
   .set-header-logo{width:92px}
+  .card-row{padding:8px 9px;gap:10px}
+  .card-face{flex-basis:52px;width:52px}
+  .card-edit button.ghost{display:none}
 }
 </style>"""
 
@@ -686,7 +721,7 @@ _CARD_SEARCH_SCRIPT = """<script>
   var box=document.getElementById('card-search'), grid=document.getElementById('card-grid'),
       found=document.getElementById('found');
   if(!box||!grid)return;
-  var tiles=[].slice.call(grid.querySelectorAll('.card-tile'));
+  var tiles=[].slice.call(grid.querySelectorAll('.card-row'));
   box.addEventListener('input',function(){
     var q=box.value.trim().toLowerCase(), shown=0;
     tiles.forEach(function(t){

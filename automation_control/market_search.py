@@ -176,7 +176,6 @@ def _lens_picker_panel(items: list[dict], marketplace: str, error: str | None = 
 def _page_shell(query: str, marketplace: str, extra_html: str) -> str:
     body = (
         brand_header("Market search")
-        + "<p class='subtitle'>Module 21 -- what's this actually worth, right now.</p>"
         + "<form method='get' action='/market-search' class='msearch-form'>"
         + f"<input name='q' value='{escape(query)}' placeholder='Charizard ex 199' autofocus>"
         + f"<select name='marketplace'>{_marketplace_options(marketplace)}</select>"

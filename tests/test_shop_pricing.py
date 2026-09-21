@@ -52,6 +52,18 @@ def test_floor_is_never_below_break_even():
         assert floor.profit_at(floor.floor) >= 0
 
 
+def test_payment_pct_override_replaces_not_stacks_with_configs_own_rate():
+    """eBay's ~13% final value fee already bundles payment processing --
+    build_bulk_lots.py passes it here in place of the website's own ~1.75%
+    Stripe rate for anything sold through eBay rather than the website's
+    own checkout, never on top of it."""
+    website = price_floor(config(payment_pct=1.75), shipping_charged=Decimal("9.95"))
+    ebay = price_floor(config(payment_pct=1.75), shipping_charged=Decimal("9.95"), payment_pct=Decimal("13"))
+    assert ebay.payment_pct == Decimal("13")
+    assert ebay.break_even > website.break_even  # a bigger cut means a higher floor
+    assert ebay.floor > website.floor
+
+
 def test_break_even_never_goes_negative():
     # heavily subsidised postage shouldn't produce a negative floor that
     # would let something be priced at nothing

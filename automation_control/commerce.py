@@ -102,7 +102,7 @@ def marketplaces_page(user: str = Depends(require_dashboard_user), session: Sess
         "<button type='submit'>Add rule</button>"
         "</form></div>"
     )
-    body = brand_header("Marketplaces & fees") + "<p class='subtitle'>Module 7 -- fee structures change, so these are dated rows, not constants.</p>" + table + form + _STYLE
+    body = brand_header("Marketplaces & fees") + table + form + _STYLE
     return HTMLResponse(page("EzBay — Marketplaces", body))
 
 
@@ -177,7 +177,7 @@ def sales_page(user: str = Depends(require_dashboard_user), session: Session = D
         "<button type='submit'>Record sale</button>"
         "</form></div>"
     )
-    body = brand_header("Sales") + "<p class='subtitle'>Every channel, one ledger -- Module 8.</p>" + table + form + _STYLE
+    body = brand_header("Sales") + table + form + _STYLE
     return HTMLResponse(page("EzBay — Sales", body))
 
 
@@ -248,7 +248,7 @@ def customers_page(user: str = Depends(require_dashboard_user), session: Session
         "<label>Notes<input name='notes'></label>"
         "<button type='submit'>Add</button></form></div>"
     )
-    body = brand_header("Customers") + "<p class='subtitle'>Module 9 -- customers are also created automatically from sales.</p>" + table + form + _STYLE
+    body = brand_header("Customers") + table + form + _STYLE
     return HTMLResponse(page("EzBay — Customers", body))
 
 

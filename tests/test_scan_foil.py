@@ -97,3 +97,37 @@ def test_assess_foil_says_nothing_about_glare_when_it_suggests_normal(tmp_path, 
     result = assess_foil(path, _card({"normal": {"market": 1}, "reverseHolofoil": {"market": 2}}))
     assert result.suggestion is CardVariant.NORMAL
     assert "glare" not in result.reason
+
+
+def test_assess_foil_uses_the_trained_classifier_when_its_prediction_is_a_real_candidate(tmp_path, monkeypatch):
+    monkeypatch.setattr(foil_mod.foil_features, "extract_features", lambda *a, **k: {"some": "features"})
+    monkeypatch.setattr(foil_mod.foil_features, "predict", lambda features: ("reverse_holo", 0.97))
+    path = tmp_path / "card.jpg"
+    cv2.imwrite(str(path), np.full((200, 140, 3), 120, dtype=np.uint8))
+    result = assess_foil(path, _card({"normal": {"market": 1}, "reverseHolofoil": {"market": 2}}))
+    assert result.suggestion is CardVariant.REVERSE_HOLO
+    assert result.confidence == 0.97
+    assert "trained classifier" in result.reason
+
+
+def test_assess_foil_ignores_a_classifier_prediction_the_catalogue_rules_out(tmp_path, monkeypatch):
+    """The catalogue's own cached prices are still a hard fact the model
+    doesn't get to override -- a card with no cached holo printing at all
+    can't actually be holo, whatever the classifier guesses from the image."""
+    monkeypatch.setattr(foil_mod.foil_features, "extract_features", lambda *a, **k: {"some": "features"})
+    monkeypatch.setattr(foil_mod.foil_features, "predict", lambda features: ("holo", 0.99))
+    path = tmp_path / "card.jpg"
+    cv2.imwrite(str(path), np.full((200, 140, 3), 120, dtype=np.uint8))
+    result = assess_foil(path, _card({"normal": {"market": 1}, "reverseHolofoil": {"market": 2}}))
+    # Falls through to the heuristic instead of trusting the ruled-out guess.
+    assert result.suggestion is not CardVariant.HOLO
+
+
+def test_assess_foil_falls_back_to_the_heuristic_when_the_image_cant_be_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(foil_mod.foil_features, "extract_features", lambda *a, **k: None)
+    monkeypatch.setattr(foil_mod, "_surface_metrics", lambda *a, **k: {"body_bias": 6.0, "glare_bias": 0.02})
+    path = tmp_path / "card.jpg"
+    cv2.imwrite(str(path), np.full((200, 140, 3), 120, dtype=np.uint8))
+    result = assess_foil(path, _card({"normal": {"market": 1}, "reverseHolofoil": {"market": 2}}))
+    assert result.suggestion is CardVariant.REVERSE_HOLO
+    assert "trained classifier" not in result.reason

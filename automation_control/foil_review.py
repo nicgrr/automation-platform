@@ -140,8 +140,6 @@ def foil_review_page(user: str = Depends(require_dashboard_user), session: Sessi
 
     header = (
         brand_header("Foil review")
-        + "<p class='subtitle'>Cards the weak foil signal thinks are filed under the wrong printing. "
-          "Pick what it actually is from the photo -- every answer helps calibrate detection across every set.</p>"
         + "<div class='stat-grid'>"
         + f"<div class='stat-card'><div class='label'>Awaiting your call</div><div class='value'>{len(pending)}</div></div>"
         + f"<div class='stat-card'><div class='label'>Labelled so far</div><div class='value'>{labeled_count} <span class='value-sub'>({confirmed_count} confirmed)</span></div></div>"

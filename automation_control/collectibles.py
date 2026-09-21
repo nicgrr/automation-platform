@@ -218,8 +218,6 @@ def collectibles_page(
     pending_count = len(session.scalars(select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)).all())
     body = (
         brand_header("Collectibles")
-        + "<p class='subtitle'>Module 12 -- Sonny Angel, Smiski, blind boxes, with real ownership tracking "
-          "(quantity owned, not just catalogued).</p>"
         + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
           f"<a href='/collectibles/review'>Review queue ({pending_count})</a> &nbsp; "
           f"<a href='/collectibles/identify'>Identify from a link</a></p></div>"
@@ -265,9 +263,6 @@ def _collectible_capture_dir(settings) -> Path:
 def collectible_capture_page(user: str = Depends(require_dashboard_user)) -> HTMLResponse:
     body = (
         brand_header("Capture a collectible")
-        + "<p class='subtitle'>Photograph a Sonny Angel, Smiski, or similar figure -- AI extracts brand/series/"
-          "character/variant as a suggestion. Nothing is added to the catalogue until you confirm it on the "
-          "review queue.</p>"
         + "<div class='panel'><form method='post' action='/collectibles/capture' enctype='multipart/form-data' class='calc-form'>"
         + photo_field("photo", "Photo", required=True, hint="the figure, well lit, front on")
         + "<button type='submit'>Capture &amp; identify</button>"
@@ -401,9 +396,6 @@ def _run_collectible_capture_batch(batch_id: str, photo_paths: list[Path], setti
 def collectible_capture_bulk_page(user: str = Depends(require_dashboard_user)) -> HTMLResponse:
     body = (
         brand_header("Bulk capture collectibles")
-        + "<p class='subtitle'>Select multiple photos at once -- each becomes its own review-queue entry. "
-          "Processing happens in the background, so you can close this page after submitting and check back "
-          "on the status page later.</p>"
         + "<div class='panel'><form method='post' action='/collectibles/capture/bulk' enctype='multipart/form-data' class='calc-form'>"
         + photo_field("photos", "Photos", required=True, multiple=True, hint="one figure per photo")
         + "<button type='submit'>Identify all</button>"

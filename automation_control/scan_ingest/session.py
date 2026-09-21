@@ -28,9 +28,10 @@ from .detect import detect_cards
 from .foil import assess_foil
 from .pricing import (
     POKEMONPRICETRACKER_SOURCE_NAME, CachedPriceSource, PokemonPriceTrackerSource, PokemonTcgPriceSource,
-    PriceSource, price_and_record,
+    PriceSource, TcgplayerSnapshotPriceSource, price_and_record,
 )
-from .identify import Identification, ReferenceCard, Source, best_set_by_art, detect_sheet_set_and_rotation, identify_card, identify_card_via_vision, read_set_totals
+from .identify import Identification, ReferenceCard, Source, best_set_by_art, detect_sheet_set_and_rotation, dominant_set_id, identify_card, identify_card_via_vision, read_set_totals
+from .tcgplayer_catalog import GAMES
 
 POLL_INTERVAL_SECONDS = 2.0
 # Scanners write incrementally; a file that appeared mid-write would be
@@ -38,6 +39,11 @@ POLL_INTERVAL_SECONDS = 2.0
 STABLE_CHECKS = 2
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+
+# How confident a foil suggestion (catalogue fact or trained classifier)
+# must be before it overrides the operator's declared batch variant -- see
+# the comment at its use in process_sheet for what this number is based on.
+CONFIDENCE_AUTOCOMMIT = 0.95
 
 
 class Prompter:
@@ -404,6 +410,7 @@ def process_sheet(
     condition: str = "Near Mint", expected_count: int | None = None,
     post_rotation_degrees: int = 0, user: str = "scan-ingest",
     price_source: PriceSource | None = None, unattended: bool = False,
+    game: str = "pokemon",
 ) -> SheetOutcome:
     """Detect, identify, confirm, and commit every card on one sheet.
 
@@ -446,6 +453,13 @@ def process_sheet(
             outcome.skipped = detection.count
             return outcome
 
+    tcgplayer_game = GAMES.get(game)
+    vision_game = tcgplayer_game.vision_name if tcgplayer_game else None
+    if price_source is None and tcgplayer_game is not None:
+        # One Piece / Dragon Ball price from the TCGplayer snapshot cached
+        # with the catalogue -- pokemonpricetracker.com is Pokemon-only,
+        # and a billed search for a card it can't have would waste credits.
+        price_source = TcgplayerSnapshotPriceSource()
     if price_source is None:
         # Real market/eBay-sold pricing when a key is configured -- see
         # pricing.py's module docstring for why the zero-cost pokemontcg.io
@@ -491,7 +505,7 @@ def process_sheet(
             # there's no key configured), it falls to the same set-aside as
             # always; if it can, `identification` carries on into the
             # ordinary identify/commit path below like any other card.
-            identification = identify_card_via_vision(crop_path, references, api_key) if api_key else None
+            identification = identify_card_via_vision(crop_path, references, api_key, game=vision_game) if api_key else None
             if identification is None:
                 saved_to = _set_aside_for_review(
                     crop_path, Path(settings.scan_media_dir), sheet_path.name, index, label="not-card-shaped",
@@ -510,31 +524,39 @@ def process_sheet(
             # vision guess never overwrites a phash guess that's already as
             # good or better.
             if unattended and identification.needs_confirmation and api_key:
-                vision = identify_card_via_vision(crop_path, references, api_key)
+                vision = identify_card_via_vision(crop_path, references, api_key, game=vision_game)
                 if vision is not None and not vision.needs_confirmation:
                     identification = vision
 
         identified_card = db.get(CatalogCard, identification.card_id) if identification.card_id else None
         card_variant = variant
-        if identified_card is not None:
+        # The foil classifier and its catalogue facts are Pokemon-specific;
+        # One Piece / Dragon Ball parallels are separate catalogue cards,
+        # so the art match has already told the printings apart.
+        if identified_card is not None and tcgplayer_game is None:
             foil_assessment = assess_foil(crop_path, identified_card)
             summary = foil_assessment.log_summary()
             if identification.foil_observation:
                 summary += f" | vision saw: {identification.foil_observation}"
             prompter.notify(f"  Card {index}: {summary}")
-            # 0.98 confidence means the catalogue's own cached prices show
-            # exactly one printing exists at all -- not a guess to weigh
-            # against the operator's declared batch variant, a fact that
-            # overrides it. Everything below that confidence (a real
-            # heuristic guess) never does: a real check against 238 labelled
-            # examples (2026-09-14) found its confirmed/rejected body_bias
-            # ranges almost entirely overlapping, i.e. no reliable signal to
-            # act on -- see /foil-review, which exists to build a real one.
-            if foil_assessment.confidence >= 0.98 and foil_assessment.suggestion is not None \
+            # 0.98+ confidence means the catalogue's own cached prices show
+            # exactly one printing exists at all -- a fact, not a guess, so
+            # it overrides the operator's declared batch variant outright.
+            # CONFIDENCE_AUTOCOMMIT covers the other source of a
+            # high-confidence suggestion: the trained classifier (see
+            # foil.py/foil_features.py). A real cross-validated check
+            # against 177 labels (2026-09-19) found predictions at >=0.95
+            # were right ~97% of the time -- good enough to act on, still
+            # conservative enough that most cards (the ones the model isn't
+            # sure about) fall through to the batch's declared variant
+            # rather than a shaky guess. Below 238 labels (2026-09-14), the
+            # then-only signal (body_bias) had no reliable separation at
+            # all -- see /foil-review, which is what built the real one.
+            if foil_assessment.confidence >= CONFIDENCE_AUTOCOMMIT and foil_assessment.suggestion is not None \
                     and foil_assessment.suggestion != variant:
                 card_variant = foil_assessment.suggestion
                 prompter.notify(
-                    f"  Card {index}: only {card_variant.value} exists for this card per the catalogue -- "
+                    f"  Card {index}: {foil_assessment.reason} ({foil_assessment.confidence:.2f} confidence) -- "
                     f"filing as {card_variant.value} instead of the batch's {variant.value}"
                 )
         if unattended and identification.needs_confirmation:
@@ -577,12 +599,32 @@ def _load_all_catalogs(db: Session) -> dict[str, list[ReferenceCard]]:
     for card_set in catalog.cached_sets(db):
         refs = [
             ReferenceCard(card_id=c.id, number=c.number, name=c.name, phash=c.phash,
-                      art_phash=c.art_phash, rarity=c.rarity)
+                      art_phash=c.art_phash, rarity=c.rarity, set_id=c.set_id)
             for c in catalog.get_cached_cards(db, card_set.id) if c.phash
         ]
         if refs:
             catalogs[card_set.id] = refs
     return catalogs
+
+
+GAME_KEY_PREFIX = "game:"
+
+
+def _merge_by_game(db: Session, catalogs: dict[str, list[ReferenceCard]]) -> dict[str, list[ReferenceCard]]:
+    """`catalogs` for sheet routing: Pokemon sets stay one list per set,
+    but each One Piece / Dragon Ball game becomes a single "game:<game>"
+    list. Their piles mix sets freely, and a reference list scoped to the
+    one set a sheet matched best would miss every card on it from any other
+    set. Unlike a Pokemon "71/114", their printed codes and art are unique
+    across a whole game, so matching against all of it at once is safe.
+    """
+    games = {s.id: s.game or "pokemon" for s in db.scalars(select(CardSet).where(CardSet.id.in_(catalogs)))}
+    merged: dict[str, list[ReferenceCard]] = {}
+    for set_id, refs in catalogs.items():
+        game = games.get(set_id, "pokemon")
+        key = set_id if game == "pokemon" else GAME_KEY_PREFIX + game
+        merged.setdefault(key, []).extend(refs)
+    return merged
 
 
 # How many distinct printed totals to act on when a sheet matches nothing.
@@ -702,7 +744,7 @@ def _run_session_auto(
 
         probe_dir = Path(settings.scan_media_dir) / "work" / "_probe" / sheet_path.stem
         probe = detect_cards(sheet_path, probe_dir, always_save_overlay=False)
-        catalogs = _load_all_catalogs(db)
+        catalogs = _merge_by_game(db, _load_all_catalogs(db))
         match = detect_sheet_set_and_rotation(probe.crop_paths, catalogs, max_phash_distance=settings.scan_phash_max_distance) if probe.cards else None
 
         if match is None and probe.cards:
@@ -711,7 +753,7 @@ def _run_session_auto(
             # and fetch it, then try once more.
             prompter.notify(f"\nSheet {sheet_path.name}: no cached set matches -- reading the set number off the cards.")
             if _autocache_from_printed_total(db, probe.crop_paths, settings, prompter):
-                catalogs = _load_all_catalogs(db)
+                catalogs = _merge_by_game(db, _load_all_catalogs(db))
                 match = detect_sheet_set_and_rotation(probe.crop_paths, catalogs, max_phash_distance=settings.scan_phash_max_distance)
 
         if match is None:
@@ -724,17 +766,25 @@ def _run_session_auto(
             sheets_done += 1
             continue
 
-        set_id, rotation = match
+        catalog_key, rotation = match
+        references = catalogs[catalog_key]
+        game = catalog_key.removeprefix(GAME_KEY_PREFIX) if catalog_key.startswith(GAME_KEY_PREFIX) else "pokemon"
+        if game == "pokemon":
+            set_id = catalog_key
+        else:
+            # The sheet matched a whole game; the session is filed under
+            # whichever of its sets most of these cards came from.
+            set_id = dominant_set_id(probe.crop_paths, rotation, references, settings.scan_phash_max_distance) or references[0].set_id
         card_set = db.get(CardSet, set_id)
-        references = catalogs[set_id]
         scan_session = start_or_resume(db, set_id, variant, prompter, user=user, unattended=True)
-        prompter.notify(f"\nSheet {sheet_path.name}: matched {card_set.name} ({set_id}), rotation {rotation} deg")
+        matched = card_set.name if game == "pokemon" else f"{GAMES[game].label} (mostly {card_set.name})"
+        prompter.notify(f"\nSheet {sheet_path.name}: matched {matched} ({set_id}), rotation {rotation} deg")
 
         outcome = process_sheet(
             db, sheet_path, scan_session, references, settings, prompter,
             set_total=card_set.printed_total, variant=variant, condition=condition,
             expected_count=expected_count, post_rotation_degrees=rotation, user=user,
-            price_source=price_source, unattended=unattended,
+            price_source=price_source, unattended=unattended, game=game,
         )
         if outcome.archived_to is None:
             seen.add(sheet_path)

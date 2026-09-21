@@ -64,7 +64,7 @@ def suppliers_page(user: str = Depends(require_dashboard_user), session: Session
         "<label>Wholesale discount %<input name='wholesale_discount_pct' type='number' step='0.1'></label>"
         "<button type='submit'>Add</button></form></div>"
     )
-    body = brand_header("Suppliers") + "<p class='subtitle'>Module 10 -- wholesale accounts and distributors.</p>" + table + form + _STYLE
+    body = brand_header("Suppliers") + table + form + _STYLE
     return HTMLResponse(page("EzBay — Suppliers", body))
 
 
@@ -169,7 +169,7 @@ def goals_page(user: str = Depends(require_dashboard_user), session: Session = D
         "<label>Target value<input name='target_value' type='number' step='0.01' value='1' required></label>"
         "<button type='submit'>Add</button></form></div>"
     )
-    body = brand_header("Goals") + "<p class='subtitle'>Module 14 -- business milestones, tracked visually.</p>" + board + form + _STYLE
+    body = brand_header("Goals") + board + form + _STYLE
     return HTMLResponse(page("EzBay — Goals", body))
 
 
@@ -297,7 +297,6 @@ def release_calendar_page(user: str = Depends(require_dashboard_user), session: 
     )
     body = (
         brand_header("Release calendar")
-        + "<p class='subtitle'>Upcoming product releases and supplier ordering deadlines -- soonest deadline first.</p>"
         + table + form + _STYLE
     )
     return HTMLResponse(page("EzBay — Release calendar", body))

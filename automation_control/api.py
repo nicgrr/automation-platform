@@ -14,6 +14,7 @@ from .analytics import router as analytics_router
 from .audit import record_event
 from .auth import SESSION_MAX_AGE_SECONDS, create_session, require_dashboard_user, verify_password
 from .business_records import router as business_records_router
+from .accessories import router as accessories_router
 from .buying import router as buying_router
 from .capture import router as cards_router
 from .collectible_link import router as collectible_link_router
@@ -106,6 +107,7 @@ app.include_router(sealed_economics_router)
 app.include_router(analytics_router)
 app.include_router(collectibles_router)
 app.include_router(collectible_link_router)
+app.include_router(accessories_router)
 app.include_router(contact_messages_router)
 app.include_router(whatnot_router)
 app.include_router(price_history_router)
@@ -137,7 +139,6 @@ def health() -> HealthResponse:
 def login_page() -> str:
     body = (
         brand_header("Private Control Plane", show_back=False)
-        + "<p class='subtitle'>Sign in to continue.</p>"
         + "<div class='panel'><form method=post>"
         + "<label>Username <input name=username autocomplete=username required></label>"
         + "<label>Password <input type=password name=password autocomplete=current-password required></label>"

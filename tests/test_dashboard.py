@@ -150,17 +150,24 @@ def test_quick_links_are_rendered_from_the_shared_nav(client):
                 assert f"href='{href}'" in quicklinks, href
 
 
-def test_every_module_stays_reachable_from_the_drawer(client):
-    """Nothing may be built and then be unreachable. This is what actually
-    went wrong before: the live collectibles capture and review pages were
-    in neither the drawer nor the dashboard, so the only way to them was
-    typing the URL."""
+def test_every_listed_module_is_reachable_from_the_drawer(client):
+    """Nothing in use may be built and then be unreachable. This is what
+    actually went wrong before: the live collectibles capture and review
+    pages were in neither the drawer nor the dashboard, so the only way to
+    them was typing the URL.
+
+    Driven from ADMIN_NAV rather than a hand-kept list, so it follows the
+    nav instead of having to be edited alongside it. The pages in
+    HIDDEN_NAV are excluded by construction -- being absent from the
+    drawer is the point of them, and test_nav.py holds them to the other
+    half of that bargain: their routes still answer.
+    """
     response = client.get("/dashboard")
-    for path in ["/purchase-lots", "/potential-stock", "/sales", "/customers", "/suppliers",
-                 "/goals", "/release-calendar", "/sealed-products", "/collectibles", "/whatnot",
-                 "/search", "/inventory", "/feed", "/export", "/market-search", "/deal-check",
-                 "/collectibles/capture", "/collectibles/review", "/inventory-audit",
-                 "/cards/capture", "/foil-review", "/analytics"]:
+    for _title, links, _collapsed in ADMIN_NAV:
+        for href, _label in links:
+            assert f"data-nav-href='{href}'" in response.text, href
+    # the specific pages whose absence prompted the test
+    for path in ["/collectibles/capture", "/collectibles/review", "/inventory-audit"]:
         assert f"data-nav-href='{path}'" in response.text, path
 
 

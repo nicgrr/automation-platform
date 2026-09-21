@@ -103,6 +103,33 @@ class PokemonTcgPriceSource(PriceSource):
         return None
 
 
+TCGPLAYER_SNAPSHOT_SOURCE_NAME = "tcgcsv_tcgplayer"
+
+
+class TcgplayerSnapshotPriceSource(PriceSource):
+    """One Piece / Dragon Ball pricing: the TCGplayer market figures that
+    scan_ingest/tcgplayer_catalog.py stores in `raw_prices` each time it
+    refreshes a set. It makes no network call and is refreshed simply by
+    re-running that import.
+
+    TCGplayer lists each printing (a parallel, an alt art) as its own
+    product, so a card's snapshot normally carries exactly one subtype.
+    The batch variant can't pick between printings the way it does for a
+    Pokemon reverse holo, so the matching subtype is tried first and then
+    whichever one exists.
+    """
+
+    def get_price(self, card: CatalogCard, variant: CardVariant) -> PriceQuote | None:
+        prices = ((card.raw_prices or {}).get("tcgplayer") or {}).get("prices") or {}
+        preferred = [k for k in _TCGPLAYER_VARIANT_KEYS.get(variant, ()) if k in prices]
+        for key in [*preferred, *(k for k in prices if k not in preferred)]:
+            for field in ("market", "mid", "low"):
+                value = (prices.get(key) or {}).get(field)
+                if value:
+                    return PriceQuote(price=Decimal(str(value)), currency="USD", source=f"{TCGPLAYER_SNAPSHOT_SOURCE_NAME}_{field}")
+        return None
+
+
 # pokemonpricetracker.com's printing names, keyed by our CardVariant --
 # confirmed against real API responses (see the class docstring below),
 # unlike TCGPlayer's variant keys above which came from the same cached

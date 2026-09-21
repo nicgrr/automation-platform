@@ -353,6 +353,11 @@ class _FakeHash:
     def __sub__(self, other):
         return self.distance
 
+    def __str__(self):
+        # Hex with `distance` bits set, i.e. exactly that far from an
+        # all-zero reference hash under the vectorised comparison.
+        return f"{(1 << self.distance) - 1:016x}"
+
 
 # --- vision fallback ---
 

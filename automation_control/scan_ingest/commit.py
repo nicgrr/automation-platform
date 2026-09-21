@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import record_event
-from ..models import CardVariant, CatalogCard, InventoryItem, ScanSession
+from ..models import CardVariant, CatalogCard, CatalogItem, InventoryItem, ScanSession
 from .identify import Identification
 
 
@@ -92,6 +92,28 @@ def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str,
     return destination
 
 
+
+def _catalog_item_id_for(session: Session, card: CatalogCard) -> str | None:
+    """The generic-catalogue id for a scanned card, or None if it has no
+    catalog_items row.
+
+    Every valuation reader in the app -- the dashboard gauge, /inventory's
+    totals, and the eBay price importer's "what do I own" query -- keys off
+    InventoryItem.catalog_item_id. This function is why a row committed
+    here can be found by them. Leaving it NULL, which is what this did
+    until now, produces a holding that is not unpriced so much as
+    invisible: no price lookup can reach it and the nightly eBay run never
+    even considers it a target.
+
+    migrate_add_catalog_items.py gave every catalog card a catalog_items
+    row sharing its id, so this is normally a straight PK hit. It is a
+    lookup rather than an assignment because that guarantee has already
+    been broken once (svp-218 was added to catalog_cards without one), and
+    a dangling id would be worse than a null -- SQLite has foreign keys
+    switched off here, so nothing else would catch it.
+    """
+    return card.id if session.get(CatalogItem, card.id) is not None else None
+
 def commit_card(
     session: Session,
     identification: Identification,
@@ -153,6 +175,11 @@ def commit_card(
             elif not existing.scan_image_path:
                 stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
                 existing.scan_image_path = str(stored)
+        # Heal a row committed before this link was being set, so the
+        # backlog of them drains as those cards are scanned again rather
+        # than needing a second repair pass later.
+        if existing.catalog_item_id is None:
+            existing.catalog_item_id = _catalog_item_id_for(session, card)
         item = existing
         created = False
     else:
@@ -161,6 +188,7 @@ def commit_card(
             id=str(uuid.uuid4()), card_id=card.id, variant=variant, condition=condition,
             quantity=1, scan_image_path=str(stored) if stored else None,
             session_id=scan_session.id if scan_session else None, notes=notes,
+            catalog_item_id=_catalog_item_id_for(session, card),
         )
         session.add(item)
         created = True

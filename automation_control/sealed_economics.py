@@ -60,7 +60,7 @@ def sealed_products_page(user: str = Depends(require_dashboard_user), session: S
         "<label>RRP<input name='rrp' type='number' step='0.01'></label>"
         "<button type='submit'>Add</button></form></div>"
     )
-    body = brand_header("Sealed products") + "<p class='subtitle'>Module 11 -- booster boxes, displays, cases.</p>" + table + form + _STYLE
+    body = brand_header("Sealed products") + table + form + _STYLE
     return HTMLResponse(page("EzBay — Sealed products", body))
 
 

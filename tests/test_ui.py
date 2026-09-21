@@ -102,7 +102,8 @@ def test_navigation_drawer_is_on_every_page(client):
     response = client.get("/collectibles")
     assert "class='sidenav'" in response.text
     assert "navtoggle" in response.text
-    for path in ["/inventory", "/sales", "/suppliers", "/deal-check", "/market-search", "/export"]:
+    for path in ["/inventory", "/shop-listings", "/personal-collection", "/deal-check",
+                 "/market-search", "/export"]:
         assert f"href='{path}'" in response.text, path
 
 

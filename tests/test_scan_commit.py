@@ -7,7 +7,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
-from automation_control.models import AuditEvent, CardSet, CardVariant, CatalogCard, InventoryItem, ScanSession
+from automation_control.models import (AuditEvent, CardSet, CardVariant, CatalogCard, CatalogItem,
+                                       CatalogItemType, InventoryItem, ScanSession)
 from automation_control.scan_ingest.commit import CommitRefused, commit_card, inventory_for_set, inventory_totals
 from automation_control.scan_ingest.identify import Identification, Source
 
@@ -20,6 +21,12 @@ def session(tmp_path):
         db.add(CardSet(id="xy11", name="Steam Siege", code="STS", printed_total=114))
         db.add(CatalogCard(id="xy11-31", set_id="xy11", number="31", name="Dewott"))
         db.add(CatalogCard(id="xy11-29", set_id="xy11", number="29", name="Gastrodon"))
+        # The generic-catalogue twin of each card, sharing its id, exactly
+        # as migrate_add_catalog_items.py created them. Prices and every
+        # valuation query are keyed by this id, so a fixture without them
+        # can't tell a correctly linked commit from an unlinked one.
+        db.add(CatalogItem(id="xy11-31", name="Dewott", item_type=CatalogItemType.TCG_CARD))
+        db.add(CatalogItem(id="xy11-29", name="Gastrodon", item_type=CatalogItemType.TCG_CARD))
         db.commit()
         yield db
 
@@ -81,6 +88,10 @@ def test_commit_creates_new_inventory_row(session, tmp_path):
     assert items[0].card_id == "xy11-31"
     assert items[0].variant is CardVariant.NORMAL
     assert items[0].condition == "Near Mint"
+    # Without this the holding is not merely unpriced, it is unreachable:
+    # card_prices, /inventory's totals, the dashboard gauge and the eBay
+    # importer's "what do I own" query are all keyed by catalog_item_id.
+    assert items[0].catalog_item_id == "xy11-31"
 
 
 def test_commit_increments_instead_of_duplicating(session, tmp_path):
@@ -246,3 +257,31 @@ def test_inventory_for_set_is_ordered_and_scoped(session, tmp_path):
     items = inventory_for_set(session, "xy11")
     assert [i.card.number for i in items] == ["29", "31"]
     assert inventory_for_set(session, "xy12") == []
+
+
+def test_commit_heals_a_row_left_unlinked_by_the_old_write_path(session, tmp_path):
+    """Rows committed before the link was set are repaired on the next
+    scan of the same card, so the backlog drains on its own."""
+    commit_card(session, _confident(), _scan_image(tmp_path), tmp_path / "media")
+    item = session.scalars(select(InventoryItem)).one()
+    item.catalog_item_id = None          # what the old write path produced
+    session.commit()
+
+    commit_card(session, _confident(), _scan_image(tmp_path), tmp_path / "media")
+
+    assert session.scalars(select(InventoryItem)).one().catalog_item_id == "xy11-31"
+
+
+def test_commit_leaves_the_link_null_rather_than_dangling(session, tmp_path):
+    """A catalog card with no catalog_items row (svp-218 got into this
+    state) must not be given an id that resolves to nothing -- foreign
+    keys are off here, so nothing downstream would catch it."""
+    session.add(CatalogCard(id="xy11-99", set_id="xy11", number="99", name="Orphan"))
+    session.commit()
+
+    commit_card(session, Identification(card_id="xy11-99", number="99", name="Orphan",
+                                        source=Source.BOTH, confidence=1.0),
+                _scan_image(tmp_path), tmp_path / "media")
+
+    item = session.scalars(select(InventoryItem).where(InventoryItem.card_id == "xy11-99")).one()
+    assert item.catalog_item_id is None

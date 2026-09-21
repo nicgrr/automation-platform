@@ -77,11 +77,24 @@ class ListingBuildStatus(str, enum.Enum):
 class CardVariant(str, enum.Enum):
     """Which printing of a card this copy is. Not reliably detectable from a
     flatbed scan (holo foil mostly reads as glare), so the operator sets it
-    per batch and can override it per card at confirmation time."""
+    per batch and can override it per card at confirmation time.
+
+    POKEBALL_PATTERN / MASTERBALL_PATTERN are a distinct chase-variant
+    treatment in Scarlet & Violet-era sets (a literal Poke Ball / Master
+    Ball graphic pattern over the card, not just reverse-holo foil) --
+    real, separately valuable printings, not a sub-case of reverse holo.
+    TCGPlayer's pricing API has no price key for either (they're generally
+    listed as their own product, not a sub-variant of the base card), so
+    they never get auto-suggested by _VARIANT_BY_TCG_KEY -- only ever set
+    by a human who can see the pattern, same as the rest of this comment's
+    first sentence already implies for every variant here.
+    """
 
     NORMAL = "normal"
     REVERSE_HOLO = "reverse_holo"
     HOLO = "holo"
+    POKEBALL_PATTERN = "pokeball_pattern"
+    MASTERBALL_PATTERN = "masterball_pattern"
 
 
 class CatalogItemType(str, enum.Enum):
@@ -543,6 +556,12 @@ class CardSet(Base):
     # list than any amount of text.
     logo_url: Mapped[str | None] = mapped_column(String(512))
     symbol_url: Mapped[str | None] = mapped_column(String(512))
+    # Same free-text keys as TcgCard.game. Every set was Pokemon until
+    # One Piece and Dragon Ball were cached from TCGplayer (see
+    # scan_ingest/tcgplayer_catalog.py) -- it's what lets the scan service
+    # match those games across their whole catalogue rather than one set,
+    # and what /inventory splits its sections by.
+    game: Mapped[str] = mapped_column(String(32), default="pokemon", server_default="pokemon", index=True)
 
 
 class CatalogCard(Base):
@@ -669,6 +688,47 @@ class CollectibleProduct(Base):
     retail_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
 
     catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class AccessoryProduct(Base):
+    """Card-supply detail for a CatalogItem -- sleeves, toploaders, deck
+    boxes, binders, playmats. Its own table rather than reusing
+    CollectibleProduct: a supply item has no character/series/is_secret
+    (there's no chase-figure equivalent for a box of sleeves), and
+    pack_size (e.g. "100ct", "9-Pocket") is a supply-specific concept
+    CollectibleProduct has no column for."""
+
+    __tablename__ = "accessory_products"
+
+    catalog_item_id: Mapped[str] = mapped_column(ForeignKey("catalog_items.id"), primary_key=True)
+    brand: Mapped[str | None] = mapped_column(String(128))
+    product_type: Mapped[str | None] = mapped_column(String(128))
+    pack_size: Mapped[str | None] = mapped_column(String(64))
+    color: Mapped[str | None] = mapped_column(String(64))
+    retail_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+
+    catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class CapturedAccessory(Base):
+    """A photo-captured card-supply item (sleeves, toploaders, deck boxes,
+    ...) awaiting human confirmation before it becomes a real CatalogItem +
+    AccessoryProduct. Mirrors CapturedCollectible's PENDING_REVIEW pattern
+    exactly -- see that class's docstring for why."""
+
+    __tablename__ = "captured_accessories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    image_path: Mapped[str] = mapped_column(String(512))
+    brand: Mapped[str | None] = mapped_column(String(128))
+    product_type: Mapped[str | None] = mapped_column(String(128))
+    pack_size: Mapped[str | None] = mapped_column(String(64))
+    color: Mapped[str | None] = mapped_column(String(64))
+    ai_raw_response: Mapped[dict | None] = mapped_column(JSON)
+    status: Mapped[CardCaptureStatus] = mapped_column(Enum(CardCaptureStatus), default=CardCaptureStatus.PENDING_REVIEW, index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"))
 
 
 class CapturedCollectible(Base):

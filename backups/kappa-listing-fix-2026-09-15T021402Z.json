@@ -1,0 +1,13 @@
+{
+  "fixed_at": "2026-09-15T02:14:02.497622+00:00",
+  "reason": "Kappa's is_secret flag was corrected on 2026-09-13; this listing was created 2026-09-08 while it was still (wrongly) flagged secret and was never repriced or retitled after the fix. Corrected using the exact same logic list_for_sale.py itself uses: best_price() -> ebay_active_low, no floor/cap applied.",
+  "listing_id": "ef5d645b-8ede-4e63-b709-aa7cd22a4aa6",
+  "before": {
+    "title": "Kappa (Secret)",
+    "price": "173.37"
+  },
+  "after": {
+    "title": "Kappa",
+    "price": "18.04"
+  }
+}

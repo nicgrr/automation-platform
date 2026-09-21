@@ -108,8 +108,6 @@ def match_listing_item(session: Session, item: ExtractedListingItem) -> tuple[Ca
 def deal_check_page(user: str = Depends(require_dashboard_user)) -> HTMLResponse:
     body = (
         brand_header("Deal check")
-        + "<p class='subtitle'>Module 22 -- paste a listing's text, upload a screenshot, or both, and see each "
-          "item's asking price next to this app's own catalogue.</p>"
         + "<div class='panel'><form id='deal-check-form' class='calc-form'>"
         + "<label>Listing text (optional if you upload a photo)<textarea name='text' rows='6' placeholder='Paste the listing description here…'></textarea></label>"
         + "<label>Screenshot or photo (optional if you paste text)<input type='file' name='photo' accept='image/*'></label>"
@@ -249,6 +247,8 @@ _SCRIPT = """<script>
     if (!text.trim() && !photo) { status.textContent = 'Paste some text or choose a photo first.'; return; }
 
     status.textContent = 'Reading listing…';
+    if (window.EzBayProgress) window.EzBayProgress.begin('POST /deal-check/extract');
+    var failed = false;
     results.innerHTML = '';
     var data = new FormData();
     data.append('text', text);
@@ -321,7 +321,10 @@ _SCRIPT = """<script>
           results.appendChild(row);
         });
       })
-      .catch(function() { status.textContent = 'Reading the listing failed -- try again.'; });
+      .catch(function() { failed = true; status.textContent = 'Reading the listing failed -- try again.'; })
+      // A request that failed fast is not evidence of how long a real read
+      // takes, so only a successful one updates the estimate.
+      .then(function(){ if (window.EzBayProgress) window.EzBayProgress.done(failed ? null : 'POST /deal-check/extract'); });
   });
 })();
 </script>"""

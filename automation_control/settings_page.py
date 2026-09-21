@@ -173,9 +173,6 @@ def settings_page(request: Request, user: str = Depends(require_dashboard_user),
     connect = (f"<a class='btn' href='/auth/ebay/start'>{escape(action)}</a>" if action else "")
     body = (
         brand_header("Settings")
-        + "<p class='subtitle'>What this app is connected to. Values live in "
-          "<code>.env.local</code>, which the background timers read too &mdash; so they're "
-          "shown here, not edited here.</p>"
         + f"<div class='panel'><div class='set-head'><h2>eBay</h2>{connect}</div>{_table(ebay_rows)}</div>"
         + f"<div class='panel'><h2>Integrations</h2>"
           "<p class='subtitle'>Whether a credential is present. Keys are never displayed.</p>"

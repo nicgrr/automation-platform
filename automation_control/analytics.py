@@ -143,12 +143,16 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
 
     body = (
         brand_header("Business analytics")
-        + "<p class='subtitle'>The command centre -- Modules 13 &amp; 16.</p>"
         + top_cards
         + "<div class='panel'><h2>Inventory ageing</h2><div class='age-row'>" + ageing_html + "</div></div>"
         + f"<div class='panel'><h2>Dead stock (90+ days, still available)</h2><ul class='events'>{dead_stock_html}</ul></div>"
-        + f"<div class='panel'><h2>Best sales channel</h2><p>{escape(best_channel) + ' — $' + format(channel_totals[best_channel], ',.2f') if best_channel else 'No sales recorded yet.'}</p></div>"
-        + f"<div class='panel'><h2>Open goals</h2><ul class='events'>{goals_html}</ul></div>"
+        # Both of these read tables that are filled by hand on pages nobody
+        # has used yet (see HIDDEN_NAV in ui.py), so their "empty" state was
+        # the only state they had ever shown. They come back on their own
+        # with the first sale and the first goal.
+        + (f"<div class='panel'><h2>Best sales channel</h2><p>{escape(best_channel)} — "
+           f"${channel_totals[best_channel]:,.2f}</p></div>" if best_channel else "")
+        + (f"<div class='panel'><h2>Open goals</h2><ul class='events'>{goals_html}</ul></div>" if goals else "")
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Analytics", body))

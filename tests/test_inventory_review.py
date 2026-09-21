@@ -353,7 +353,7 @@ def test_set_page_lists_unowned_cards_too(client, session):
     session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
     session.commit()
 
-    resp = client.get(SET_PAGE)
+    resp = client.get(SET_PAGE, params={"owned_only": "0"})
     assert "Owned" in resp.text and "NotOwned" in resp.text
     assert "Qty: 0" in resp.text
     assert "unowned" in resp.text
@@ -369,6 +369,32 @@ def test_set_page_owned_only_hides_the_rest(client, session):
     assert "NotOwned" not in resp.text
 
 
+def test_set_page_defaults_to_owned_only(client, session):
+    """Seeing your own 15 cards against an unfiltered 200-card set is the
+    common case landing on a set page, so owned-only is the default rather
+    than something to opt into every time."""
+    _seed(session, card_id="xy11-1", number="1", name="Owned")
+    session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
+    session.commit()
+
+    resp = client.get(SET_PAGE)  # no owned_only param at all
+    assert "Owned" in resp.text
+    assert "NotOwned" not in resp.text
+    assert "Show all cards" in resp.text  # the toggle offers the opposite view
+
+
+def test_set_page_owned_only_0_shows_everything(client, session):
+    """Explicit ?owned_only=0 must mean off -- not just an empty string,
+    since the default is now the string "1"."""
+    _seed(session, card_id="xy11-1", number="1", name="Owned")
+    session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
+    session.commit()
+
+    resp = client.get(SET_PAGE, params={"owned_only": "0"})
+    assert "Owned" in resp.text and "NotOwned" in resp.text
+    assert "Owned only" in resp.text  # the toggle offers to switch back
+
+
 def test_set_page_splits_a_card_into_its_printings(client, session):
     """The same card in normal and reverse holo are different things to own
     and are priced differently, so each gets its own tile."""
@@ -380,7 +406,7 @@ def test_set_page_splits_a_card_into_its_printings(client, session):
     ))
     session.commit()
 
-    resp = client.get(SET_PAGE)
+    resp = client.get(SET_PAGE, params={"owned_only": "0"})
     assert resp.text.count("Caterpie") == 2
     assert "Normal" in resp.text and "Reverse Holo" in resp.text
 
@@ -389,7 +415,7 @@ def test_set_page_shows_rarity_and_number(client, session):
     session.add(CardSet(id="xy11", name="Steam Siege", printed_total=114))
     session.add(CatalogCard(id="xy11-1", set_id="xy11", number="1", name="Caterpie", rarity="Common"))
     session.commit()
-    resp = client.get(SET_PAGE)
+    resp = client.get(SET_PAGE, params={"owned_only": "0"})
     assert "Common" in resp.text
     assert "1/114" in resp.text
 
@@ -445,7 +471,7 @@ def test_grid_children_can_shrink_so_columns_stay_even(client, session, tmp_path
 
     assert resp.status_code == 200
     style = resp.text[resp.text.index("<style>"):]
-    assert ".card-tile>*{min-width:0" in style.replace(" ", "")
+    assert ".card-row>*{min-width:0" in style.replace(" ", "")
     assert "min-width:0" in style.replace(" ", "")
 
 
@@ -480,7 +506,7 @@ def test_unowned_card_offers_add_only(client, session, tmp_path):
     session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
     session.commit()
 
-    resp = client.get(SET_PAGE)
+    resp = client.get(SET_PAGE, params={"owned_only": "0"})
 
     assert "+ Add" in resp.text
     # a card you don't own has nothing to remove
@@ -648,7 +674,7 @@ def test_unowned_card_tile_still_uses_reference_art(client, session):
     card.local_image_path = "cache/xy11-31.png"
     session.commit()
 
-    body = client.get("/inventory/set/xy11").text
+    body = client.get("/inventory/set/xy11", params={"owned_only": "0"}).text
     assert "/inventory/card-thumb/xy11-31" in body
     assert "Your scan" not in body
 

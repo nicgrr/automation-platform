@@ -203,39 +203,56 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     competing with the required Card Number one) and is the field real
     sellers in this category actually use.
 
-    A second card sharing the same printed number is skipped, not
-    included as a second variation with a colliding trait value: a real
-    upload rejected 3 of 24 sets with "Duplicate VariationSpecifics trait
-    value" for exactly this (a reprint/alt-art sharing its base card's
-    number). eBay's variation model has no room for two options with the
-    same MPN -- and even if it did, a buyer couldn't tell them apart from
-    the label alone. The skipped card stays real inventory, just not sold
-    through this listing; the returned skip reasons are what a caller
-    reports so it isn't silently dropped.
+    A second card sharing the same printed number *and the same printing*
+    is skipped, not included as a second variation with a colliding trait
+    value: a real upload rejected 3 of 24 sets with "Duplicate
+    VariationSpecifics trait value" for exactly this (a reprint/alt-art
+    sharing its base card's number). eBay's variation model has no room
+    for two options with an identical trait value. A different printing of
+    the *same* number (Normal vs. Reverse Holo of card #148) is not this
+    case -- the printing is folded into the value itself ("148/162 Pineco
+    (Reverse Holo)"), which is also how a buyer is told which is which,
+    per the user's request that each option show whether it's normal or
+    foil. The skipped card stays real inventory, just not sold through
+    this listing; the returned skip reasons are what a caller reports so
+    it isn't silently dropped.
+
+    The parent's own picture is the set's logo (cards[0]["set_logo_url"],
+    exported by export_ebay_bulk_listing.py), not one card's photo -- a
+    buyer picking a card from a whole set should see the set they're
+    browsing, not whichever card happened to sort first. Falls back to
+    that first card's photo only if the set has no logo on file.
     """
     VARIATION_TRAIT = "MPN"
     values: list[str] = []
-    seen_numbers: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     child_rows = []
     skipped = []
     for card in cards:
         child = convert_row(card, args)
         number = child.get("C:Card Number", "").strip()
+        variant = (card.get("variant") or "").strip()
         if not number:
             skipped.append(f"{card['title']} ({card['sku']}) -- no readable card number, can't be a variation")
             continue
-        if number in seen_numbers:
-            skipped.append(f"{card['title']} ({card['sku']}) -- another card in {set_name} already uses "
-                           f"card number {number} (a reprint/alt-art sharing its base number); list this one separately")
+        key = (number, variant)
+        if key in seen:
+            skipped.append(f"{card['title']} ({card['sku']}) -- another {variant or 'copy'} of card number {number} "
+                            f"in {set_name} already uses this exact value (a reprint/alt-art sharing its base "
+                            f"number); list this one separately")
             continue
-        seen_numbers.add(number)
+        seen.add(key)
         set_total = (card.get("set_total") or "").strip()
         padded = number.zfill(len(set_total)) if set_total else number
-        # "001/162 Pineco", the format a real successful listing uses --
-        # bare "148" told a buyer nothing. ; and | are eBay's own
-        # separators in this field, so real card text can't collide with them.
+        # "001/162 Pineco (Reverse Holo)" -- bare "148" told a buyer
+        # nothing, and without the printing a buyer can't tell a Normal
+        # and a Reverse Holo of the same card apart in the picker. ; and |
+        # are eBay's own separators in this field, so real card text can't
+        # collide with them.
         value = f"{padded}/{set_total} {child.get('C:Card Name', '')}".strip() if set_total else \
             f"{padded} {child.get('C:Card Name', '')}".strip()
+        if variant:
+            value = f"{value} ({variant})"
         value = value.replace(";", ",").replace("|", "-")
         values.append(value)
         child["Relationship"] = "Variation"
@@ -254,7 +271,7 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
         ),
         "*Quantity": "",
         "*StartPrice": "",
-        "PicURL": cards[0]["image_url"],
+        "PicURL": cards[0].get("set_logo_url") or cards[0]["image_url"],
         "C:Card Name": "",
         "C:Card Number": "",
         "C:Rarity": "",

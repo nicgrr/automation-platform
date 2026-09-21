@@ -68,7 +68,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from automation_control.database import SessionLocal
-from automation_control.models import BulkLot, CardSet, CatalogItem, ShopListing, ShopListingStatus, TcgCard
+from automation_control.models import BulkLot, CardSet, CatalogItem, InventoryItem, ShopListing, ShopListingStatus, TcgCard
 from storefront.common import _is_web_url, _reference_image_url
 
 DEFAULT_LOT_MAX_CARDS = 20
@@ -86,7 +86,7 @@ LOT_PACKAGING_GRAMS = 80
 # toploadered card plus its envelope and stiffener.
 SINGLE_CARD_WEIGHT_GRAMS = 15
 
-FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total"]
+FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total", "variant", "set_logo_url"]
 
 
 def single_set_name(session, item: CatalogItem | None) -> str:
@@ -121,6 +121,32 @@ def single_rarity(session, item: CatalogItem | None) -> str:
         return ""
     tcg = session.get(TcgCard, item.id)
     return (tcg.rarity or "") if tcg else ""
+
+
+def single_variant(session, listing: ShopListing) -> str:
+    """Which printing this specific listing's copy actually is (Normal /
+    Holo / Reverse Holo / ...), e.g. for a variation listing's buyer-facing
+    label. Via `listing.inventory_item_id` -- the direct FK a listing
+    already carries to the physical holding it represents -- rather than
+    re-deriving it from the card's cached prices, which only says what
+    printings *exist* for a card, not which one this particular copy is."""
+    if not listing.inventory_item_id:
+        return ""
+    item = session.get(InventoryItem, listing.inventory_item_id)
+    return item.variant.value.replace("_", " ").title() if item else ""
+
+
+def single_set_logo_url(session, item: CatalogItem | None) -> str:
+    """The set's own logo image, for a variation listing's parent picture
+    -- a buyer picking a card from a whole set should see the set they're
+    browsing, not whichever single card's photo happened to sort first."""
+    if item is None:
+        return ""
+    tcg = session.get(TcgCard, item.id)
+    if tcg is None or not tcg.set_id:
+        return ""
+    card_set = session.get(CardSet, tcg.set_id)
+    return card_set.logo_url or "" if card_set else ""
 
 
 def single_image_url(session, listing: ShopListing, item: CatalogItem | None) -> str | None:
@@ -188,6 +214,8 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
             "set_name": single_set_name(session, item),
             "rarity": single_rarity(session, item),
             "set_total": single_set_total(session, item),
+            "variant": single_variant(session, listing),
+            "set_logo_url": single_set_logo_url(session, item),
         })
     return rows, skipped
 
@@ -238,6 +266,8 @@ def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: s
             "set_name": single_set_name(session, item),
             "rarity": single_rarity(session, item),
             "set_total": single_set_total(session, item),
+            "variant": single_variant(session, listing),
+            "set_logo_url": single_set_logo_url(session, item),
         })
     return rows, skipped
 

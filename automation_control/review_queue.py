@@ -250,7 +250,6 @@ def review_page(
     if not total:
         body = (
             brand_header("Review queue")
-            + "<p class='subtitle'>Cards the scanner wasn't confident about.</p>"
             + "<div class='panel'><p>Queue is empty — everything scanned so far has been "
               "committed or discarded.</p><p><a class='btn' href='/inventory'>Browse inventory</a></p></div>"
         )
@@ -293,8 +292,6 @@ def review_page(
 
     body = (
         brand_header("Review queue")
-        + "<p class='subtitle'>Cards the scanner wasn't confident about. Nothing here is in your "
-          "inventory yet — accept, correct, or discard each one.</p>"
         + "<div class='stat-grid'>"
         + f"<div class='stat-card'><div class='label'>Awaiting review</div><div class='value'>{total}</div></div>"
         + f"<div class='stat-card'><div class='label'>Cached sets to match against</div><div class='value'>{len(catalogs)}</div></div>"

@@ -109,8 +109,6 @@ def _form(url: str = "", note: str = "") -> str:
 def identify_form(user: str = Depends(require_dashboard_user)) -> HTMLResponse:
     body = (
         brand_header("Identify from a link")
-        + "<p class='subtitle'>Work out what a listing is actually selling, and whether the "
-          "asking price is any good.</p>"
         + _form() + _LINK_STYLE
     )
     return HTMLResponse(page("EzBay — Identify from a link", body))

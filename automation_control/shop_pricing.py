@@ -101,15 +101,23 @@ def price_floor(
     shipping_charged: Decimal | float = Decimal("0"),
     stock_cost: Decimal | float | None = None,
     margin_pct: Decimal | float | None = None,
+    payment_pct: Decimal | float | None = None,
 ) -> PriceFloor:
     """Break-even and floor for one item or lot.
 
     `shipping_charged` is what the customer pays for postage; pass 0 for a
     free-shipping item, where you absorb it and the floor rises to cover it.
+
+    `payment_pct` overrides config's own payment_pct (~1.75%, the direct
+    Stripe rate this config models for the website) -- pass eBay's ~13%
+    final value fee here instead when the floor is for something sold
+    through eBay rather than the website's own checkout, since eBay's cut
+    already bundles payment processing into that one number and the two
+    percentages must never be stacked together.
     """
     postage = Decimal(str(config.postage_cost_intl if zone == ShippingZone.INTERNATIONAL else config.postage_cost_au))
     packaging = Decimal(str(config.packaging_cost))
-    pct = Decimal(str(config.payment_pct))
+    pct = Decimal(str(config.payment_pct if payment_pct is None else payment_pct))
     fixed = Decimal(str(config.payment_fixed))
     charged = Decimal(str(shipping_charged))
     margin = Decimal(str(config.target_margin_pct if margin_pct is None else margin_pct))

@@ -44,9 +44,6 @@ def export_page(user: str = Depends(require_dashboard_user)) -> HTMLResponse:
     )
     body = (
         brand_header("Export data")
-        + "<p class='subtitle'>Module 20 -- download the current state of each table as CSV. "
-          "For bulk import (suppliers, a TCG's catalogue), see the scripts/import_*_csv.py "
-          "command-line tools instead -- see their own --help for the column format.</p>"
         + f"<div class='panel'><ul class='events'>{links}</ul></div>"
     )
     return HTMLResponse(page("EzBay — Export", body))

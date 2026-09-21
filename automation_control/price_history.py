@@ -105,7 +105,6 @@ def price_history_page(card_id: str, user: str = Depends(require_dashboard_user)
     game_label = f" &middot; {escape(tcg.game)}" if tcg else ""
     body = (
         brand_header(item.name)
-        + f"<p class='subtitle'>Price history{game_label} -- Module 5.</p>"
         + "".join(sections)
         + _STYLE
     )

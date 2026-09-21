@@ -168,10 +168,6 @@ def _run_capture_batch(batch_id: str, saved_photos: list[tuple[Path, Path | None
 def capture_page(user: str = Depends(require_dashboard_user)) -> str:
     body = (
         brand_header("Capture a card")
-        + "<p class='subtitle'>Photograph the front (back optional), then submit for AI identification. "
-          "Built for finds away from the desk -- \u201cTake photo\u201d opens the camera straight away; "
-          "for a pile at home the flatbed scanner is faster (see "
-          "<a href='/feed'>Scan feed</a>).</p>"
         + "<div class='panel'><form method='post' action='/cards/capture' enctype='multipart/form-data'>"
         + photo_field("front", "Front photo", required=True, hint="fills the frame, face up")
         + photo_field("back", "Back photo", hint="optional \u2014 needed for a graded slab's cert label")
@@ -208,7 +204,6 @@ async def capture_submit(
 def capture_bulk_page(user: str = Depends(require_dashboard_user)) -> str:
     body = (
         brand_header("Bulk capture")
-        + "<p class='subtitle'>Select multiple front photos at once -- each becomes its own card, front-only (no back). Processing happens in the background, so you can close this page after submitting and check back on the status page later. Use single capture instead if you need a back photo, e.g. for a graded slab's certification label.</p>"
         + "<div class='panel'><form method='post' action='/cards/capture/bulk' enctype='multipart/form-data'>"
         + photo_field("photos", "Front photos", required=True, multiple=True, hint="one card per photo")
         + "<button>Identify all cards</button>"

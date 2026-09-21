@@ -124,7 +124,6 @@ def buying_calculator(
 
     body = (
         brand_header("Buying calculator")
-        + "<p class='subtitle'>\"Is this worth buying?\" -- Module 6.</p>"
         + quick_price_widget("market_price", label="Identify a card to fill in market value")
         + "<form method='get' action='/buying-calculator' class='calc-form panel'>"
         + field("market_price", "Market value", market_price)
@@ -187,7 +186,6 @@ def purchase_lots_page(user: str = Depends(require_dashboard_user), session: Ses
 
     body = (
         brand_header("Purchase lots")
-        + "<p class='subtitle'>Collections being negotiated or bought -- Module 3.</p>"
         + table + form + _STYLE
     )
     return HTMLResponse(page("EzBay — Purchase lots", body))
@@ -334,7 +332,6 @@ def potential_stock_page(user: str = Depends(require_dashboard_user), session: S
 
     body = (
         brand_header("Potential stock")
-        + "<p class='subtitle'>The buy watchlist -- items not yet owned. Module 4.</p>"
         + f"<div class='watch-board'>{board}</div>"
         + form + _STYLE
     )

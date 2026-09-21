@@ -148,6 +148,38 @@ def parse_active_listings(xml_text: str) -> tuple[list[ActiveListing], int]:
     return listings, total_pages
 
 
+@dataclass(frozen=True)
+class ItemCondition:
+    """What a real, live listing actually saved for its Condition field --
+    the numeric ConditionID (what File Exchange and the Trading/Inventory
+    APIs actually take) alongside the human name Seller Hub shows instead
+    of that number. Fetched via GetItem rather than read off Seller Hub's
+    UI because the UI never shows the number itself."""
+
+    condition_id: str | None
+    condition_display_name: str | None
+    category_id: str | None
+
+
+def parse_item_condition(xml_text: str) -> ItemCondition:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        raise EbayApiError(f"eBay Trading API returned unparseable XML: {exc}") from exc
+
+    ack = _text(root, "eb:Ack")
+    if ack not in ("Success", "Warning"):
+        message = _text(root, "eb:Errors/eb:LongMessage") or _text(root, "eb:Errors/eb:ShortMessage") or ack
+        raise EbayApiError(f"eBay Trading API request failed: {message}")
+
+    item = root.find("eb:Item", _NS)
+    return ItemCondition(
+        condition_id=_text(item, "eb:ConditionID"),
+        condition_display_name=_text(item, "eb:ConditionDisplayName"),
+        category_id=_text(item, "eb:PrimaryCategory/eb:CategoryID"),
+    )
+
+
 class EbayTradingReadAdapter:
     """Read-only. Deliberately has no create/revise/end methods, the same
     constraint adapters/ebay.py's Sell API client holds itself to -- the
@@ -201,3 +233,23 @@ class EbayTradingReadAdapter:
                 break
             page += 1
         return listings
+
+    async def get_item_condition(self, item_id: str) -> ItemCondition:
+        """What condition a specific, already-live listing actually saved
+        against -- the one-off lookup for "list a Bulk Master lot by hand,
+        then ask eBay what ConditionID it actually accepted" (see
+        convert_to_ebay_template.py's --lot-condition-id, still a
+        placeholder because no verified value exists yet for category
+        183455). GetItem, not GetMyeBaySelling: that call's ItemArray
+        doesn't carry Condition at all, only price/quantity/title."""
+        body = (
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+            "<GetItemRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">"
+            f"<ItemID>{item_id}</ItemID>"
+            "<DetailLevel>ReturnAll</DetailLevel>"
+            "</GetItemRequest>"
+        )
+        response = await self.client.post(self._url, content=body, headers=self._headers("GetItem"))
+        if response.status_code >= 400:
+            raise EbayApiError(f"eBay Trading API request failed ({response.status_code})")
+        return parse_item_condition(response.text)

@@ -159,6 +159,22 @@ class ReferenceCard:
     # Shown when confirming a card by hand -- "Common" vs "Rare Holo" is
     # often the quickest way to tell two similar candidates apart.
     rarity: str | None = None
+    # Only needed where one reference list spans several sets (a whole
+    # One Piece / Dragon Ball catalogue -- see session._run_session_auto).
+    set_id: str | None = None
+
+
+def _hash_ints(references: list[ReferenceCard]) -> np.ndarray:
+    """Reference pHashes as one uint64 array, so a crop's distance to every
+    reference is a single vectorised XOR + popcount instead of a Python loop
+    of imagehash objects -- the difference between seconds and a minute per
+    sheet once 20k+ Pokemon and another 20k+ One Piece / Dragon Ball
+    references are all cached."""
+    return np.array([int(r.phash, 16) for r in references], dtype=np.uint64)
+
+
+def _distances(scan_hash, hashes: np.ndarray) -> np.ndarray:
+    return np.bitwise_count(hashes ^ np.uint64(int(str(scan_hash), 16)))
 
 
 def read_card_number(image_path: Path, set_total: int | None = None) -> tuple[str | None, str | None]:
@@ -281,9 +297,33 @@ def _rank_by_phash(image_path: Path, references: list[ReferenceCard]) -> list[tu
             scan_hash = imagehash.phash(image.convert("RGB"))
     except Exception:
         return []
-    scored = [(scan_hash - imagehash.hex_to_hash(r.phash), r) for r in hashed]
-    scored.sort(key=lambda item: item[0])
-    return scored
+    distances = _distances(scan_hash, _hash_ints(hashed))
+    return [(int(distances[i]), hashed[i]) for i in np.argsort(distances, kind="stable")]
+
+
+def dominant_set_id(crop_paths: list[Path], rotation: int, references: list[ReferenceCard], max_phash_distance: int = 12) -> str | None:
+    """The set most of a sheet's crops match best, once its rotation is
+    known. For a reference list spanning a whole game, where the sheet was
+    matched to the game rather than to one set, this is what gets recorded
+    as the scan session's set."""
+    hashed = [r for r in references if r.phash and r.set_id]
+    if not hashed:
+        return None
+    hashes = _hash_ints(hashed)
+    transpose = _PIL_TRANSPOSE_FOR_CLOCKWISE.get(rotation)
+    votes: dict[str, int] = {}
+    for crop_path in crop_paths:
+        try:
+            with Image.open(crop_path) as image:
+                image = image.convert("RGB")
+                scan_hash = imagehash.phash(image if transpose is None else image.transpose(transpose))
+        except Exception:
+            continue
+        distances = _distances(scan_hash, hashes)
+        best = int(distances.argmin())
+        if distances[best] <= max_phash_distance:
+            votes[hashed[best].set_id] = votes.get(hashed[best].set_id, 0) + 1
+    return max(votes, key=votes.get) if votes else None
 
 
 def _phash_confidence(distance: int, margin: int, max_distance: int) -> float:
@@ -395,8 +435,8 @@ def detect_sheet_set_and_rotation(
     same "never auto-commit a low-confidence match" contract as
     `identify_card`.
     """
-    hashed_catalogs = {set_id: [r for r in refs if r.phash] for set_id, refs in catalogs.items()}
-    hashed_catalogs = {set_id: refs for set_id, refs in hashed_catalogs.items() if refs}
+    hashed_catalogs = {set_id: _hash_ints([r for r in refs if r.phash]) for set_id, refs in catalogs.items()}
+    hashed_catalogs = {set_id: hashes for set_id, hashes in hashed_catalogs.items() if hashes.size}
     if not hashed_catalogs or not crop_paths:
         return None
 
@@ -410,8 +450,8 @@ def detect_sheet_set_and_rotation(
                     transpose = _PIL_TRANSPOSE_FOR_CLOCKWISE[degrees]
                     rotated = original if transpose is None else original.transpose(transpose)
                     scan_hash = imagehash.phash(rotated)
-                    for set_id, refs in hashed_catalogs.items():
-                        best_distance = min(scan_hash - imagehash.hex_to_hash(r.phash) for r in refs)
+                    for set_id, hashes in hashed_catalogs.items():
+                        best_distance = int(_distances(scan_hash, hashes).min())
                         if best_distance <= strong_limit:
                             distances.setdefault((set_id, degrees), []).append(int(best_distance))
         except Exception:
@@ -458,7 +498,27 @@ def _normalize_vision_number(raw: str | None) -> str | None:
     return str(int(match.group(0))) if match else None
 
 
-def resolve_vision_extraction(extracted: ExtractedCard, references: list[ReferenceCard]) -> Identification:
+def _normalize_code(raw: str | None) -> str | None:
+    """'OP01-024', 'fb01 - 003' -> 'OP01-024' / 'FB01-003'. One Piece and
+    Dragon Ball print a set-prefixed code rather than Pokemon's '71/114',
+    and the code alone is unique within a game."""
+    if not raw:
+        return None
+    code = re.sub(r"\s+", "", raw).upper()
+    return code if re.fullmatch(r"[A-Z0-9]+-\d+[A-Z]?", code) else None
+
+
+def _pick_by_art(image_path: Path | None, candidates: list[ReferenceCard]) -> tuple[ReferenceCard, bool]:
+    """Choose between printings sharing one code (a base card and its
+    alternate-art/gold parallels) by art. Returns (pick, decisive)."""
+    ranked = _rank_by_phash(image_path, candidates) if image_path else []
+    if not ranked:
+        return candidates[0], False
+    decisive = len(ranked) == 1 or ranked[1][0] - ranked[0][0] >= MIN_UNAMBIGUOUS_MARGIN
+    return ranked[0][1], decisive
+
+
+def resolve_vision_extraction(extracted: ExtractedCard, references: list[ReferenceCard], image_path: Path | None = None) -> Identification:
     """Match one Claude-read card against the set already known to be on
     this sheet. Claude is asked what it sees on the card, never which
     catalogue id that corresponds to -- this is pure lookup against
@@ -472,6 +532,19 @@ def resolve_vision_extraction(extracted: ExtractedCard, references: list[Referen
     at all.
     """
     foil_observation = extracted.foil_observation or None
+
+    code = _normalize_code(extracted.card_number)
+    if code:
+        same_code = [r for r in references if (r.number or "").upper() == code]
+        if same_code:
+            match, decisive = _pick_by_art(image_path, same_code) if len(same_code) > 1 else (same_code[0], True)
+            return Identification(
+                card_id=match.card_id, number=match.number, name=match.name,
+                source=Source.VISION,
+                confidence=VISION_NUMBER_MATCH_CONFIDENCE if decisive else VISION_NAME_MATCH_CONFIDENCE,
+                note=f"Claude read {code} ({extracted.character})" + ("" if decisive else f"; {len(same_code)} printings share that code"),
+                foil_observation=foil_observation,
+            )
 
     number = _normalize_vision_number(extracted.card_number)
     if number:
@@ -505,14 +578,14 @@ def resolve_vision_extraction(extracted: ExtractedCard, references: list[Referen
     )
 
 
-def identify_card_via_vision(image_path: Path, references: list[ReferenceCard], api_key: str) -> Identification | None:
+def identify_card_via_vision(image_path: Path, references: list[ReferenceCard], api_key: str, game: str | None = None) -> Identification | None:
     """Ask Claude to read the crop directly. Returns None (never raises) on
     any failure -- an API outage or a malformed response must not take an
     unattended run down, and the caller already has a perfectly good
     fallback (set the card aside) for when this can't help either.
     """
     try:
-        extracted = extract_card_details(image_path, None, api_key=api_key)
+        extracted = extract_card_details(image_path, None, api_key=api_key, **({"game": game} if game else {}))
     except Exception:
         return None
     if not extracted:
@@ -520,4 +593,4 @@ def identify_card_via_vision(image_path: Path, references: list[ReferenceCard], 
             card_id=None, number=None, name=None, source=Source.VISION,
             confidence=0.0, note="Claude found no card in this crop",
         )
-    return resolve_vision_extraction(extracted[0], references)
+    return resolve_vision_extraction(extracted[0], references, image_path)

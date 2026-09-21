@@ -250,7 +250,6 @@ def scan_ingest_status(
 
     body = (
         brand_header("Scan ingest status")
-        + "<p class='subtitle'>Live view of the background card-scanning service -- no SSH needed.</p>"
         + stat_grid
         + f"<div class='panel'><h2>Active sessions</h2>{sessions_table}{review_note}</div>"
         + "<div class='panel'><h2>Sheets processed</h2>"

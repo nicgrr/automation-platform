@@ -84,7 +84,7 @@ def whatnot_shows_page(user: str = Depends(require_dashboard_user), session: Ses
         "<label>Show date<input name='show_date' type='date'></label>"
         "<button type='submit'>Create</button></form></div>"
     )
-    body = brand_header("Whatnot shows") + "<p class='subtitle'>Module 7 -- your Whatnot control panel.</p>" + table + form + _STYLE
+    body = brand_header("Whatnot shows") + table + form + _STYLE
     return HTMLResponse(page("EzBay — Whatnot", body))
 
 

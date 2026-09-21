@@ -17,7 +17,8 @@ from .auth import require_dashboard_user
 from .classification import classify_pending_cards, load_pipeline_config
 from .scan_ingest.pricing import POKEMONPRICETRACKER_SOURCE_NAME
 from .database import SessionLocal, get_session
-from .models import CapturedCard, CardCaptureStatus, CardPrice, InventoryItem, PricingStatus
+from .models import (CapturedCard, CardCaptureStatus, CardPrice, CatalogItem, CatalogItemType,
+                     InventoryItem, PricingStatus)
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/cards/pricing", tags=["pricing"])
@@ -165,6 +166,39 @@ def _run_price_check(api_key: str | None, user: str, include_blocked: bool = Fal
         _finish_price_check(run_id)
 
 
+# Both gap counts below join on InventoryItem.catalog_item_id, not on the
+# legacy InventoryItem.card_id they used to use.
+#
+# `card_prices.card_id` is a catalog_items id despite the column name --
+# import_ebay_prices.py writes `card_id=item.id` from a CatalogItem, and
+# every reader of the table (the dashboard gauge, /inventory's totals)
+# looks it up that way. Counting against InventoryItem.card_id compared
+# two different key spaces, so both numbers were inflated by every holding
+# whose two ids differ and by every row whose catalog link is missing: the page
+# advertised a backlog of ~1,600 pairs and ~300 eBay gaps that no amount
+# of running the importers could ever close, because the importers target
+# catalog_item_id too.
+def _held_tcg_cards(*extra_columns):
+    """Held TCG cards, identified by catalog_item_id, for the gap counts.
+
+    Restricted by CatalogItem.item_type rather than by "card_id is not
+    NULL", which is what both counts used to lean on. That was only ever a
+    proxy for "is a card rather than a Sonny Angel", and an inaccurate one:
+    392 held cards reach the catalogue through catalog_items alone (a
+    Japanese print, a Dragon Ball card -- anything never imported into
+    catalog_cards) and were being dropped from the work these numbers
+    describe, even though import_ebay_prices.py prices them perfectly well.
+    Asking the catalogue what kind of thing something is answers the
+    question the proxy was approximating.
+    """
+    return (
+        select(InventoryItem.catalog_item_id, *extra_columns)
+        .join(CatalogItem, CatalogItem.id == InventoryItem.catalog_item_id)
+        .where(CatalogItem.item_type == CatalogItemType.TCG_CARD)
+        .distinct()
+    )
+
+
 def _inventory_price_backlog(session: Session) -> int:
     """Held card+variant pairs with no pokemonpricetracker.com price yet.
 
@@ -176,9 +210,7 @@ def _inventory_price_backlog(session: Session) -> int:
     """
     priced = select(CardPrice.card_id, CardPrice.variant).where(
         CardPrice.source == POKEMONPRICETRACKER_SOURCE_NAME)
-    held = session.execute(
-        select(InventoryItem.card_id, InventoryItem.variant)
-        .where(InventoryItem.card_id.isnot(None)).distinct()).all()
+    held = session.execute(_held_tcg_cards(InventoryItem.variant)).all()
     return len(set(held) - set(session.execute(priced).all()))
 
 
@@ -192,8 +224,7 @@ def _ebay_price_gap(session: Session) -> int:
     prefers `ebay_active_low` as its conservative figure, which makes a
     stale one the more expensive gap of the two.
     """
-    held = {row[0] for row in session.execute(
-        select(InventoryItem.card_id).where(InventoryItem.card_id.isnot(None)).distinct())}
+    held = {row[0] for row in session.execute(_held_tcg_cards())}
     priced = {row[0] for row in session.execute(
         select(CardPrice.card_id).where(CardPrice.source == "ebay_active_low").distinct())}
     return len(held - priced)

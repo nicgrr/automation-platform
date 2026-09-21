@@ -24,6 +24,7 @@ from automation_control.models import (
 from automation_control.nav_counts import queue_counts
 from automation_control.ui import (
     ADMIN_NAV,
+    HIDDEN_NAV,
     NAV_COUNT_HREFS,
     PHOTO_FIELD_SCRIPT,
     page,
@@ -217,3 +218,19 @@ def test_photo_field_script_ships_with_the_page():
     assert "data-pf-camera" in rendered
     assert "URL.createObjectURL" in rendered
     assert ".photo-field{" in rendered
+
+
+def test_hidden_nav_entries_are_still_real_routes():
+    """HIDDEN_NAV's promise is "hidden, not deleted" -- a typed or
+    bookmarked URL still has to answer. A route deleted out from under an
+    entry here would break that silently, since nothing links to it."""
+    routes = set(app.openapi()["paths"])
+    for href, _label in HIDDEN_NAV:
+        assert href in routes, href
+
+
+def test_hidden_nav_and_admin_nav_do_not_overlap():
+    """A destination is either listed or hidden, never both."""
+    listed = {href for _t, links, _c in ADMIN_NAV for href, _l in links}
+    for href, _label in HIDDEN_NAV:
+        assert href not in listed, href

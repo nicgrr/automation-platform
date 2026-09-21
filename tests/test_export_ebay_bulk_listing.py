@@ -5,7 +5,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
-from automation_control.models import BulkLot, CardSet, CatalogItem, CatalogItemType, ShopListing, ShopListingStatus, TcgCard
+from automation_control.models import (
+    BulkLot, CardSet, CardVariant, CatalogItem, CatalogItemType, InventoryItem, ShopListing, ShopListingStatus, TcgCard,
+)
 from scripts.export_ebay_bulk_listing import (
     build_lot_rows, build_single_rows, build_variation_rows, lot_shipping_policy, single_image_url,
 )
@@ -239,3 +241,39 @@ def test_variation_rows_ignores_a_cheap_card_from_a_set_with_no_lot(session):
 
     variations, _ = build_variation_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
     assert variations == []
+
+
+# --- variant and set logo, for variation-listing labels/pictures --------
+
+def test_single_variant_comes_from_the_listings_own_inventory_item(session):
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="xy11", number="54"))
+    inv = InventoryItem(card_id=item.id, variant=CardVariant.REVERSE_HOLO, condition="Near Mint", quantity=1)
+    session.add(inv)
+    session.commit()
+    session.add(ShopListing(catalog_item_id=item.id, title="Abra #54", price=Decimal("2"),
+                            status=ShopListingStatus.ACTIVE, inventory_item_id=inv.id))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert rows[0]["variant"] == "Reverse Holo"
+
+
+def test_single_variant_is_blank_with_no_linked_inventory_item(session):
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(ShopListing(catalog_item_id=item.id, title="Abra #54", price=Decimal("2"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert rows[0]["variant"] == ""
+
+
+def test_single_set_logo_url_comes_from_the_cards_set(session):
+    session.add(CardSet(id="xy11", name="Steam Siege", logo_url="https://example.test/xy11-logo.png"))
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="xy11", number="54"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Abra #54", price=Decimal("2"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert rows[0]["set_logo_url"] == "https://example.test/xy11-logo.png"

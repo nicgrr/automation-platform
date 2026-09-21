@@ -245,9 +245,6 @@ def edit_listing_form(
     error_html = f"<p class='linkfill-note bad'>{escape(error)}</p>" if error else ""
     body = (
         brand_header("Edit listing")
-        + "<p class='subtitle'>Corrects what the shop actually shows -- title and price can drift out of "
-          "sync with the catalogue after the fact (a flag correction, a repriced market signal) and "
-          "nothing else re-touches an already-created listing to fix it.</p>"
         + error_html
         + f"<div class='panel'><form method='post' action='/shop-listings/{escape(listing.id)}/edit' class='listing-edit-form'>"
         + f"<label class='field'>Title<input name='title' value='{escape(listing.title)}' required maxlength='300'></label>"

@@ -531,7 +531,7 @@ def test_unattended_uses_vision_to_resolve_a_misshapen_card(db, settings, monkey
     _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])
     monkeypatch.setattr(
         session_mod, "identify_card_via_vision",
-        lambda crop, refs, api_key: Identification("xy11-2", "2", "Card 2", Source.VISION, 0.90),
+        lambda crop, refs, api_key, game=None: Identification("xy11-2", "2", "Card 2", Source.VISION, 0.90),
     )
 
     prompter = ScriptedPrompter()
@@ -565,7 +565,7 @@ def test_unattended_always_sets_aside_an_undersized_card_even_when_vision_can_re
     _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.BOTH, 1.0)])
     monkeypatch.setattr(
         session_mod, "identify_card_via_vision",
-        lambda crop, refs, api_key: Identification("xy11-2", "2", "Card 2", Source.VISION, 0.90),
+        lambda crop, refs, api_key, game=None: Identification("xy11-2", "2", "Card 2", Source.VISION, 0.90),
     )
 
     prompter = ScriptedPrompter()
@@ -591,7 +591,7 @@ def test_unattended_uses_vision_as_a_second_opinion_when_phash_fails(db, setting
     _patch_identify(monkeypatch, [Identification(None, None, None, Source.NONE, 0.0)])
     monkeypatch.setattr(
         session_mod, "identify_card_via_vision",
-        lambda crop, refs, api_key: Identification("xy11-1", "1", "Card 1", Source.VISION, 0.90),
+        lambda crop, refs, api_key, game=None: Identification("xy11-1", "1", "Card 1", Source.VISION, 0.90),
     )
 
     prompter = ScriptedPrompter()
@@ -613,7 +613,7 @@ def test_unattended_logs_visions_own_foil_observation_alongside_the_regional_ass
     _patch_identify(monkeypatch, [Identification(None, None, None, Source.NONE, 0.0)])
     monkeypatch.setattr(
         session_mod, "identify_card_via_vision",
-        lambda crop, refs, api_key: Identification(
+        lambda crop, refs, api_key, game=None: Identification(
             "xy11-1", "1", "Card 1", Source.VISION, 0.90, foil_observation="over the character artwork only",
         ),
     )
@@ -634,7 +634,7 @@ def test_unattended_a_weak_vision_guess_does_not_override_a_usable_phash_label(d
     _patch_identify(monkeypatch, [Identification("xy11-1", "1", "Card 1", Source.PHASH, 0.5)])
     monkeypatch.setattr(
         session_mod, "identify_card_via_vision",
-        lambda crop, refs, api_key: Identification(
+        lambda crop, refs, api_key, game=None: Identification(
             None, None, "Mystery Card", Source.VISION, 0.0, note="Claude could not read a name off this crop",
         ),
     )

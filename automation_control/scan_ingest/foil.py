@@ -15,6 +15,7 @@ import numpy as np
 from PIL import Image
 
 from ..models import CardVariant, CatalogCard
+from . import foil_features
 from .identify import ART_REGION, art_phash
 
 
@@ -116,6 +117,27 @@ def assess_foil(scan_path: Path, card: CatalogCard) -> FoilAssessment:
     metrics = _surface_metrics(scan_path, card)
     if len(candidates) == 1:
         return FoilAssessment(candidates, candidates[0], 0.98, "only catalogue-supported printing", metrics)
+
+    # The trained classifier (scripts/train_foil_classifier.py) replaces the
+    # weak heuristic below once it exists: a real cross-validated check
+    # against 177 labels (2026-09-19) found the heuristic's body_bias signal
+    # had almost no separating power between confirmed holo and reverse-holo
+    # samples, while texture features (local binary patterns, gradient/FFT
+    # energy, computed separately for the art vs. body region -- see
+    # foil_features.py) reached ~91% cross-validated accuracy. The heuristic
+    # stays below as the bootstrap fallback for a fresh install with no
+    # trained model yet, and keeps collecting the same log data either way.
+    image_features = foil_features.extract_features(scan_path)
+    if image_features is not None:
+        prediction = foil_features.predict(image_features)
+        if prediction is not None:
+            predicted_value, probability = prediction
+            predicted = CardVariant(predicted_value)
+            if predicted in candidates or not candidates:
+                return FoilAssessment(
+                    candidates or (predicted,), predicted, probability,
+                    "trained classifier (texture features)", metrics,
+                )
 
     suggestion: CardVariant | None = None
     reason = "collecting regional foil measurements"

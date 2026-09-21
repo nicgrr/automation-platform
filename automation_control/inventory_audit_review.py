@@ -91,10 +91,6 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
 
     header = (
         brand_header("Inventory photo audit")
-        + "<p class='subtitle'>Items whose stored photo doesn't hash close to the card they're filed under. "
-          "Higher \"d\" means more confident -- shown worst first. Some are genuine mistakes "
-          "(wrong scan, uncropped sheet); some are false positives (a foil or crop that hashes "
-          "oddly against its own reference). Look at the photo before acting.</p>"
         + "<div class='stat-grid'>"
         + f"<div class='stat-card'><div class='label'>Flagged, awaiting review</div><div class='value'>{len(pending)}</div></div>"
         + f"<div class='stat-card'><div class='label'>Dismissed as false positives</div><div class='value'>{dismissed_count}</div></div>"

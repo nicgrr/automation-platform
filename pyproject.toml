@@ -24,6 +24,12 @@ dependencies = [
   # this project's <12 pin. 2.0.69 is the newest release before that
   # requirement was added, and has no pillow constraint of its own.
   "rembg[cpu]==2.0.69",
+  # For the foil (holo/reverse-holo) classifier: local-binary-pattern
+  # texture features (scikit-image) feeding a small classical classifier
+  # (scikit-learn) -- see scan_ingest/foil_features.py and
+  # scripts/train_foil_classifier.py.
+  "scikit-image>=0.24,<1",
+  "scikit-learn>=1.5,<2",
   "sqlalchemy>=2.0,<3",
   "uvicorn>=0.32,<1",
 ]

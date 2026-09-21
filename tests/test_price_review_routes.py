@@ -72,6 +72,25 @@ def _reviewed_card(**overrides) -> CapturedCard:
 
 # --- _run_price_check (called directly: deterministic, no background-task timing) ---
 
+def _held_card(session, card_id, *, variant=None):
+    """An owned TCG card, shaped the way the app really writes one: a
+    catalog_items row plus an inventory row carrying BOTH ids.
+
+    The catalog_item_id is the half that matters here -- card_prices is
+    keyed by it, and so are the gap counts on this page. An inventory row
+    with only card_id set is the bug these tests used to encode rather
+    than catch: unreachable by any price lookup.
+    """
+    from automation_control.models import CardVariant, CatalogItem, CatalogItemType, InventoryItem
+
+    session.add(CatalogItem(id=card_id, name=card_id, item_type=CatalogItemType.TCG_CARD))
+    item = InventoryItem(card_id=card_id, catalog_item_id=card_id,
+                         variant=variant or CardVariant.NORMAL)
+    session.add(item)
+    return item
+
+
+
 def test_run_price_check_sets_suggested_price_on_success(session, price_check_session_local):
     card = _reviewed_card()
     session.add(card)
@@ -486,10 +505,8 @@ def test_the_page_shows_the_inventory_price_backlog(client, session):
     """The honest form of "check prices for everything": the upstream free
     tier allows ~25 cards a day, so the button says how far through you are
     instead of implying the job ends when the page reloads."""
-    from automation_control.models import CardVariant, InventoryItem
-
-    session.add_all([InventoryItem(card_id="xy11-1", variant=CardVariant.NORMAL),
-                     InventoryItem(card_id="xy11-2", variant=CardVariant.NORMAL)])
+    _held_card(session, "xy11-1")
+    _held_card(session, "xy11-2")
     session.commit()
 
     page = client.get("/cards/pricing").text
@@ -502,8 +519,9 @@ def test_the_page_shows_the_inventory_price_backlog(client, session):
 def test_a_collectible_is_not_counted_in_the_backlog(client, session):
     """Collectibles carry card_id NULL and are not this source's job -- the
     same NULL that crashed the nightly timer for six days."""
-    from automation_control.models import CardVariant, InventoryItem
+    from automation_control.models import CardVariant, CatalogItem, CatalogItemType, InventoryItem
 
+    session.add(CatalogItem(id="a-figure", name="Sonny Angel", item_type=CatalogItemType.COLLECTIBLE))
     session.add(InventoryItem(card_id=None, catalog_item_id="a-figure", variant=CardVariant.NORMAL))
     session.commit()
 
@@ -535,10 +553,10 @@ def test_a_crash_in_the_refresh_is_recorded_not_swallowed(client, session):
 def test_the_page_shows_the_ebay_signal_gap(client, session):
     """ebay_active_low is what list_for_sale prices from, so a held card
     without one is priced off a weaker source."""
-    from automation_control.models import CardPrice, CardVariant, InventoryItem
+    from automation_control.models import CardPrice, CardVariant
 
-    session.add_all([InventoryItem(card_id="xy11-1", variant=CardVariant.NORMAL),
-                     InventoryItem(card_id="xy11-2", variant=CardVariant.NORMAL)])
+    _held_card(session, "xy11-1")
+    _held_card(session, "xy11-2")
     session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL,
                           source="ebay_active_low", price=Decimal("5.00"), currency="AUD"))
     session.commit()

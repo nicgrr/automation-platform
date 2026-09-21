@@ -79,9 +79,10 @@ def _quicklinks_html(counts: dict[str, int | None], storefront_url: str) -> str:
     identify-from-a-link were only ever in the drawer. Same source now, so
     that can't recur -- adding a module to ADMIN_NAV puts it in both.
 
-    The collapsed group ("Not set up yet") is skipped: on the dashboard
-    there's no disclosure to hide it behind, and a column of nine empty
-    features is exactly the noise the regrouping set out to remove.
+    A collapsed group would be skipped: on the dashboard there's no
+    disclosure to hide one behind. Nothing is collapsed at the moment --
+    the group that was is now ui.HIDDEN_NAV, which this never sees, so
+    hiding a module from the drawer hides it from here too.
     """
     columns = []
     for title, links, collapsed in ADMIN_NAV:
@@ -198,6 +199,14 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         f"<div class='gauge-caption'>{priced_count:,} of {scanned_holdings:,} holdings have a known market price</div></div></div>"
     )
 
+    # -- widgets that only appear once they have something to say --------
+    #
+    # Sales and potential buys are recorded by hand on /sales and
+    # /potential-stock, which have never been used (see HIDDEN_NAV in
+    # ui.py). An empty-state message is the right thing for a widget whose
+    # data comes and goes; it is the wrong thing for one that has never
+    # had any, because it reads as a broken feature rather than an unused
+    # one. These three render the moment their first row exists.
     sales_rows = "".join(
         f"<tr><td>{escape(marketplaces.get(s.marketplace_id, '—'))}</td>"
         f"<td>${s.gross_amount:,.2f}</td><td>{s.sold_at:%Y-%m-%d}</td></tr>"
@@ -283,7 +292,16 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         "</div>"
     )
 
-    grid = "".join([gauge_widget, sales_widget, buys_widget, market_value_widget, channel_widget, ageing_widget, ebay_widget, ops_widget])
+    grid = "".join([
+        gauge_widget,
+        sales_widget if recent_sales else "",
+        buys_widget if top_potentials else "",
+        market_value_widget,
+        channel_widget if channel_items else "",
+        ageing_widget,
+        ebay_widget,
+        ops_widget,
+    ])
 
     body = f"""<div class="dash-title">
     <h1>Sales Executive Dashboard</h1>

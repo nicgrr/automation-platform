@@ -302,3 +302,54 @@ def test_a_field_missing_from_this_categorys_template_is_dropped_not_a_crash(tmp
     lines = out.read_bytes().decode("utf-8-sig").splitlines()
     assert "C:Rarity" not in lines[1]  # the header the row was written against
     assert lines[2].startswith("Add,")  # the row itself still made it through
+
+
+def test_the_variant_is_appended_to_the_variation_value():
+    """A buyer choosing between a Normal and a Reverse Holo of the same
+    numbered card needs to see which is which in the picker -- the MPN
+    value is the only label eBay shows there."""
+    cards = [_row(sku="sku-4", title="Card4 #4", price="4.00", set_total="99", variant="Reverse Holo")]
+    rows, _ = build_variation_group("Obsidian Flames", cards, _args())
+    assert rows[1]["RelationshipDetails"] == "MPN=04/99 Card4 (Reverse Holo)"
+
+
+def test_two_different_printings_of_the_same_number_are_both_included():
+    """Unlike a genuine reprint/alt-art collision, a Normal and a Reverse
+    Holo of the same card number are both real, distinct sellable copies
+    -- the printing (folded into the value) is what tells them apart, so
+    neither should be dropped as a duplicate."""
+    cards = [
+        _row(sku="sku-4-normal", title="Card4 #4", price="1.00", set_total="99", variant="Normal"),
+        _row(sku="sku-4-rh", title="Card4 #4", price="3.00", set_total="99", variant="Reverse Holo"),
+    ]
+    rows, skipped = build_variation_group("Obsidian Flames", cards, _args())
+    assert skipped == []
+    children = rows[1:]
+    assert {c["RelationshipDetails"] for c in children} == {
+        "MPN=04/99 Card4 (Normal)", "MPN=04/99 Card4 (Reverse Holo)",
+    }
+
+
+def test_a_genuine_reprint_with_the_same_number_and_printing_is_still_skipped():
+    """The original duplicate-collision guard still applies when the
+    printing is also identical -- that's the real alt-art/reprint case,
+    not two distinct printings of one card."""
+    cards = [
+        _row(sku="sku-148", title="Charizard #148", price="20.00", set_total="99", variant="Holo"),
+        _row(sku="sku-alt", title="Charizard (Alt Art) #148", price="30.00", set_total="99", variant="Holo"),
+    ]
+    rows, skipped = build_variation_group("Obsidian Flames", cards, _args())
+    assert len(rows) == 2  # 1 parent + only the first
+    assert "sku-alt" in skipped[0]
+
+
+def test_the_parent_picture_is_the_sets_logo_not_a_cards_photo():
+    cards = _cards(4, 21)
+    cards[0]["set_logo_url"] = "https://example.test/obsidian-flames-logo.png"
+    rows, _ = build_variation_group("Obsidian Flames", cards, _args())
+    assert rows[0]["PicURL"] == "https://example.test/obsidian-flames-logo.png"
+
+
+def test_the_parent_picture_falls_back_to_a_cards_photo_with_no_set_logo():
+    rows, _ = build_variation_group("Obsidian Flames", _cards(4), _args())
+    assert rows[0]["PicURL"] == "https://example.test/abra.png"

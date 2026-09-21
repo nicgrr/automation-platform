@@ -239,10 +239,9 @@ body.nav-open .sidenav{transform:none}
 #
 # Each group is (title, links, collapsed); a link is (href, label).
 # `collapsed` puts the group behind a disclosure that's shut by default.
-# Those features are built, working and still one click away -- they just
-# have no data yet, and ten empty modules competing for attention with the
-# six used daily was most of why anything was hard to find. Move a group
-# out of `collapsed` the day its table has rows.
+# Nothing uses it at the moment -- the one group that did is now HIDDEN_NAV
+# below -- but it stays because it's the right answer for a group that has
+# a little data rather than none.
 ADMIN_NAV = [
     ("Today", [
         ("/dashboard", "Dashboard"),
@@ -256,6 +255,7 @@ ADMIN_NAV = [
         ("/foil-review", "Foil"),
         ("/inventory-audit", "Photo audit"),
         ("/collectibles/review", "Photographed collectibles"),
+        ("/accessories/review", "Photographed supplies"),
         ("/cards/review", "Photographed cards"),
         ("/cards/pricing", "Prices"),
     ], False),
@@ -264,6 +264,7 @@ ADMIN_NAV = [
         ("/search", "Search catalogue"),
         ("/sealed-products", "Sealed products"),
         ("/collectibles", "Collectibles"),
+        ("/accessories", "Card supplies"),
         ("/personal-collection", "Personal collection"),
     ], False),
     # Both ways stock enters the business, together: the flatbed scanner
@@ -272,8 +273,10 @@ ADMIN_NAV = [
     ("Add stock", [
         ("/cards/capture", "Photograph a card"),
         ("/collectibles/capture", "Photograph a collectible"),
+        ("/accessories/capture", "Photograph a supply item"),
         ("/cards/capture/bulk", "Bulk upload cards"),
         ("/collectibles/capture/bulk", "Bulk upload collectibles"),
+        ("/accessories/capture/bulk", "Bulk upload supplies"),
         ("/collectibles/identify", "Identify from a link"),
     ], False),
     ("Sell & buy", [
@@ -286,20 +289,39 @@ ADMIN_NAV = [
         ("/market-search", "Market search"),
         ("/deal-check", "Deal check"),
         ("/buying-calculator", "Buying calculator"),
+        ("/release-calendar", "Release calendar"),
         ("/ebay-export", "eBay bulk upload file"),
         ("/export", "Export data"),
     ], False),
-    ("Not set up yet", [
-        ("/customers", "Customers"),
-        ("/suppliers", "Suppliers"),
-        ("/goals", "Goals"),
-        ("/release-calendar", "Release calendar"),
-        ("/purchase-lots", "Purchase lots"),
-        ("/potential-stock", "Potential stock"),
-        ("/whatnot", "Whatnot shows"),
-        ("/sales", "Sales"),
-        ("/marketplaces", "Marketplaces"),
-    ], True),
+]
+
+# Built, routed, and deliberately not listed anywhere.
+#
+# Each of these can only ever be filled by typing into the page itself,
+# and none of them ever has been -- every table behind them is empty, and
+# nothing else in the app or the storefront writes to any of them. A
+# drawer that shows nine destinations which have never held a row costs
+# attention on every single page load and gives none of it back.
+#
+# Hidden, not deleted: the routes still answer, so a bookmarked or typed
+# URL works exactly as before, and the pages themselves are untouched.
+# Moving one back into ADMIN_NAV above is the whole of un-hiding it. The
+# day one of these tables has rows is the day its entry goes back.
+#
+# Deliberately excluded from this list: /shop-orders, /contact-messages
+# and /listings/review are equally empty but are fed by the live shop,
+# the live contact form and the capture pipeline respectively -- they
+# fill on their own, so they stay visible. /release-calendar had rows
+# already and moved up into "Sell & buy".
+HIDDEN_NAV = [
+    ("/customers", "Customers"),
+    ("/suppliers", "Suppliers"),
+    ("/goals", "Goals"),
+    ("/purchase-lots", "Purchase lots"),
+    ("/potential-stock", "Potential stock"),
+    ("/whatnot", "Whatnot shows"),
+    ("/sales", "Sales"),
+    ("/marketplaces", "Marketplaces"),
 ]
 
 # Which links get a "work waiting" badge. Kept next to the nav rather than
@@ -307,7 +329,7 @@ ADMIN_NAV = [
 # counts, and what the drawer shows -- are visible together.
 NAV_COUNT_HREFS = {
     "/review", "/foil-review", "/inventory-audit",
-    "/collectibles/review", "/cards/review", "/cards/pricing",
+    "/collectibles/review", "/accessories/review", "/cards/review", "/cards/pricing",
     "/listings/review",
 }
 
@@ -395,6 +417,9 @@ def _palette_html() -> str:
 NAV_SCRIPT = r"""<script>
 (function(){
   var body = document.body;
+  function nav(href){
+    if (window.EzBayProgress) window.EzBayProgress.go(href); else location.href = href;
+  }
   function set(open){
     body.classList.toggle('nav-open', open);
     var t = document.querySelector('.navtoggle');
@@ -511,7 +536,7 @@ NAV_SCRIPT = r"""<script>
     palItems.forEach(function(el){
       el.addEventListener('mousedown', function(e){
         e.preventDefault();
-        location.href = el.getAttribute('data-href');
+        nav(el.getAttribute('data-href'));
       });
     });
     palInput.addEventListener('keydown', function(e){
@@ -519,7 +544,7 @@ NAV_SCRIPT = r"""<script>
       else if (e.key === 'ArrowUp') { e.preventDefault(); palMark(palIndex - 1); }
       else if (e.key === 'Enter') {
         var vis = palVisible();
-        if (vis[palIndex]) { e.preventDefault(); location.href = vis[palIndex].getAttribute('data-href'); }
+        if (vis[palIndex]) { e.preventDefault(); nav(vis[palIndex].getAttribute('data-href')); }
       }
     });
   }
@@ -573,6 +598,9 @@ AUTOCOMPLETE_SCRIPT = """<script>
   var input = document.getElementById('global-search-input');
   var box = document.getElementById('global-search-results');
   if (!input || !box) return;
+  function navTo(href){
+    if (window.EzBayProgress) window.EzBayProgress.go(href); else window.location.href = href;
+  }
   var timer = null;
   var items = [];
   var activeIndex = -1;
@@ -623,7 +651,7 @@ AUTOCOMPLETE_SCRIPT = """<script>
 
       row.addEventListener('mousedown', function(e) {
         e.preventDefault();
-        window.location.href = '/prices/' + encodeURIComponent(r.id);
+        navTo('/prices/' + encodeURIComponent(r.id));
       });
       box.appendChild(row);
     });
@@ -653,7 +681,7 @@ AUTOCOMPLETE_SCRIPT = """<script>
     } else if (e.key === 'Enter') {
       if (activeIndex >= 0 && items[activeIndex]) {
         e.preventDefault();
-        window.location.href = '/prices/' + encodeURIComponent(items[activeIndex].id);
+        navTo('/prices/' + encodeURIComponent(items[activeIndex].id));
       }
     } else if (e.key === 'Escape') {
       clearBox();
@@ -871,6 +899,8 @@ QUICK_PRICE_SCRIPT = """<script>
     btn.addEventListener('click', function() {
       if (!fileInput.files.length) { status.textContent = 'Choose a photo first.'; return; }
       status.textContent = 'Identifying…';
+      var failed = false;
+      if (window.EzBayProgress) window.EzBayProgress.begin('POST /quick-price/identify');
       results.innerHTML = '';
       var data = new FormData();
       data.append('photo', fileInput.files[0]);
@@ -911,7 +941,10 @@ QUICK_PRICE_SCRIPT = """<script>
             results.appendChild(row);
           });
         })
-        .catch(function() { status.textContent = 'Identification failed -- try again or enter manually.'; });
+        .catch(function() { failed = true; status.textContent = 'Identification failed -- try again or enter manually.'; })
+        // Only a successful identify tells us anything about how long one
+        // takes; a fast failure would drag the estimate down.
+        .then(function(){ if (window.EzBayProgress) window.EzBayProgress.done(failed ? null : 'POST /quick-price/identify'); });
     });
   });
 })();
@@ -937,6 +970,208 @@ def quick_price_widget(price_field: str, name_field: str | None = None, label: s
 # session) reads apple-mobile-web-app-* and apple-touch-icon directly, no
 # service worker required for "Add to Home Screen"; the manifest covers
 # Android/desktop installability the same way.
+# --- navigation progress bar -------------------------------------------
+#
+# Most pages here answer in single-digit milliseconds, but a handful don't
+# -- /dashboard, /review and /inventory each run real aggregate queries
+# over a 23k-row catalogue, and the AI-identify endpoints take seconds --
+# and until now a click on one of those produced nothing at all: the old
+# page just sat there, indistinguishable from a click that missed.
+#
+# The bar that fixes that has to live in the *outgoing* document, because
+# a full-page navigation only replaces it once the new HTML has arrived.
+# So the span it can honestly cover is click -> last byte of the response,
+# and that is exactly what gets measured and predicted below.
+#
+# Predicted, not faked. A bar that creeps on a fixed curve answers "is it
+# working" but not "how long is left", which is the actual question. Each
+# arrival records how long that destination really took (Navigation
+# Timing, blended into a running average in localStorage) and the next
+# trip to the same destination animates against that number, with the
+# remaining seconds shown once the expectation is over a second. First
+# visit to an unseen destination falls back to a default and the bar just
+# eases along until the page lands.
+PROGRESS_STYLE = """<style>
+.navprogress { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 100; pointer-events: none; }
+.navprogress[hidden] { display: none; }
+.navprogress .npfill { height: 100%; width: 0; border-radius: 0 3px 3px 0;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.55); }
+.navprogress.is-done .npfill { transition: width .18s ease, opacity .25s ease .12s; opacity: 0; }
+.npremain { position: fixed; top: 10px; right: 12px; z-index: 100; pointer-events: none;
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 999px;
+  padding: 2px 10px; font-size: 11px; font-weight: 700; color: var(--text-dim);
+  box-shadow: var(--shadow); font-variant-numeric: tabular-nums; }
+.npremain[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .navprogress .npfill { box-shadow: none; } }
+</style>"""
+
+PROGRESS_HTML = (
+    "<div class='navprogress' data-progress hidden role='progressbar' aria-label='Loading'"
+    " aria-valuemin='0' aria-valuemax='100' aria-valuenow='0'>"
+    "<div class='npfill' data-progress-fill></div></div>"
+    "<div class='npremain' data-progress-label hidden></div>"
+)
+
+PROGRESS_SCRIPT = r"""<script>
+(function(){
+  var bar = document.querySelector('[data-progress]');
+  var fill = bar && bar.querySelector('[data-progress-fill]');
+  var label = document.querySelector('[data-progress-label]');
+  if (!bar || !fill) return;
+
+  var STORE = 'ezbay:navtimes';   // destination -> typical milliseconds
+  var PENDING = 'ezbay:navpending';
+  var FALLBACK = 900;             // never been here before
+  var MAX_KEYS = 200;
+  var SHOW_DELAY = 180;           // below this, the page beats the bar anyway
+  var GIVE_UP = 45000;
+
+  function read(){ try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch(e){ return {}; } }
+  function write(m){ try { localStorage.setItem(STORE, JSON.stringify(m)); } catch(e){} }
+
+  function expected(key){
+    var v = read()[key];
+    return (typeof v === 'number' && v > 0) ? v : FALLBACK;
+  }
+
+  function record(key, ms){
+    if (!(ms > 0) || ms > 120000) return;
+    var m = read(), keys = Object.keys(m);
+    if (keys.length >= MAX_KEYS && !(key in m)) delete m[keys[0]];
+    // Exponential moving average: one freak slow load shouldn't set the
+    // expectation for every load after it, and a table that grows (or a
+    // machine that gets faster) should be followed rather than remembered.
+    m[key] = (key in m) ? Math.round(m[key] * 0.7 + ms * 0.3) : Math.round(ms);
+    write(m);
+  }
+
+  // -- measure this arrival -----------------------------------------
+  // Attributed to whatever key the *previous* page stashed on its way
+  // out, not to the URL we landed on: a POST that 303s somewhere else
+  // spends its time under the POST, and that's the wait to predict next
+  // time that button is pressed.
+  (function(){
+    var stashed = null;
+    try { stashed = sessionStorage.getItem(PENDING); sessionStorage.removeItem(PENDING); } catch(e){}
+    var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+    if (!nav || nav.type === 'back_forward') return;
+    record(stashed || ('GET ' + location.pathname), nav.responseEnd - nav.startTime);
+  })();
+
+  // -- the bar ------------------------------------------------------
+  var delayTimer = null, raf = null, startedAt = 0, target = 0, running = false;
+
+  function paint(){
+    var t = performance.now() - startedAt, pct, remain;
+    if (t < target) {
+      pct = 92 * (t / target);
+      remain = target - t;
+    } else {
+      // Overrunning the estimate. Ease toward 99 rather than sitting at
+      // 92 looking stuck, and stop claiming to know what's left.
+      pct = 92 + 7 * (1 - Math.exp(-(t - target) / target));
+      remain = null;
+    }
+    fill.style.width = pct.toFixed(1) + '%';
+    bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+    if (label) {
+      if (target < 1000) {
+        label.hidden = true;                       // too short to be worth a number
+      } else {
+        label.textContent = remain === null ? 'almost there…' : (remain / 1000).toFixed(1) + 's left';
+        label.hidden = false;
+      }
+    }
+    if (t > GIVE_UP) { reset(); return; }
+    raf = requestAnimationFrame(paint);
+  }
+
+  function reset(){
+    running = false;
+    clearTimeout(delayTimer); delayTimer = null;
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    bar.hidden = true;
+    bar.classList.remove('is-done');
+    fill.style.width = '0';
+    if (label) label.hidden = true;
+  }
+
+  function begin(key, expectedMs){
+    reset();
+    running = true;
+    target = expectedMs || expected(key);
+    startedAt = performance.now();
+    if (key) { try { sessionStorage.setItem(PENDING, key); } catch(e){} }
+    delayTimer = setTimeout(function(){ bar.hidden = false; paint(); }, SHOW_DELAY);
+  }
+
+  // For work that finishes without replacing the document (the fetch-based
+  // identify/deal-check flows). A navigation never calls this -- its own
+  // document is gone before it could.
+  function done(key){
+    if (!running) return;
+    if (key) record(key, performance.now() - startedAt);
+    running = false;
+    clearTimeout(delayTimer); delayTimer = null;
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    if (label) label.hidden = true;
+    if (bar.hidden) { reset(); return; }
+    bar.classList.add('is-done');
+    fill.style.width = '100%';
+    setTimeout(reset, 420);
+  }
+
+  // -- what counts as a wait ----------------------------------------
+  // A path with a file extension is a download: the browser saves it and
+  // leaves this document in place, so there is no navigation to track and
+  // a bar started for one would hang until it gave up.
+  function isDownload(pathname){ return /\.[a-z0-9]{2,5}$/i.test(pathname); }
+
+  document.addEventListener('click', function(e){
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest && e.target.closest('a[href]');
+    if (!a || a.hasAttribute('download') || a.hasAttribute('data-no-progress')) return;
+    if (a.target && a.target !== '_self') return;
+    var raw = a.getAttribute('href') || '';
+    if (!raw || raw.charAt(0) === '#' || /^[a-z]+:/i.test(raw) && !/^https?:/i.test(raw)) return;
+    var url;
+    try { url = new URL(a.href, location.href); } catch(err){ return; }
+    if (url.origin !== location.origin || isDownload(url.pathname)) return;
+    if (url.pathname === location.pathname && url.search === location.search && url.hash) return;
+    begin('GET ' + url.pathname);
+  });
+
+  document.addEventListener('submit', function(e){
+    var f = e.target;
+    if (e.defaultPrevented || !f || f.tagName !== 'FORM' || f.hasAttribute('data-no-progress')) return;
+    if (f.target && f.target !== '_self') return;
+    var url;
+    try { url = new URL(f.getAttribute('action') || location.href, location.href); } catch(err){ return; }
+    if (url.origin !== location.origin || isDownload(url.pathname)) return;
+    begin((f.method || 'get').toUpperCase() + ' ' + url.pathname);
+  });
+
+  // Coming back via the back button restores this document from cache
+  // mid-animation if the bar happened to be running when it was left.
+  window.addEventListener('pageshow', function(e){ if (e.persisted) reset(); });
+
+  window.EzBayProgress = {
+    begin: begin,
+    done: done,
+    // Scripted navigations (the Ctrl-K palette, the search autocomplete)
+    // don't fire a click on an <a>, so they hand the destination over here.
+    go: function(href){
+      var url;
+      try { url = new URL(href, location.href); } catch(err){ location.href = href; return; }
+      if (url.origin === location.origin && !isDownload(url.pathname)) begin('GET ' + url.pathname);
+      location.href = href;
+    }
+  };
+})();
+</script>"""
+
+
 _PWA_HEAD = (
     "<link rel='manifest' href='/static/manifest.json'>"
     "<meta name='theme-color' content='#0891b2'>"
@@ -953,8 +1188,9 @@ def page(title: str, body: str, head_extra: str = "", show_nav: bool = True, sea
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{title}</title>{STYLE}{TOPBAR_STYLE}{QUICK_PRICE_STYLE}{PHOTO_FIELD_STYLE}{_PWA_HEAD}{head_extra}</head>"
-        f"<body>{chrome}<main>{body}</main>{script}</body></html>"
+        f"<title>{title}</title>{STYLE}{TOPBAR_STYLE}{QUICK_PRICE_STYLE}{PHOTO_FIELD_STYLE}"
+        f"{PROGRESS_STYLE}{_PWA_HEAD}{head_extra}</head>"
+        f"<body>{PROGRESS_HTML}{chrome}<main>{body}</main>{PROGRESS_SCRIPT}{script}</body></html>"
     )
 
 
