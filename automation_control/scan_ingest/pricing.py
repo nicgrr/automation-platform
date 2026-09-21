@@ -64,6 +64,39 @@ class PriceSource(ABC):
         a genuine implementation error."""
 
 
+CARDOTAKU_SOURCE_NAME = "cardotaku_shop"
+
+
+class CardotakuSnapshotPriceSource(PriceSource):
+    """Super Dragon Ball Heroes pricing: a single-seller retail asking
+    price captured at import time by cardotaku_catalog.py, stored in
+    `raw_prices["cardotaku"]`. No network call here.
+
+    This is one shop's listed price, not sold comps or a market
+    aggregate -- rougher than even PokemonTcgPriceSource's snapshot, since
+    there's only one seller behind it instead of TCGplayer's whole
+    marketplace. Good enough to sanity-check a pile while scanning; treat
+    it the same as the other snapshot sources everywhere a listing
+    decision is actually made.
+    """
+
+    def get_price(self, card: CatalogCard, variant: CardVariant) -> PriceQuote | None:
+        entry = (card.raw_prices or {}).get("cardotaku")
+        price = entry.get("price") if entry else None
+        return PriceQuote(price=Decimal(str(price)), currency="USD", source=CARDOTAKU_SOURCE_NAME) if price else None
+
+
+class NullPriceSource(PriceSource):
+    """Always returns no quote. Used for a cached game with no pricing
+    source of its own (see session.py's game-price routing) so a commit
+    goes through with price unknown instead of silently reusing an
+    English-market source that would either match nothing or, worse,
+    match the wrong card."""
+
+    def get_price(self, card: CatalogCard, variant: CardVariant) -> PriceQuote | None:
+        return None
+
+
 class PokemonTcgPriceSource(PriceSource):
     """Reads pricing already captured at cache time (see catalog.py) --
     makes no network calls itself. Explicitly a rough placeholder: this is

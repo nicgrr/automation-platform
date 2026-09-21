@@ -27,13 +27,24 @@ from .commit import CommitRefused, commit_card, inventory_totals
 from .detect import detect_cards
 from .foil import assess_foil
 from .pricing import (
-    POKEMONPRICETRACKER_SOURCE_NAME, CachedPriceSource, PokemonPriceTrackerSource, PokemonTcgPriceSource,
-    PriceSource, TcgplayerSnapshotPriceSource, price_and_record,
+    POKEMONPRICETRACKER_SOURCE_NAME, CachedPriceSource, CardotakuSnapshotPriceSource, NullPriceSource,
+    PokemonPriceTrackerSource, PokemonTcgPriceSource, PriceSource, TcgplayerSnapshotPriceSource, price_and_record,
 )
 from .identify import Identification, ReferenceCard, Source, best_set_by_art, detect_sheet_set_and_rotation, dominant_set_id, identify_card, identify_card_via_vision, read_set_totals
-from .tcgplayer_catalog import GAMES
+from .games import GAMES
 
 POLL_INTERVAL_SECONDS = 2.0
+# Which PriceSource caches a market snapshot alongside its catalogue --
+# Every entry here must have been
+# populated by that game's own cache_*.py importer (raw_prices), not a
+# live/billed call, so committing a scanned card never waits on one.
+SNAPSHOT_PRICE_SOURCES: dict[str, type[PriceSource]] = {
+    "one_piece": TcgplayerSnapshotPriceSource,
+    "dragon_ball_fusion_world": TcgplayerSnapshotPriceSource,
+    "dragon_ball_super": TcgplayerSnapshotPriceSource,
+    "dragon_ball_z": TcgplayerSnapshotPriceSource,
+    "super_dragon_ball_heroes": CardotakuSnapshotPriceSource,
+}
 # Scanners write incrementally; a file that appeared mid-write would be
 # truncated. Treat it as ready only once its size has stopped changing.
 STABLE_CHECKS = 2
@@ -453,13 +464,22 @@ def process_sheet(
             outcome.skipped = detection.count
             return outcome
 
-    tcgplayer_game = GAMES.get(game)
-    vision_game = tcgplayer_game.vision_name if tcgplayer_game else None
-    if price_source is None and tcgplayer_game is not None:
-        # One Piece / Dragon Ball price from the TCGplayer snapshot cached
-        # with the catalogue -- pokemonpricetracker.com is Pokemon-only,
-        # and a billed search for a card it can't have would waste credits.
-        price_source = TcgplayerSnapshotPriceSource()
+    game_info = GAMES.get(game)
+    vision_game = game_info.vision_name if game_info else None
+    if price_source is None and game_info is not None and game_info.key in SNAPSHOT_PRICE_SOURCES:
+        # One Piece / Dragon Ball / SDBH price from whichever snapshot was
+        # cached with that game's catalogue -- pokemonpricetracker.com is
+        # Pokemon-only, and a billed search for a card it can't have would
+        # waste credits.
+        price_source = SNAPSHOT_PRICE_SOURCES[game_info.key]()
+    elif price_source is None and game_info is not None:
+        # A cached game with no snapshot source of its own (currently just
+        # pokemon_japan -- see games.py) must NOT fall through to the
+        # English-only sources below: pokemonpricetracker would burn a
+        # billed credit searching for a Japanese name it can't have, and
+        # PokemonTcgPriceSource would read raw_prices this catalogue never
+        # populates. Commit with price unknown instead of a wrong lookup.
+        price_source = NullPriceSource()
     if price_source is None:
         # Real market/eBay-sold pricing when a key is configured -- see
         # pricing.py's module docstring for why the zero-cost pokemontcg.io
@@ -533,7 +553,12 @@ def process_sheet(
         # The foil classifier and its catalogue facts are Pokemon-specific;
         # One Piece / Dragon Ball parallels are separate catalogue cards,
         # so the art match has already told the printings apart.
-        if identified_card is not None and tcgplayer_game is None:
+        if identified_card is not None and (game_info is None or game_info.key == "pokemon_japan"):
+            # The classifier is Pokemon-specific but texture-based (holo
+            # shimmer, not language), so it still applies to Japanese
+            # prints; it's skipped only for the TCGplayer games, whose
+            # parallels are already separate catalogue cards -- see the
+            # comment where identified_card is resolved.
             foil_assessment = assess_foil(crop_path, identified_card)
             summary = foil_assessment.log_summary()
             if identification.foil_observation:

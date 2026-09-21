@@ -39,31 +39,29 @@ from sqlalchemy.orm import Session
 
 from ..models import CardSet, CatalogCard, CatalogItem, CatalogItemType, TcgCard
 from .catalog import CacheResult, _compute_phashes
+from .games import GAMES
 
 API_BASE = "https://tcgcsv.com/tcgplayer"
 HEADERS = {"User-Agent": "ezbay-scan-catalog/1.0"}
 
 
 @dataclass(frozen=True)
-class Game:
-    key: str             # TcgCard.game / CardSet.game
+class TcgplayerGame:
+    key: str             # matches games.Game.key / TcgCard.game / CardSet.game
     category_id: int     # TCGplayer categoryId
     set_prefix: str      # CardSet.id prefix, keeps ids short and unambiguous
-    label: str           # shown in the UI
-    vision_name: str     # what the Claude vision fallback is told it's looking at
 
 
-GAMES: dict[str, Game] = {g.key: g for g in (
-    Game("one_piece", 68, "op", "One Piece", "One Piece Card Game"),
-    Game("dragon_ball_fusion_world", 80, "dbfw", "Dragon Ball Super: Fusion World", "Dragon Ball Super Card Game Fusion World"),
-    Game("dragon_ball_super", 27, "dbs", "Dragon Ball Super (Masters)", "Dragon Ball Super Card Game"),
-    # TCGplayer only carries the Panini-era (2014+) DBZ TCG; the 2000s
-    # Score-era cards aren't in this catalogue at all.
-    Game("dragon_ball_z", 23, "dbz", "Dragon Ball Z (Panini)", "Dragon Ball Z TCG"),
+# One entry per games.GAMES key that's actually sourced from TCGplayer
+# (i.e. everything except pokemon_japan, which is TCGdex -- see
+# tcgdex_catalog.py). `label`/`vision_name` live once in games.GAMES;
+# this only adds what's specific to fetching this game from tcgcsv.com.
+TCGPLAYER_GAMES: dict[str, TcgplayerGame] = {g.key: g for g in (
+    TcgplayerGame("one_piece", 68, "op"),
+    TcgplayerGame("dragon_ball_fusion_world", 80, "dbfw"),
+    TcgplayerGame("dragon_ball_super", 27, "dbs"),
+    TcgplayerGame("dragon_ball_z", 23, "dbz"),
 )}
-
-# Display names for every game the scanner knows, Pokemon included.
-GAME_LABELS: dict[str, str] = {"pokemon": "Pokémon", **{g.key: g.label for g in GAMES.values()}}
 
 # "OP01-024", "BT1-001", "FS11-01", "P-001" -> (set code, number)
 _CODE_RE = re.compile(r"^([A-Za-z0-9]+)-(\d+[A-Za-z]?)$")
@@ -106,7 +104,7 @@ def _card_number(product: dict) -> str | None:
     return None if not number or number.upper() == "N/A" else number
 
 
-def fetch_groups(client: httpx.Client, game: Game) -> list[dict]:
+def fetch_groups(client: httpx.Client, game: TcgplayerGame) -> list[dict]:
     """Every group (set) in a game, oldest first -- the order plain-print
     ids must be claimed in (see the module docstring)."""
     response = client.get(f"{API_BASE}/{game.category_id}/groups")
@@ -115,7 +113,7 @@ def fetch_groups(client: httpx.Client, game: Game) -> list[dict]:
     return sorted(groups, key=lambda g: (g.get("publishedOn") or "9999", g["groupId"]))
 
 
-def _fetch(client: httpx.Client, game: Game, group_id: int, what: str) -> list[dict]:
+def _fetch(client: httpx.Client, game: TcgplayerGame, group_id: int, what: str) -> list[dict]:
     last_error: Exception | None = None
     for _ in range(3):
         try:
@@ -127,7 +125,7 @@ def _fetch(client: httpx.Client, game: Game, group_id: int, what: str) -> list[d
     raise RuntimeError(f"tcgcsv {what} for group {group_id} failed: {last_error}")
 
 
-def set_id_for(game: Game, group: dict) -> str:
+def set_id_for(game: TcgplayerGame, group: dict) -> str:
     return f"{game.set_prefix}-{group['groupId']}"
 
 
@@ -168,7 +166,7 @@ def _fetch_and_hash(client: httpx.Client, url: str, destination: Path, force: bo
 
 
 def cache_group(
-    session: Session, game: Game, group: dict, cache_dir: Path, client: httpx.Client,
+    session: Session, game: TcgplayerGame, group: dict, cache_dir: Path, client: httpx.Client,
     force: bool = False,
 ) -> CacheResult:
     """Cache one TCGplayer group as a CardSet with hashed reference cards.
@@ -191,7 +189,7 @@ def cache_group(
     session.add(card_set)
     card_set.name = group.get("name") or set_id
     card_set.code = group.get("abbreviation")
-    card_set.series = game.label
+    card_set.series = GAMES[game.key].label
     card_set.game = game.key
     published = (group.get("publishedOn") or "")[:10]
     card_set.release_date = published.replace("-", "/") or None

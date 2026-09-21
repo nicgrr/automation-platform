@@ -1,16 +1,65 @@
 # Bulk card scan ingest
 
-Digitises physical Pokémon cards into the `InventoryItem` table by scanning
+Digitises physical trading cards into the `InventoryItem` table by scanning
 9-up sheets on the flatbed, splitting them into per-card crops, identifying
 each card against a cached set catalogue, and committing the confident ones.
+Started as Pokémon-only; as of 2026-09-21 it also covers One Piece, three
+English-language Dragon Ball TCGs, Japanese-print Pokémon, and Super Dragon
+Ball Heroes — see "Games and catalogue sources" below for what each one is
+sourced from and `scan_ingest/games.py` for the registry itself. A pile can
+mix any of them; each sheet is routed to whichever game/set it matches, no
+reconfiguration between piles.
 
 Code lives in `automation_control/scan_ingest/`. Identification is OCR +
 perceptual hashing against locally cached reference art first; a crop
 neither can place falls back to Claude reading it directly
 (`identify.identify_card_via_vision`, gated on `ANTHROPIC_API_KEY`).
-Pricing prefers real market/eBay-sold data from pokemonpricetracker.com when
-`POKEMONPRICETRACKER_API_KEY` is configured, falling back to pokemontcg.io's
-snapshot otherwise — see `scan_ingest/pricing.py`'s module docstring.
+Pricing is per-game: English Pokémon prefers real market/eBay-sold data
+from pokemonpricetracker.com when `POKEMONPRICETRACKER_API_KEY` is
+configured, falling back to pokemontcg.io's snapshot otherwise; One
+Piece/Dragon Ball/SDBH price from a snapshot captured at catalogue-cache
+time (no live call); Japanese Pokémon has no price source yet and commits
+with price unknown. See `scan_ingest/pricing.py`'s module docstring and
+`session.SNAPSHOT_PRICE_SOURCES`.
+
+## Games and catalogue sources
+
+| Game | `TcgCard.game` | Source | Cache command |
+|---|---|---|---|
+| Pokémon (English) | `pokemon` | pokemontcg.io | `scan_ingest.cli cache-set --set-id <id>` |
+| One Piece | `one_piece` | tcgcsv.com (TCGplayer mirror) | `cache_tcgplayer_scan_catalog --game one_piece` |
+| Dragon Ball Super: Fusion World | `dragon_ball_fusion_world` | tcgcsv.com | `cache_tcgplayer_scan_catalog --game dragon_ball_fusion_world` |
+| Dragon Ball Super (Masters) | `dragon_ball_super` | tcgcsv.com | `cache_tcgplayer_scan_catalog --game dragon_ball_super` |
+| Dragon Ball Z (Panini, 2014+) | `dragon_ball_z` | tcgcsv.com | `cache_tcgplayer_scan_catalog --game dragon_ball_z` |
+| Pokémon (Japanese-print) | `pokemon_japan` | TCGdex (api.tcgdex.net) | `cache_tcgdex_scan_catalog` |
+| Super Dragon Ball Heroes | `super_dragon_ball_heroes` | cardotaku.com's public Shopify catalogue | `cache_cardotaku_scan_catalog` |
+
+Every cache command lives under `scripts/` and is safe to re-run (updates
+in place, only downloads images it doesn't already have).
+
+Two of these are worth knowing the limits of:
+
+- **Super Dragon Ball Heroes has no official API.** It's a Japan-only
+  arcade/card game never sold through TCGplayer, and the one fan card
+  database found (sdbh.dbz.space) sits behind a Cloudflare bot-challenge
+  with no API — not something a background service can scrape. The
+  catalogue instead comes from one retailer's public storefront listing
+  (~3,200 singles as of 2026-09-21, out of many more released over SDBH's
+  ~10 years) — real coverage, but a single seller's stock, not an
+  exhaustive database. A genuine SDBH card just not in stock there will
+  land in the review queue with no match, same as an uncached set for any
+  other game.
+- **Japanese Pokémon has no price source.** TCGdex carries no pricing;
+  every Japanese-print commit records price unknown rather than reusing
+  an English-market source that would either match nothing or, worse,
+  match the wrong printing (see `pricing.NullPriceSource`).
+
+Unlike Pokémon's "71/114", One Piece/Dragon Ball/SDBH print a
+set-prefixed code (`OP01-024`, `FB01-003`, `BM1-005`) that's unique across
+the whole game rather than just one set. That lets a mixed pile of one of
+these games route to the *whole game's* reference pool at once instead of
+narrowing to one set first — see `session._merge_by_game` and
+`identify.dominant_set_id`.
 
 ## Everyday use
 
@@ -56,9 +105,16 @@ a detection bug was fixed) without rescanning it physically:
 
 `scan_ingest_data/session.env` (gitignored; see `session.env.example`).
 
-`SET_ID` is **blank by default**, which means auto-detect set and rotation
-per sheet. Set it only to pin the service to one fixed set, then
-`sudo systemctl restart scan-ingest`.
+`SET_ID` is **blank by default**, which means auto-detect set (and game)
+and rotation per sheet. Set it only to pin the service to one fixed set,
+then `sudo systemctl restart scan-ingest` — and clear it again once
+you're done with that pile. A `SET_ID` left pinned from a previous session
+is easy to miss (the service keeps running, just silently matching every
+sheet against one set) and cost a real session on 2026-09-21: hours of
+mixed-game scans went to review as "(unidentified)" because everything
+was being compared only against one old Pokémon set. Check
+`session.env` first if a session's sheets are unexpectedly all landing in
+review.
 
 Paths and the pHash distance threshold live in `automation_control/config.py`
 (`scan_*` settings).
