@@ -38,6 +38,12 @@ GAMES: dict[str, Game] = {g.key: g for g in (
     # API, and the one fan database found sits behind a bot-challenge with
     # no API of its own).
     Game("super_dragon_ball_heroes", "Super Dragon Ball Heroes", "Super Dragon Ball Heroes (Japanese arcade card game)"),
+    # Same story, same source (cardotaku.com) -- a newer, separate Bandai
+    # arcade card game from Super Dragon Ball Heroes, easy to mix up on
+    # sight (found the hard way: 2026-09-22, 7 cards hand-catalogued as
+    # SDBH turned out to be this game instead, identified via eBay/Google
+    # Lens reverse image search).
+    Game("dragon_ball_super_divers", "Dragon Ball Super Divers", "Dragon Ball Super Divers (Japanese arcade card game)"),
 )}
 
 # Display names for every game the scanner knows, Pokemon included.

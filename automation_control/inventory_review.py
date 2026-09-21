@@ -55,13 +55,30 @@ THUMB_QUALITY = 78
 # games collapse into one tab; English and Japanese Pokémon collapse into
 # one). Collectibles and Misc aren't here -- they're plain links out to a
 # different page (see inventory_sets' docstring), not a `group` value.
+# logo: for the category tile on the /inventory landing page only (not
+# used per-set) -- one small, stable, direct file link per franchise via
+# Wikimedia's Special:FilePath redirect (https://commons.wikimedia.org/wiki/
+# Special:FilePath/<file>), so it survives that file's actual storage path
+# changing. Dragon Ball uses the dragon-ball-orb icon rather than a
+# Z-branded wordmark since the group spans several Dragon Ball games, not
+# just Z.
 GAME_GROUPS: dict[str, dict] = {
-    "one_piece": {"label": "One Piece", "games": {"one_piece"}},
+    "one_piece": {
+        "label": "One Piece", "games": {"one_piece"},
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/6/6c/One_piece_logo.svg",
+    },
     "dragon_ball": {
         "label": "Dragon Ball",
-        "games": {"dragon_ball_fusion_world", "dragon_ball_super", "dragon_ball_z", "super_dragon_ball_heroes"},
+        "games": {
+            "dragon_ball_fusion_world", "dragon_ball_super", "dragon_ball_z",
+            "super_dragon_ball_heroes", "dragon_ball_super_divers",
+        },
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/9/96/Dragon_ball.svg",
     },
-    "pokemon": {"label": "Pokémon", "games": {"pokemon", "pokemon_japan"}},
+    "pokemon": {
+        "label": "Pokémon", "games": {"pokemon", "pokemon_japan"},
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/9/98/International_Pok%C3%A9mon_logo.svg",
+    },
 }
 
 SET_SORTS = {
@@ -377,9 +394,14 @@ def _category_landing(session: Session, owned, sets: dict, value_by_set: dict) -
         set_count = len(rows)
         distinct = sum(r.distinct_cards or 0 for r in rows)
         value = sum(value_by_set.get(r.set_id, 0.0) for r in rows)
+        logo = info.get("logo")
+        art = (
+            f"<img src='{escape(logo)}' alt='' loading='lazy' decoding='async'>"
+            if logo else f"<span class='set-fallback'>{escape(info['label'])}</span>"
+        )
         tiles.append(
             f"<a class='set-tile' href='/inventory?group={key}'>"
-            f"<div class='set-art'><span class='set-fallback'>{escape(info['label'])}</span></div>"
+            f"<div class='set-art'>{art}</div>"
             f"<div class='set-name'>{escape(info['label'])}</div>"
             f"<div class='set-meta'>{set_count} set(s), {distinct} card(s)</div>"
             f"<div class='set-meta'>Total Value: <strong>{_money(value if value else None)}</strong></div>"

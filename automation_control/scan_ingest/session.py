@@ -44,6 +44,7 @@ SNAPSHOT_PRICE_SOURCES: dict[str, type[PriceSource]] = {
     "dragon_ball_super": TcgplayerSnapshotPriceSource,
     "dragon_ball_z": TcgplayerSnapshotPriceSource,
     "super_dragon_ball_heroes": CardotakuSnapshotPriceSource,
+    "dragon_ball_super_divers": CardotakuSnapshotPriceSource,
 }
 # Scanners write incrementally; a file that appeared mid-write would be
 # truncated. Treat it as ready only once its size has stopped changing.
