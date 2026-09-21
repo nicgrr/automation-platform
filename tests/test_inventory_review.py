@@ -12,9 +12,13 @@ from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem
 
-# The inventory is organised set-first: /inventory is a grid of set tiles and
-# individual cards live at /inventory/set/{id}. Card-level assertions
-# therefore target the set page; set-level ones target the landing page.
+# The inventory is organised set-first, behind a category picker: bare
+# /inventory is one tile per category (One Piece / Dragon Ball / Pokémon /
+# Collectibles / Misc -- see GAME_GROUPS), /inventory?group=<key> is the
+# grid of set tiles within one category, and individual cards live at
+# /inventory/set/{id}. Card-level assertions target the set page; set-grid
+# ones target ?group=pokemon (every CardSet in this file defaults to that
+# game); category-landing ones target bare /inventory.
 SET_PAGE = "/inventory/set/xy11"
 
 
@@ -69,18 +73,18 @@ def test_inventory_requires_auth():
 
 def test_inventory_lists_sets_you_own_cards_from(client, session):
     _seed(session, name="Dewott")
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     assert resp.status_code == 200
     assert "Steam Siege" in resp.text
     assert "/inventory/set/xy11" in resp.text
 
 
 def test_set_grid_loads_no_card_images(client, session):
-    """The landing page's whole point is being fast: it must not reference a
+    """The set grid's whole point is being fast: it must not reference a
     single per-card scan, however many cards are owned."""
     for n in range(1, 6):
         _seed(session, card_id=f"xy11-{n}", number=str(n), name=f"Card {n}")
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     assert "/inventory/thumb/" not in resp.text
     assert "/inventory/image/" not in resp.text
 
@@ -88,7 +92,7 @@ def test_set_grid_loads_no_card_images(client, session):
 def test_set_grid_shows_progress_against_the_printed_total(client, session):
     _seed(session, card_id="xy11-1", number="1", name="One", printed_total=114)
     _seed(session, card_id="xy11-2", number="2", name="Two")
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     assert "Progress: 2/114" in resp.text
 
 
@@ -98,11 +102,29 @@ def test_inventory_empty_state(client):
     assert "Nothing scanned yet" in resp.text
 
 
+def test_category_landing_shows_a_tile_per_group_not_the_sets_themselves(client, session):
+    """Bare /inventory is the category picker Nic asked for: a tile per
+    GAME_GROUPS entry, linking into ?group=<key> -- not the set grid
+    itself, which only appears once a category is picked."""
+    _seed(session, name="Dewott")
+    resp = client.get("/inventory")
+    assert "/inventory?group=pokemon" in resp.text
+    assert "Pokémon" in resp.text
+    assert "Steam Siege" not in resp.text  # the set itself, one tap further in
+
+
+def test_category_landing_links_out_to_collectibles_and_misc(client, session):
+    _seed(session, name="Dewott")
+    resp = client.get("/inventory")
+    assert "href='/collectibles'" in resp.text
+    assert "href='/inventory/uncatalogued'" in resp.text
+
+
 def test_set_grid_totals_are_converted_to_aud(client, session):
     """Values are stored in source currency and converted for display; with
     USD pinned at 2.0, a $2.50 USD card reads as $5.00 AUD."""
     _seed(session, quantity=1, price=Decimal("2.50"), currency="USD")
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     assert "$5.00" in resp.text
     assert "AUD" in resp.text
 
@@ -110,7 +132,7 @@ def test_set_grid_totals_are_converted_to_aud(client, session):
 def test_set_grid_sums_mixed_currencies_into_one_aud_figure(client, session):
     _seed(session, card_id="xy11-31", number="31", name="Dewott", quantity=2, price=Decimal("1.00"), currency="USD")
     _seed(session, card_id="xy11-29", number="29", name="Gastrodon", quantity=1, price=Decimal("3.00"), currency="EUR")
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     # (2 x $1 USD x 2.0) + (1 x EUR3 x 4.0) = $16.00 AUD
     assert "$16.00" in resp.text
 
@@ -118,7 +140,7 @@ def test_set_grid_sums_mixed_currencies_into_one_aud_figure(client, session):
 def test_set_grid_separates_sets(client, session):
     _seed(session, card_id="xy11-31", set_id="xy11", set_name="Steam Siege", name="Dewott")
     _seed(session, card_id="xy12-1", number="1", set_id="xy12", set_name="Evolutions", name="Charizard")
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     assert "Steam Siege" in resp.text and "Evolutions" in resp.text
     assert "/inventory/set/xy11" in resp.text and "/inventory/set/xy12" in resp.text
 
@@ -315,21 +337,21 @@ def _seed_set(session, set_id, name, release_date, printed_total=100):
 def test_sets_default_to_newest_release_first(client, session):
     _seed_set(session, "old", "Old Set", "2016/08/03")
     _seed_set(session, "new", "New Set", "2023/03/31")
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     assert resp.text.index("New Set") < resp.text.index("Old Set")
 
 
 def test_sets_can_be_sorted_oldest_first(client, session):
     _seed_set(session, "old", "Old Set", "2016/08/03")
     _seed_set(session, "new", "New Set", "2023/03/31")
-    resp = client.get("/inventory", params={"sort": "released_asc"})
+    resp = client.get("/inventory", params={"sort": "released_asc", "group": "pokemon"})
     assert resp.text.index("Old Set") < resp.text.index("New Set")
 
 
 def test_sets_can_be_sorted_by_name(client, session):
     _seed_set(session, "zzz", "Zebra Set", "2016/08/03")
     _seed_set(session, "aaa", "Alpha Set", "2023/03/31")
-    resp = client.get("/inventory", params={"sort": "name"})
+    resp = client.get("/inventory", params={"sort": "name", "group": "pokemon"})
     assert resp.text.index("Alpha Set") < resp.text.index("Zebra Set")
 
 
@@ -337,7 +359,7 @@ def test_a_set_with_no_release_date_sorts_last_not_first(client, session):
     """An unknown date must not masquerade as the newest release."""
     _seed_set(session, "dated", "Dated Set", "2020/01/01")
     _seed_set(session, "undated", "Undated Set", None)
-    resp = client.get("/inventory")
+    resp = client.get("/inventory", params={"group": "pokemon"})
     assert resp.text.index("Dated Set") < resp.text.index("Undated Set")
 
 

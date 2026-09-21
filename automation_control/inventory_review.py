@@ -37,7 +37,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .images import serve_image, serve_thumb
-from .models import CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, InventoryItem, TcgCard
+from .models import CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CollectibleProduct, InventoryItem, TcgCard
 from .scan_ingest import fx
 from .scan_ingest.commit import _catalog_item_id_for
 from .scan_ingest.games import GAME_LABELS
@@ -219,19 +219,19 @@ def inventory_sets(
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
-    """Every set you own cards from, as tiles. Deliberately loads no card
-    images: this is the "what do I have" view, and set artwork is a handful
-    of small cached logos rather than one scan per card.
+    """Bare /inventory (no `group`) is a category-picker: one big tile per
+    GAME_GROUPS entry (One Piece / Dragon Ball / Pokémon -- each may span
+    several CardSet.game values, e.g. Dragon Ball covers all four Dragon
+    Ball games at once) plus Collectibles and Misc, matching the same
+    tile you tap into a set from. `?group=<key>` is the page that used to
+    be the whole thing: every set you own in that category, as tiles,
+    loading no card images -- set artwork is a handful of small cached
+    logos rather than one scan per card.
 
-    `group` narrows to one of GAME_GROUPS (One Piece / Dragon Ball / Pokémon
-    -- each may span several CardSet.game values, e.g. Dragon Ball covers
-    all four Dragon Ball games at once). Bare /inventory (no `group`) shows
-    everything unfiltered, with no tab marked active.
-
-    Two more tabs live outside this grid entirely and are plain links:
     Collectibles (Sonny Angels etc -- a different shape of "owned stock",
     no card/set at all) and Misc (a TCG card with no catalogue match to
-    build a tile from -- see inventory_uncatalogued).
+    build a set tile from -- see inventory_uncatalogued) aren't GAME_GROUPS
+    at all; their landing tile links straight to their own page.
     """
     if sort not in SET_SORTS:
         sort = "released"
@@ -259,24 +259,6 @@ def inventory_sets(
     set_ids = {row.set_id for row in owned}
     sets = {s.id: s for s in session.scalars(select(CardSet).where(CardSet.id.in_(set_ids)))}
 
-    group_tabs = "".join(
-        f"<a class='filter-tab{' active' if key == group else ''}' href='/inventory?group={key}'>{escape(info['label'])}</a>"
-        for key, info in GAME_GROUPS.items()
-    ) + "<a class='filter-tab' href='/collectibles'>Collectibles</a>" + "<a class='filter-tab' href='/inventory/uncatalogued'>Misc</a>"
-    tabs_html = f"<div class='filter-tabs'>{group_tabs}</div>"
-
-    if group:
-        games = GAME_GROUPS[group]["games"]
-        owned = [row for row in owned if sets.get(row.set_id) and sets[row.set_id].game in games]
-        if not owned:
-            body = (
-                brand_header("Inventory")
-                + tabs_html
-                + f"<div class='panel'><p>Nothing owned yet in {escape(GAME_GROUPS[group]['label'])}.</p></div>"
-            )
-            return HTMLResponse(page("EzBay — Inventory", body))
-        set_ids = {row.set_id for row in owned}
-
     items = list(session.scalars(
         select(InventoryItem).join(CatalogCard, InventoryItem.card_id == CatalogCard.id)
         .where(CatalogCard.set_id.in_(set_ids))
@@ -294,6 +276,20 @@ def inventory_sets(
             line = _aud(ebay_prices.get(item.card_id), item.quantity)
         if line:
             value_by_set[set_of[item.card_id]] = value_by_set.get(set_of[item.card_id], 0.0) + line
+
+    if not group:
+        return _category_landing(session, owned, sets, value_by_set)
+
+    games = GAME_GROUPS[group]["games"]
+    owned = [row for row in owned if sets.get(row.set_id) and sets[row.set_id].game in games]
+    if not owned:
+        body = (
+            brand_header("Inventory")
+            + "<p><a class='btn ghost' href='/inventory'>&larr; Categories</a></p>"
+            + f"<div class='panel'><p>Nothing owned yet in {escape(GAME_GROUPS[group]['label'])}.</p></div>"
+        )
+        return HTMLResponse(page("EzBay — Inventory", body))
+    set_ids = {row.set_id for row in owned}
 
     def released(row) -> str:
         # ISO-ish "YYYY/MM/DD" sorts correctly as a string; empty dates sort
@@ -354,8 +350,8 @@ def inventory_sets(
     )
 
     body = (
-        brand_header("Inventory")
-        + tabs_html
+        brand_header(f"Inventory — {GAME_GROUPS[group]['label']}")
+        + "<p><a class='btn ghost' href='/inventory'>&larr; Categories</a></p>"
         + rate_note
         + stat_grid
         + "<div class='toolbar'>"
@@ -365,6 +361,61 @@ def inventory_sets(
         + f"<div class='set-grid' id='set-grid'>{''.join(tiles)}</div>"
         + _STYLE
         + _SEARCH_SCRIPT
+    )
+    return HTMLResponse(page("EzBay — Inventory", body))
+
+
+def _category_landing(session: Session, owned, sets: dict, value_by_set: dict) -> HTMLResponse:
+    """The tile Nic actually asked for: tap a category, land on its sets.
+    One tile per GAME_GROUPS entry plus Collectibles and Misc, each
+    showing the same kind of summary a set tile does (a count, a value)
+    so this reads as one consistent tile system, not a menu bolted onto it.
+    """
+    tiles = []
+    for key, info in GAME_GROUPS.items():
+        rows = [r for r in owned if sets.get(r.set_id) and sets[r.set_id].game in info["games"]]
+        set_count = len(rows)
+        distinct = sum(r.distinct_cards or 0 for r in rows)
+        value = sum(value_by_set.get(r.set_id, 0.0) for r in rows)
+        tiles.append(
+            f"<a class='set-tile' href='/inventory?group={key}'>"
+            f"<div class='set-art'><span class='set-fallback'>{escape(info['label'])}</span></div>"
+            f"<div class='set-name'>{escape(info['label'])}</div>"
+            f"<div class='set-meta'>{set_count} set(s), {distinct} card(s)</div>"
+            f"<div class='set-meta'>Total Value: <strong>{_money(value if value else None)}</strong></div>"
+            "</a>"
+        )
+
+    collectible_count, collectible_qty = session.execute(
+        select(func.count(func.distinct(InventoryItem.catalog_item_id)), func.sum(InventoryItem.quantity))
+        .join(CollectibleProduct, CollectibleProduct.catalog_item_id == InventoryItem.catalog_item_id)
+    ).one()
+    tiles.append(
+        "<a class='set-tile' href='/collectibles'>"
+        "<div class='set-art'><span class='set-fallback'>Collectibles</span></div>"
+        "<div class='set-name'>Collectibles</div>"
+        f"<div class='set-meta'>{collectible_count or 0} item(s), {collectible_qty or 0} total</div>"
+        "</a>"
+    )
+
+    misc_count, misc_qty = session.execute(
+        select(func.count(InventoryItem.id), func.sum(InventoryItem.quantity))
+        .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
+        .where(InventoryItem.card_id.is_(None))
+    ).one()
+    tiles.append(
+        "<a class='set-tile' href='/inventory/uncatalogued'>"
+        "<div class='set-art'><span class='set-fallback'>Misc</span></div>"
+        "<div class='set-name'>Misc</div>"
+        f"<div class='set-meta'>{misc_count or 0} holding(s), {misc_qty or 0} total</div>"
+        "<div class='set-meta muted'>No catalogue match yet</div>"
+        "</a>"
+    )
+
+    body = (
+        brand_header("Inventory")
+        + f"<div class='set-grid'>{''.join(tiles)}</div>"
+        + _STYLE
     )
     return HTMLResponse(page("EzBay — Inventory", body))
 
@@ -740,10 +791,6 @@ def inventory_image(item_id: str, user: str = Depends(require_dashboard_user), s
 
 
 _STYLE = """<style>
-.filter-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
-.filter-tab{padding:7px 13px;border-radius:999px;font-size:13px;font-weight:600;
-  background:var(--surface-sunken);color:var(--text-dim)}
-.filter-tab.active{background:var(--accent);color:#fff}
 .muted{color:var(--text-dim);font-size:13px}
 @media (max-width:760px){.opt{display:none}}
 .toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:0 0 20px}
