@@ -50,6 +50,20 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 THUMB_WIDTH = 220
 THUMB_QUALITY = 78
 
+# The tab bar Nic asked for: One Piece / Dragon Ball / Pokémon, each
+# possibly spanning several CardSet.game values (all four Dragon Ball
+# games collapse into one tab; English and Japanese Pokémon collapse into
+# one). Collectibles and Misc aren't here -- they're plain links out to a
+# different page (see inventory_sets' docstring), not a `group` value.
+GAME_GROUPS: dict[str, dict] = {
+    "one_piece": {"label": "One Piece", "games": {"one_piece"}},
+    "dragon_ball": {
+        "label": "Dragon Ball",
+        "games": {"dragon_ball_fusion_world", "dragon_ball_super", "dragon_ball_z", "super_dragon_ball_heroes"},
+    },
+    "pokemon": {"label": "Pokémon", "games": {"pokemon", "pokemon_japan"}},
+}
+
 SET_SORTS = {
     "released": "Newest first",
     "released_asc": "Oldest first",
@@ -201,7 +215,7 @@ def _edit_controls(set_id: str, card: CatalogCard, variant: CardVariant,
 def inventory_sets(
     request: Request,
     sort: str = Query("released"),
-    game: str = Query("all"),
+    group: str = Query(""),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
@@ -209,17 +223,20 @@ def inventory_sets(
     images: this is the "what do I have" view, and set artwork is a handful
     of small cached logos rather than one scan per card.
 
-    `game` narrows to one game's sets (Pokémon, One Piece, one of the
-    Dragon Ball games, ...) via CardSet.game -- see scan_ingest/games.py.
-    Non-card collectibles (Sonny Angels etc) aren't sets at all, so they
-    live on their own page; the game tab bar links out to /collectibles
-    for those rather than trying to fold two different shapes of "owned
-    stock" into one grid.
+    `group` narrows to one of GAME_GROUPS (One Piece / Dragon Ball / Pokémon
+    -- each may span several CardSet.game values, e.g. Dragon Ball covers
+    all four Dragon Ball games at once). Bare /inventory (no `group`) shows
+    everything unfiltered, with no tab marked active.
+
+    Two more tabs live outside this grid entirely and are plain links:
+    Collectibles (Sonny Angels etc -- a different shape of "owned stock",
+    no card/set at all) and Misc (a TCG card with no catalogue match to
+    build a tile from -- see inventory_uncatalogued).
     """
     if sort not in SET_SORTS:
         sort = "released"
-    if game not in GAME_LABELS:
-        game = "all"
+    if group not in GAME_GROUPS:
+        group = ""
 
     owned = session.execute(
         select(
@@ -242,19 +259,20 @@ def inventory_sets(
     set_ids = {row.set_id for row in owned}
     sets = {s.id: s for s in session.scalars(select(CardSet).where(CardSet.id.in_(set_ids)))}
 
-    game_tabs = "".join(
-        f"<a class='filter-tab{' active' if key == game else ''}' href='/inventory?game={key}'>{escape(label)}</a>"
-        for key, label in [("all", "All"), *GAME_LABELS.items()]
-    ) + "<a class='filter-tab' href='/collectibles'>Collectibles</a>"
-    tabs_html = f"<div class='filter-tabs'>{game_tabs}</div>"
+    group_tabs = "".join(
+        f"<a class='filter-tab{' active' if key == group else ''}' href='/inventory?group={key}'>{escape(info['label'])}</a>"
+        for key, info in GAME_GROUPS.items()
+    ) + "<a class='filter-tab' href='/collectibles'>Collectibles</a>" + "<a class='filter-tab' href='/inventory/uncatalogued'>Misc</a>"
+    tabs_html = f"<div class='filter-tabs'>{group_tabs}</div>"
 
-    if game != "all":
-        owned = [row for row in owned if sets.get(row.set_id) and sets[row.set_id].game == game]
+    if group:
+        games = GAME_GROUPS[group]["games"]
+        owned = [row for row in owned if sets.get(row.set_id) and sets[row.set_id].game in games]
         if not owned:
             body = (
                 brand_header("Inventory")
                 + tabs_html
-                + f"<div class='panel'><p>Nothing owned yet in {escape(GAME_LABELS[game])}.</p></div>"
+                + f"<div class='panel'><p>Nothing owned yet in {escape(GAME_GROUPS[group]['label'])}.</p></div>"
             )
             return HTMLResponse(page("EzBay — Inventory", body))
         set_ids = {row.set_id for row in owned}
@@ -322,30 +340,6 @@ def inventory_sets(
             "</a>"
         )
 
-    # Holdings that still have no CatalogCard match at all -- no real
-    # catalogue entry exists for them (a personal-collection import with
-    # no clean match, a hand-catalogued Super Dragon Ball Heroes card
-    # cardotaku.com doesn't stock, ...). They can't be a set tile (no set
-    # to belong to), so they get one flat "Uncatalogued" tile per game
-    # instead, linking to a plain list rather than the per-set page.
-    uncatalogued_stmt = (
-        select(TcgCard.game, func.count(InventoryItem.id), func.sum(InventoryItem.quantity))
-        .join(InventoryItem, InventoryItem.catalog_item_id == TcgCard.catalog_item_id)
-        .where(InventoryItem.card_id.is_(None))
-        .group_by(TcgCard.game)
-    )
-    if game != "all":
-        uncatalogued_stmt = uncatalogued_stmt.where(TcgCard.game == game)
-    for row_game, count, qty in session.execute(uncatalogued_stmt).all():
-        tiles.append(
-            f"<a class='set-tile' href='/inventory/uncatalogued?game={escape(row_game)}'>"
-            "<div class='set-art'><span class='set-fallback'>Uncatalogued</span></div>"
-            f"<div class='set-name'>{escape(GAME_LABELS.get(row_game, row_game))} — uncatalogued</div>"
-            f"<div class='set-meta'>{count} holding(s), {qty or 0} total</div>"
-            "<div class='set-meta muted'>No catalogue match yet</div>"
-            "</a>"
-        )
-
     rate_note = "" if fx.is_live() else (
         "<p class='subtitle'>Values use an approximate AUD rate — live FX unavailable.</p>"
     )
@@ -379,26 +373,35 @@ def inventory_sets(
 
 @router.get("/uncatalogued", response_class=HTMLResponse)
 def inventory_uncatalogued(
-    game: str = Query(...),
+    group: str = Query(""),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
-    """Holdings for one game that have no CatalogCard match at all -- see
-    the tile in `inventory_sets` this links from. Read-only: there's no
-    catalogue entry to adjust a quantity against the way `/inventory/adjust`
-    does, so these are listed as-is (edit them from /personal-collection,
-    which works from CatalogItem/TcgCard directly, or the CLI).
+    """"Misc" -- every TCG-card holding with no CatalogCard match at all
+    (no reference photo, no set to build a tile from): a personal-collection
+    import with no clean catalogue hit, a hand-catalogued Super Dragon Ball
+    Heroes card cardotaku.com doesn't stock, .... Bare (no `group`) shows
+    every game at once, matching the Misc tab on /inventory.
+
+    Read-only: there's no catalogue entry to adjust a quantity against the
+    way /inventory/adjust does, so these are listed as-is (edit them from
+    /personal-collection, which works from CatalogItem/TcgCard directly,
+    or the CLI).
     """
-    rows = session.execute(
+    stmt = (
         select(InventoryItem, TcgCard, CatalogItem)
         .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
         .join(CatalogItem, CatalogItem.id == InventoryItem.catalog_item_id)
-        .where(InventoryItem.card_id.is_(None), TcgCard.game == game)
-        .order_by(CatalogItem.name)
-    ).all()
+        .where(InventoryItem.card_id.is_(None))
+        .order_by(TcgCard.game, CatalogItem.name)
+    )
+    if group in GAME_GROUPS:
+        stmt = stmt.where(TcgCard.game.in_(GAME_GROUPS[group]["games"]))
+    rows = session.execute(stmt).all()
 
     table_rows = "".join(
         "<tr>"
+        f"<td class='muted opt'>{escape(GAME_LABELS.get(tcg.game, tcg.game))}</td>"
         f"<td>{escape(item.name)}</td>"
         f"<td class='muted'>{escape(tcg.set_code or tcg.set_id or '—')}</td>"
         f"<td class='muted'>{escape(tcg.number or '—')}</td>"
@@ -408,18 +411,19 @@ def inventory_uncatalogued(
         f"<td class='muted opt'>{escape(inv.status.value if inv.status else '—')}</td>"
         "</tr>"
         for inv, tcg, item in rows
-    ) or "<tr><td colspan=7>Nothing here.</td></tr>"
+    ) or "<tr><td colspan=8>Nothing here.</td></tr>"
 
+    title = f"Misc — {GAME_GROUPS[group]['label']}" if group in GAME_GROUPS else "Misc"
     body = (
-        brand_header(f"Inventory — {escape(GAME_LABELS.get(game, game))} (uncatalogued)")
+        brand_header(f"Inventory — {escape(title)}")
         + f"<p class='subtitle'>{len(rows)} holding(s) with no catalogue entry to match them against yet — "
           "no reference photo, no set, no auto price. Edit these from "
           "<a href='/personal-collection'>Personal Collection</a> or the CLI.</p>"
         + "<div class='panel'><div class='table-wrap'><table><thead><tr>"
-        + "<th>Name</th><th>Set/code</th><th>Number</th><th class='opt'>Rarity</th>"
+        + "<th class='opt'>Game</th><th>Name</th><th>Set/code</th><th>Number</th><th class='opt'>Rarity</th>"
           "<th>Qty</th><th class='opt'>Condition</th><th class='opt'>Status</th>"
         + f"</tr></thead><tbody>{table_rows}</tbody></table></div></div>"
-        + f"<p><a class='btn ghost' href='/inventory?game={escape(game)}'>&larr; Back to Inventory</a></p>"
+        + "<p><a class='btn ghost' href='/inventory'>&larr; Back to Inventory</a></p>"
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Inventory", body))
