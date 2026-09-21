@@ -31,6 +31,7 @@ from .models import (
     CardPrice, CardSet, CatalogCard, CatalogItem, InventoryItem, InventoryStatus, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, TcgCard,
 )
+from .scan_ingest.games import GAME_LABELS
 from .shop_pricing import default_costs, price_floor
 from .ui import brand_header, page, pill
 
@@ -107,13 +108,6 @@ def _best_prices(session: Session, catalog_item_ids: list[str]) -> dict[str, Dec
         else:
             best[card_id] = observations[0][1]
     return best
-
-GAME_LABELS = {
-    "pokemon": "Pokémon",
-    "one_piece": "One Piece",
-    "dragon_ball_fusion_world": "Dragon Ball Super: Fusion World",
-}
-
 
 def _money(value) -> str:
     return "—" if value is None else f"${Decimal(str(value)):,.2f}"

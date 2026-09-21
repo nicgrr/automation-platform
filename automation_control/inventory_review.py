@@ -37,9 +37,10 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .images import serve_image, serve_thumb
-from .models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem
+from .models import CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, InventoryItem, TcgCard
 from .scan_ingest import fx
 from .scan_ingest.commit import _catalog_item_id_for
+from .scan_ingest.games import GAME_LABELS
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -200,14 +201,25 @@ def _edit_controls(set_id: str, card: CatalogCard, variant: CardVariant,
 def inventory_sets(
     request: Request,
     sort: str = Query("released"),
+    game: str = Query("all"),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     """Every set you own cards from, as tiles. Deliberately loads no card
     images: this is the "what do I have" view, and set artwork is a handful
-    of small cached logos rather than one scan per card."""
+    of small cached logos rather than one scan per card.
+
+    `game` narrows to one game's sets (Pokémon, One Piece, one of the
+    Dragon Ball games, ...) via CardSet.game -- see scan_ingest/games.py.
+    Non-card collectibles (Sonny Angels etc) aren't sets at all, so they
+    live on their own page; the game tab bar links out to /collectibles
+    for those rather than trying to fold two different shapes of "owned
+    stock" into one grid.
+    """
     if sort not in SET_SORTS:
         sort = "released"
+    if game not in GAME_LABELS:
+        game = "all"
 
     owned = session.execute(
         select(
@@ -229,6 +241,23 @@ def inventory_sets(
 
     set_ids = {row.set_id for row in owned}
     sets = {s.id: s for s in session.scalars(select(CardSet).where(CardSet.id.in_(set_ids)))}
+
+    game_tabs = "".join(
+        f"<a class='filter-tab{' active' if key == game else ''}' href='/inventory?game={key}'>{escape(label)}</a>"
+        for key, label in [("all", "All"), *GAME_LABELS.items()]
+    ) + "<a class='filter-tab' href='/collectibles'>Collectibles</a>"
+    tabs_html = f"<div class='filter-tabs'>{game_tabs}</div>"
+
+    if game != "all":
+        owned = [row for row in owned if sets.get(row.set_id) and sets[row.set_id].game == game]
+        if not owned:
+            body = (
+                brand_header("Inventory")
+                + tabs_html
+                + f"<div class='panel'><p>Nothing owned yet in {escape(GAME_LABELS[game])}.</p></div>"
+            )
+            return HTMLResponse(page("EzBay — Inventory", body))
+        set_ids = {row.set_id for row in owned}
 
     items = list(session.scalars(
         select(InventoryItem).join(CatalogCard, InventoryItem.card_id == CatalogCard.id)
@@ -293,6 +322,30 @@ def inventory_sets(
             "</a>"
         )
 
+    # Holdings that still have no CatalogCard match at all -- no real
+    # catalogue entry exists for them (a personal-collection import with
+    # no clean match, a hand-catalogued Super Dragon Ball Heroes card
+    # cardotaku.com doesn't stock, ...). They can't be a set tile (no set
+    # to belong to), so they get one flat "Uncatalogued" tile per game
+    # instead, linking to a plain list rather than the per-set page.
+    uncatalogued_stmt = (
+        select(TcgCard.game, func.count(InventoryItem.id), func.sum(InventoryItem.quantity))
+        .join(InventoryItem, InventoryItem.catalog_item_id == TcgCard.catalog_item_id)
+        .where(InventoryItem.card_id.is_(None))
+        .group_by(TcgCard.game)
+    )
+    if game != "all":
+        uncatalogued_stmt = uncatalogued_stmt.where(TcgCard.game == game)
+    for row_game, count, qty in session.execute(uncatalogued_stmt).all():
+        tiles.append(
+            f"<a class='set-tile' href='/inventory/uncatalogued?game={escape(row_game)}'>"
+            "<div class='set-art'><span class='set-fallback'>Uncatalogued</span></div>"
+            f"<div class='set-name'>{escape(GAME_LABELS.get(row_game, row_game))} — uncatalogued</div>"
+            f"<div class='set-meta'>{count} holding(s), {qty or 0} total</div>"
+            "<div class='set-meta muted'>No catalogue match yet</div>"
+            "</a>"
+        )
+
     rate_note = "" if fx.is_live() else (
         "<p class='subtitle'>Values use an approximate AUD rate — live FX unavailable.</p>"
     )
@@ -308,6 +361,7 @@ def inventory_sets(
 
     body = (
         brand_header("Inventory")
+        + tabs_html
         + rate_note
         + stat_grid
         + "<div class='toolbar'>"
@@ -317,6 +371,56 @@ def inventory_sets(
         + f"<div class='set-grid' id='set-grid'>{''.join(tiles)}</div>"
         + _STYLE
         + _SEARCH_SCRIPT
+    )
+    return HTMLResponse(page("EzBay — Inventory", body))
+
+
+# --- holdings with no catalogue match -------------------------------------
+
+@router.get("/uncatalogued", response_class=HTMLResponse)
+def inventory_uncatalogued(
+    game: str = Query(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    """Holdings for one game that have no CatalogCard match at all -- see
+    the tile in `inventory_sets` this links from. Read-only: there's no
+    catalogue entry to adjust a quantity against the way `/inventory/adjust`
+    does, so these are listed as-is (edit them from /personal-collection,
+    which works from CatalogItem/TcgCard directly, or the CLI).
+    """
+    rows = session.execute(
+        select(InventoryItem, TcgCard, CatalogItem)
+        .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
+        .join(CatalogItem, CatalogItem.id == InventoryItem.catalog_item_id)
+        .where(InventoryItem.card_id.is_(None), TcgCard.game == game)
+        .order_by(CatalogItem.name)
+    ).all()
+
+    table_rows = "".join(
+        "<tr>"
+        f"<td>{escape(item.name)}</td>"
+        f"<td class='muted'>{escape(tcg.set_code or tcg.set_id or '—')}</td>"
+        f"<td class='muted'>{escape(tcg.number or '—')}</td>"
+        f"<td class='muted opt'>{escape(tcg.rarity or '—')}</td>"
+        f"<td>{inv.quantity}</td>"
+        f"<td class='muted opt'>{escape(inv.condition or '—')}</td>"
+        f"<td class='muted opt'>{escape(inv.status.value if inv.status else '—')}</td>"
+        "</tr>"
+        for inv, tcg, item in rows
+    ) or "<tr><td colspan=7>Nothing here.</td></tr>"
+
+    body = (
+        brand_header(f"Inventory — {escape(GAME_LABELS.get(game, game))} (uncatalogued)")
+        + f"<p class='subtitle'>{len(rows)} holding(s) with no catalogue entry to match them against yet — "
+          "no reference photo, no set, no auto price. Edit these from "
+          "<a href='/personal-collection'>Personal Collection</a> or the CLI.</p>"
+        + "<div class='panel'><div class='table-wrap'><table><thead><tr>"
+        + "<th>Name</th><th>Set/code</th><th>Number</th><th class='opt'>Rarity</th>"
+          "<th>Qty</th><th class='opt'>Condition</th><th class='opt'>Status</th>"
+        + f"</tr></thead><tbody>{table_rows}</tbody></table></div></div>"
+        + f"<p><a class='btn ghost' href='/inventory?game={escape(game)}'>&larr; Back to Inventory</a></p>"
+        + _STYLE
     )
     return HTMLResponse(page("EzBay — Inventory", body))
 
@@ -632,6 +736,12 @@ def inventory_image(item_id: str, user: str = Depends(require_dashboard_user), s
 
 
 _STYLE = """<style>
+.filter-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.filter-tab{padding:7px 13px;border-radius:999px;font-size:13px;font-weight:600;
+  background:var(--surface-sunken);color:var(--text-dim)}
+.filter-tab.active{background:var(--accent);color:#fff}
+.muted{color:var(--text-dim);font-size:13px}
+@media (max-width:760px){.opt{display:none}}
 .toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:0 0 20px}
 .search-box{flex:1 1 240px;max-width:420px;background:var(--surface-sunken);border:1px solid var(--panel-border);
   border-radius:10px;padding:11px 14px;color:var(--text);font-size:14px}
