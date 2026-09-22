@@ -52,7 +52,7 @@ from html import escape
 from types import SimpleNamespace
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
@@ -76,6 +76,11 @@ REQUIRED_SETTINGS = (
 # The real template downloaded from Seller Hub -> Reports -> Uploads ->
 # Get template -- same file convert_to_ebay_template.py defaults to.
 TEMPLATE_PATH = "ebay-category-listing-template.csv"
+
+# One `sku` form field per checkbox on the page -- comfortably above the
+# real inventory this export handles (a few thousand active listings),
+# comfortably below "someone crafted a request to exhaust the server".
+MAX_EXPORT_FIELDS = 20000
 
 
 def _missing_settings(settings) -> list[str]:
@@ -231,6 +236,8 @@ def ebay_export_page(request: Request, error: str = "",
         )
         return HTMLResponse(page("EzBay — eBay bulk upload file", brand_header("eBay bulk upload file") + gate))
 
+    from scripts.export_ebay_bulk_listing import EBAY_FEE_MARKUP_PCT
+
     singles, lots, variation_groups, skipped = _build_populations(session, settings)
     single_groups = _group_by_set(singles)
 
@@ -247,6 +254,9 @@ def ebay_export_page(request: Request, error: str = "",
         f"<div class='value'>{sum(len(v) for v in variation_groups.values())}</div>"
         f"<div class='value-sub'>across {len(variation_groups)} set{'s' if len(variation_groups) != 1 else ''}</div></div>"
         "</div>"
+        f"<p class='subtitle'>Every Dragon Ball card, and every Pokémon card rarer than Uncommon, is priced "
+        f"{EBAY_FEE_MARKUP_PCT}% over market here to cover eBay's own cut -- "
+        "singles and variation groups both, wherever the card lands below.</p>"
     )
 
     singles_html = (
@@ -293,9 +303,9 @@ def _record(session: Session, user: str, correlation_id: str, outcome: str, deta
 
 
 @router.post("/ebay-export/build")
-def ebay_export_build(request: Request, sku: list[str] = Form(default=[]),
-                      user: str = Depends(require_dashboard_user),
-                      session: Session = Depends(get_session)) -> Response:
+async def ebay_export_build(request: Request,
+                            user: str = Depends(require_dashboard_user),
+                            session: Session = Depends(get_session)) -> Response:
     from scripts.convert_to_ebay_template import build_variation_group, convert_row, read_ebay_header
 
     settings = request.app.state.settings
@@ -305,7 +315,16 @@ def ebay_export_build(request: Request, sku: list[str] = Form(default=[]),
         _record(session, user, correlation_id, "failed", {"stage": "config", "missing": missing})
         return RedirectResponse(f"/ebay-export?error={quote('Missing config: ' + ', '.join(missing))}", status_code=303)
 
-    selected = set(sku)
+    # Not FastAPI's usual `sku: list[str] = Form(default=[])` -- that always
+    # calls request.form() with Starlette's hard default max_fields=1000
+    # (fastapi/routing.py, no way to raise it through the Form(...) marker),
+    # and one checkbox per card across 40 set listings is nowhere near a
+    # generous margin above that (1,954 cards hit "Too many fields" on a
+    # real submit, 2026-09-22). MAX_EXPORT_FIELDS is a real ceiling, not
+    # "unlimited", so a runaway form still fails loudly instead of the
+    # request body growing without bound.
+    form = await request.form(max_fields=MAX_EXPORT_FIELDS, max_files=0)
+    selected = set(form.getlist("sku"))
     if not selected:
         return RedirectResponse(f"/ebay-export?error={quote('Nothing selected -- tick at least one listing first.')}", status_code=303)
 

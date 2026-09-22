@@ -198,3 +198,29 @@ def test_ebay_export_is_reachable_from_the_nav(client):
 
     hrefs = [href for _, links, *_ in ADMIN_NAV for href, _ in links]
     assert "/ebay-export" in hrefs
+
+
+def test_build_handles_well_over_a_thousand_selected_skus(client, session):
+    """Real bug, 2026-09-22: FastAPI's usual `sku: list[str] = Form(...)`
+    parameter injection always calls request.form() with Starlette's hard
+    default max_fields=1000 (no way to raise it through the Form(...)
+    marker itself), and one checkbox per card across 40 real set listings
+    is nowhere near a safe margin under that -- 1,954 cards hit "Too many
+    fields" on a real submit. ebay_export_build now parses the form body
+    itself with a much higher max_fields instead."""
+    skus = []
+    for n in range(1200):
+        sku = f"sku-{n}"
+        _single(session, sku, f"Card {n} #{n}", number=str(n))
+        skus.append(sku)
+    session.commit()
+
+    resp = client.post("/ebay-export/build", data={"sku": skus})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    body = resp.content.decode("utf-8-sig")
+    # sku-N is each row's CustomLabel, unique per card -- unlike title/
+    # description (deliberately identical in _single, so they'd double-
+    # count in the raw text regardless of grouping).
+    assert "sku-0" in body
+    assert "sku-1199" in body

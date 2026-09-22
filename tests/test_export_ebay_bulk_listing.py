@@ -357,9 +357,14 @@ def test_single_set_logo_url_comes_from_the_cards_set(session):
 # 2026-09-22 ("every set becomes one listing"), independent of build_variation_rows
 # above (still cheap-commons-in-an-active-lot only, for whatever else uses it) --
 
-def _card(session, item_id: str, *, set_id: str, number: str, title: str, price: str, game: str = "pokemon"):
+def _card(session, item_id: str, *, set_id: str, number: str, title: str, price: str, game: str = "pokemon", rarity: str | None = "Common"):
+    # rarity defaults to "Common" -- the eBay-fee-markup tests below rely
+    # on that default meaning "not marked up" for a plain Pokemon card;
+    # the discount/no-discount tests above this section don't care about
+    # rarity at all, so the default keeps them unaffected by the markup
+    # feature added after they were written.
     session.add(CatalogItem(id=item_id, name=title, item_type=CatalogItemType.TCG_CARD, image_url="https://example.test/item.jpg"))
-    session.add(TcgCard(catalog_item_id=item_id, game=game, set_id=set_id, number=number))
+    session.add(TcgCard(catalog_item_id=item_id, game=game, set_id=set_id, number=number, rarity=rarity))
     session.add(ShopListing(catalog_item_id=item_id, title=title, price=Decimal(price), status=ShopListingStatus.ACTIVE))
 
 
@@ -408,6 +413,61 @@ def test_set_grouped_rows_ignores_bulk_lot_status_entirely(session):
 
     _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
     assert len(groups["No Lot Set"]) == 2
+
+
+# --- eBay fee markup: Dragon Ball (any rarity) + rare-or-better Pokemon --
+# Nic's request 2026-09-22, added to build_set_grouped_rows only --
+# build_single_rows itself keeps returning the real, unmodified price
+# (see the test right above this section, and build_single_rows' own
+# tests elsewhere in this file).
+
+def test_set_grouped_rows_marks_up_a_dragon_ball_card_regardless_of_rarity(session):
+    session.add(CardSet(id="dbsd-sdv11", name="Dragon Ball Super Divers SDV11"))
+    _card(session, "c1", set_id="dbsd-sdv11", number="1", title="Card A", price="4.02", game="dragon_ball_super_divers")
+    _card(session, "c2", set_id="dbsd-sdv11", number="2", title="Card B", price="3.08", game="dragon_ball_super_divers")
+    session.commit()
+
+    _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
+    by_title = {r["title"]: r["price"] for r in groups["Dragon Ball Super Divers SDV11"]}
+    assert by_title == {"Card A": "4.54", "Card B": "3.48"}  # +13%, rounded
+
+
+def test_set_grouped_rows_marks_up_a_rare_pokemon_card(session):
+    session.add(CardSet(id="sv3", name="Obsidian Flames"))
+    session.add(TcgCard(catalog_item_id="c1", game="pokemon", set_id="sv3", number="1", rarity="Rare"))
+    session.add(CatalogItem(id="c1", name="Rare Card", item_type=CatalogItemType.TCG_CARD, image_url="https://example.test/item.jpg"))
+    session.add(ShopListing(catalog_item_id="c1", title="Rare Card", price=Decimal("10.00"), status=ShopListingStatus.ACTIVE))
+    session.add(TcgCard(catalog_item_id="c2", game="pokemon", set_id="sv3", number="2", rarity="Rare"))
+    session.add(CatalogItem(id="c2", name="Rare Card 2", item_type=CatalogItemType.TCG_CARD, image_url="https://example.test/item.jpg"))
+    session.add(ShopListing(catalog_item_id="c2", title="Rare Card 2", price=Decimal("10.00"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
+    assert groups["Obsidian Flames"][0]["price"] == "11.30"  # +13% of $10.00
+
+
+def test_set_grouped_rows_does_not_mark_up_common_or_uncommon_pokemon(session):
+    session.add(CardSet(id="sv3", name="Obsidian Flames"))
+    for i, rarity in enumerate(["Common", "Uncommon"], start=1):
+        session.add(TcgCard(catalog_item_id=f"c{i}", game="pokemon", set_id="sv3", number=str(i), rarity=rarity))
+        session.add(CatalogItem(id=f"c{i}", name=f"Card {i}", item_type=CatalogItemType.TCG_CARD, image_url="https://example.test/item.jpg"))
+        session.add(ShopListing(catalog_item_id=f"c{i}", title=f"Card {i}", price=Decimal("2.00"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
+    assert {r["price"] for r in groups["Obsidian Flames"]} == {"2.00"}
+
+
+def test_markup_also_applies_to_a_single_not_a_group(session):
+    """A Dragon Ball card whose set has only 1 active listing (stays a
+    single, not a variation group) still gets the markup -- it's applied
+    to build_set_grouped_rows' whole row pool before the set-size split."""
+    session.add(CardSet(id="dbsd-sdv8", name="Dragon Ball Super Divers SDV8"))
+    _card(session, "c1", set_id="dbsd-sdv8", number="1", title="Lone Card", price="10.00", game="dragon_ball_super_divers")
+    session.commit()
+
+    singles, _groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
+    assert singles[0]["price"] == "11.30"
 
 
 def test_set_grouped_rows_includes_a_non_pokemon_set(session):

@@ -88,6 +88,41 @@ SINGLE_CARD_WEIGHT_GRAMS = 15
 
 FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total", "variant", "set_logo_url"]
 
+# Nic's request 2026-09-22: list Dragon Ball cards and rare-or-better
+# Pokemon cards 13% over market to cover eBay's own cut (matches eBay
+# AU's real final value fee for this category) rather than have a sale
+# net less than the card's actual market price. See
+# _needs_ebay_fee_markup/_apply_ebay_fee_markup, applied only in
+# build_set_grouped_rows -- build_single_rows itself keeps returning the
+# listing's real, unmodified price (its own tests assert that), since
+# other callers (the standalone CLI, personal_collection.py's price
+# lookups) shouldn't have this baked in silently.
+EBAY_FEE_MARKUP_PCT = Decimal("13")
+DRAGON_BALL_GAMES = {
+    "dragon_ball_fusion_world", "dragon_ball_super", "dragon_ball_z",
+    "dragon_ball_super_divers", "super_dragon_ball_heroes",
+}
+# Whatever a card's own game/rarity vocabulary calls "unremarkable" --
+# anything else (Rare, Double Rare, Secret Rare, Super Rare, blank/unknown
+# included as "not confirmed common" for a non-Pokemon game since that
+# game's TcgCard rows often have no rarity on file at all yet) is
+# "rare enough" to mark up.
+COMMON_TIER_RARITIES = {"common", "uncommon"}
+
+
+def _needs_ebay_fee_markup(row: dict) -> bool:
+    if row.get("game") in DRAGON_BALL_GAMES:
+        return True
+    return (row.get("rarity") or "").strip().lower() not in COMMON_TIER_RARITIES
+
+
+def _apply_ebay_fee_markup(rows: list[dict]) -> None:
+    """In place: every qualifying row's price goes up by EBAY_FEE_MARKUP_PCT."""
+    multiplier = Decimal("1") + EBAY_FEE_MARKUP_PCT / Decimal("100")
+    for row in rows:
+        if _needs_ebay_fee_markup(row):
+            row["price"] = f"{(Decimal(row['price']) * multiplier).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+
 
 def single_set_name(session, item: CatalogItem | None) -> str:
     if item is None:
@@ -261,12 +296,17 @@ def build_set_grouped_rows(session, *, status: ShopListingStatus, letter_policy:
 
     Returns (singles, variation_groups, skipped) -- variation_groups is
     {set_name: [row, ...]}, singles is every row whose set didn't reach
-    min_set_size. Every price is the listing's own real price: no
-    discount, matching Nic's explicit choice (2026-09-22) to keep full
-    market value once expensive cards are included in this grouping too.
+    min_set_size. Every price is the listing's own real price, EXCEPT a
+    Dragon Ball card or a rare-or-better Pokemon card, which gets
+    EBAY_FEE_MARKUP_PCT added on top of its full market value (see
+    _needs_ebay_fee_markup) -- both are Nic's explicit choices (2026-09-22):
+    full market value once expensive cards are included in this grouping
+    at all, and a fee-covering markup on the ones actually worth
+    protecting the margin on.
     """
     all_rows, skipped = build_single_rows(session, status=status, letter_policy=letter_policy,
                                           lot_overlap_max_price=None)
+    _apply_ebay_fee_markup(all_rows)
 
     by_set: dict[str, list[dict]] = {}
     for row in all_rows:
