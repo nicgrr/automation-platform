@@ -10,7 +10,7 @@ from automation_control import images, inventory_review
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
-from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem
+from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem, TcgCard
 
 # The inventory is organised set-first, behind a category picker: bare
 # /inventory is one tile per category (One Piece / Dragon Ball / Pokémon /
@@ -118,6 +118,40 @@ def test_category_landing_links_out_to_collectibles_and_misc(client, session):
     resp = client.get("/inventory")
     assert "href='/collectibles'" in resp.text
     assert "href='/inventory/uncatalogued'" in resp.text
+
+
+def _seed_uncatalogued(session, *, catalog_item_id="uncat-1", name="Uncatalogued Card", game="one_piece"):
+    """A card with no CatalogCard match at all -- game correctly set, but
+    nothing to build a set tile from (see inventory_uncatalogued)."""
+    session.add(CatalogItem(id=catalog_item_id, item_type=CatalogItemType.TCG_CARD, name=name))
+    session.add(TcgCard(catalog_item_id=catalog_item_id, game=game))
+    item = InventoryItem(catalog_item_id=catalog_item_id, card_id=None, variant=CardVariant.NORMAL, condition="Near Mint", quantity=1)
+    session.add(item)
+    session.commit()
+    return item
+
+
+def test_uncatalogued_holding_shows_a_tile_within_its_own_group(client, session):
+    """A card correctly filed under one game's TcgCard.game must not read
+    as misplaced just because it has no catalogue match -- it gets its
+    own tile on that game's group page, not only the cross-game Misc one."""
+    _seed(session, name="Dewott")  # a real Pokemon set/holding, unrelated
+    _seed_uncatalogued(session, name="Mystery One Piece Card", game="one_piece")
+
+    resp = client.get("/inventory?group=one_piece")
+    assert "/inventory/uncatalogued?group=one_piece" in resp.text
+    assert "One Piece — uncatalogued" in resp.text
+
+    # And it must not bleed into an unrelated group's page.
+    resp_pokemon = client.get("/inventory?group=pokemon")
+    assert "uncatalogued" not in resp_pokemon.text.lower()
+
+
+def test_group_with_only_uncatalogued_holdings_is_not_reported_empty(client, session):
+    _seed_uncatalogued(session, name="Mystery One Piece Card", game="one_piece")
+    resp = client.get("/inventory?group=one_piece")
+    assert "Nothing owned yet" not in resp.text
+    assert "/inventory/uncatalogued?group=one_piece" in resp.text
 
 
 def test_set_grid_totals_are_converted_to_aud(client, session):

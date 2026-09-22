@@ -266,12 +266,19 @@ def inventory_sets(
     ).all()
 
     if not owned:
-        body = (
-            brand_header("Inventory")
-            + "<div class='panel'><p>Nothing scanned yet. Press the scanner button and the "
-              "background service will do the rest.</p></div>"
-        )
-        return HTMLResponse(page("EzBay — Inventory", body))
+        # `owned` only ever covers card_id-linked holdings (real CardSet
+        # tiles); a holding with no catalogue match at all -- see
+        # inventory_uncatalogued -- would otherwise report "nothing
+        # scanned yet" even with real, correctly game-tagged stock sitting
+        # in Misc.
+        any_uncatalogued = session.scalar(select(InventoryItem.id).where(InventoryItem.card_id.is_(None)).limit(1))
+        if not any_uncatalogued:
+            body = (
+                brand_header("Inventory")
+                + "<div class='panel'><p>Nothing scanned yet. Press the scanner button and the "
+                  "background service will do the rest.</p></div>"
+            )
+            return HTMLResponse(page("EzBay — Inventory", body))
 
     set_ids = {row.set_id for row in owned}
     sets = {s.id: s for s in session.scalars(select(CardSet).where(CardSet.id.in_(set_ids)))}
@@ -299,7 +306,20 @@ def inventory_sets(
 
     games = GAME_GROUPS[group]["games"]
     owned = [row for row in owned if sets.get(row.set_id) and sets[row.set_id].game in games]
-    if not owned:
+
+    # Holdings in this group with no catalogue match at all -- no CardSet
+    # to build a tile from, so they never show up in `owned` above. Shown
+    # as one more tile here rather than only in the cross-game Misc bucket
+    # on the category landing page -- otherwise a card correctly filed
+    # under this game's TcgCard.game still reads as misplaced, sitting
+    # among every *other* game's uncatalogued cards instead of its own.
+    uncatalogued_count, uncatalogued_qty = session.execute(
+        select(func.count(InventoryItem.id), func.sum(InventoryItem.quantity))
+        .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
+        .where(InventoryItem.card_id.is_(None), TcgCard.game.in_(games))
+    ).one()
+
+    if not owned and not uncatalogued_count:
         body = (
             brand_header("Inventory")
             + "<p><a class='btn ghost' href='/inventory'>&larr; Categories</a></p>"
@@ -350,6 +370,16 @@ def inventory_sets(
             f"<div class='set-name'>{escape(name)}</div>"
             f"<div class='set-meta'>Progress: {row.distinct_cards}{'/' + str(printed) if printed else ''}</div>"
             f"<div class='set-meta'>Total Value: <strong>{_money(value_by_set.get(row.set_id))}</strong></div>"
+            "</a>"
+        )
+
+    if uncatalogued_count:
+        tiles.append(
+            f"<a class='set-tile' href='/inventory/uncatalogued?group={group}'>"
+            "<div class='set-art'><span class='set-fallback'>Uncatalogued</span></div>"
+            f"<div class='set-name'>{escape(GAME_GROUPS[group]['label'])} — uncatalogued</div>"
+            f"<div class='set-meta'>{uncatalogued_count} holding(s), {uncatalogued_qty or 0} total</div>"
+            "<div class='set-meta muted'>No catalogue match yet</div>"
             "</a>"
         )
 
