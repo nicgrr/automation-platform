@@ -3,26 +3,34 @@
 Was a single "Build & download" button that ran export_ebay_bulk_listing.py
 then convert_to_ebay_template.py blind and handed back a CSV with no way to
 see what was in it first, or leave anything out. This is the same two
-scripts' own row-building functions (build_single_rows/build_lot_rows/
-build_variation_rows, convert_row/build_variation_group), called directly
-in-process against the live database on every page load -- not a cached
-file, so what you see is always exactly what's in ShopListing/BulkLot right
-now -- with a checkbox per item so a listing can be left out of one export
-without touching its status in the database.
+scripts' own row-building functions (build_set_grouped_rows/build_lot_rows,
+convert_row/build_variation_group), called directly in-process against the
+live database on every page load -- not a cached file, so what you see is
+always exactly what's in ShopListing/BulkLot right now -- with a checkbox
+per item so a listing can be left out of one export without touching its
+status in the database.
 
 Three populations, one export:
-  - Singles       every active ShopListing not already covered by a Bulk
-                  Master lot for its set (see export_ebay_bulk_listing.py's
-                  lot-overlap exclusion)
+  - Singles       every active ShopListing whose set has fewer than
+                  MIN_SET_SIZE_FOR_VARIATION_LISTING active listings (see
+                  export_ebay_bulk_listing.py's build_set_grouped_rows)
   - Bulk Master lots   read-only here, not selectable -- eBay's condition
                   ID for category 183455 (Mixed Card Lots) is still
                   unverified (4000 confirmed *rejected* by a real upload,
                   see convert_to_ebay_template.py); shipping a lot row with
                   a placeholder condition ID would produce a file eBay
                   rejects, so this stays informational until that's found.
-  - Variation groups   the cheap commons *lot-covered rows exclude, grouped
-                  by set into one "pick your card" listing per set, exactly
-                  as build_variation_group produces (parent + child rows).
+  - Variation groups   every set that reached MIN_SET_SIZE_FOR_VARIATION_LISTING,
+                  grouped into one "pick your card" listing per set at each
+                  card's own real price, exactly as build_variation_group
+                  produces (parent + child rows). Nic's explicit request
+                  2026-09-22 ("every set becomes one listing", full market
+                  price, not just the cheap commons a Bulk Master lot
+                  already covers) -- replaced this page's earlier use of
+                  export_ebay_bulk_listing.build_variation_rows, which is
+                  still there unchanged for whatever else calls it (that
+                  population is price-capped and lot-gated on purpose, a
+                  different, earlier request -- see its own docstring).
 
 Selection is by SKU (ShopListing.id), submitted as repeated `sku=` form
 fields and re-applied against a *fresh* rebuild at submit time -- never
@@ -91,27 +99,35 @@ def _convert_args(settings) -> SimpleNamespace:
     )
 
 
+# Nic's own choice, 2026-09-22 (asked for "45 listings, one per set" then
+# picked this cutoff from 40/36/33-set options at 2/3/5 cards): a set with
+# at least this many active listings gets one "pick your card" variation
+# listing; anything smaller stays an individual single. See
+# build_set_grouped_rows -- this replaced the page's earlier use of
+# build_variation_rows (cheap-commons-in-an-active-lot only, unlimited
+# price ceiling here instead, at Nic's explicit choice of full market
+# price over discounting expensive cards the way Normals already were).
+MIN_SET_SIZE_FOR_VARIATION_LISTING = 2
+
+
 def _build_populations(session: Session, settings):
     """Fresh from the database every call -- see module docstring on why
     this never reads a cached file. Returns (singles, lots, variation_groups,
     skipped) where variation_groups is {set_name: [row, ...]} and skipped is
-    every skip reason from all three builders combined."""
-    from scripts.export_ebay_bulk_listing import build_lot_rows, build_single_rows, build_variation_rows
+    every skip reason from both builders combined."""
+    from scripts.export_ebay_bulk_listing import build_lot_rows, build_set_grouped_rows
 
     status = ShopListingStatus.ACTIVE
     letter = settings.ebay_letter_shipping_policy_name
     parcel = settings.ebay_parcel_shipping_policy_name
 
-    singles, skipped_s = build_single_rows(session, status=status, letter_policy=letter)
+    singles, groups, skipped_s = build_set_grouped_rows(
+        session, status=status, letter_policy=letter, min_set_size=MIN_SET_SIZE_FOR_VARIATION_LISTING,
+    )
     lots, skipped_l = build_lot_rows(session, status=status, lot_max_cards=20,
                                      letter_policy=letter, parcel_policy=parcel)
-    variation_candidates, skipped_v = build_variation_rows(session, status=status, letter_policy=letter)
 
-    groups: dict[str, list[dict]] = {}
-    for row in variation_candidates:
-        groups.setdefault(row["set_name"], []).append(row)
-
-    return singles, lots, groups, skipped_s + skipped_l + skipped_v
+    return singles, lots, groups, skipped_s + skipped_l
 
 
 def _group_by_set(rows: list[dict]) -> dict[str, list[dict]]:
@@ -257,8 +273,9 @@ def ebay_export_page(request: Request, error: str = "",
         + f" &middot; <button type='button' class='xlink' onclick=\"toggleAll('s', false)\">none</button></h3>{singles_html}</div>"
         + f"<div class='panel'><h3>Variation groups <button type='button' class='xlink' onclick=\"toggleAll('v', true)\">select all</button>"
         + f" &middot; <button type='button' class='xlink' onclick=\"toggleAll('v', false)\">none</button></h3>"
-          "<p class='subtitle'>Cheap commons already swept into a Bulk Master lot, offered instead as one "
-          "&quot;pick your card&quot; listing per set so a buyer can choose exactly which copy they want.</p>"
+          f"<p class='subtitle'>Every set with {MIN_SET_SIZE_FOR_VARIATION_LISTING}+ active listings, offered as one "
+          "&quot;pick your card&quot; listing so a buyer can choose exactly which copy they want, each at its own "
+          "real price. A set with fewer cards stays as individual Singles above instead.</p>"
         + f"{variation_html}</div>"
         + f"<div class='panel'><h3>Bulk Master lots</h3>{lots_html}</div>"
         + _skipped_html(skipped)

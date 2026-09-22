@@ -99,6 +99,25 @@ TYPE = "Trading Card"
 FRANCHISE = "Pokémon"
 MANUFACTURER = "The Pokémon Company"
 
+# Franchise/Manufacturer by TcgCard.game -- (row.get("game") is missing for
+# rows build_variation_rows produces, since that population is Pokemon-only
+# today; FRANCHISE/MANUFACTURER above stay the fallback for that case).
+# Only the Pokemon pair is confirmed against a real upload; the rest are
+# this app's best real-world answer (Bandai publishes every Dragon Ball
+# and One Piece card game) but haven't been upload-tested the way 4000/
+# 40001 above were -- verify with one test listing per game before a big
+# batch, same caution the module docstring already gives lot condition IDs.
+GAME_ITEM_SPECIFICS: dict[str, tuple[str, str]] = {
+    "pokemon": (FRANCHISE, MANUFACTURER),
+    "pokemon_japan": (FRANCHISE, MANUFACTURER),
+    "one_piece": ("One Piece", "Bandai"),
+    "dragon_ball_fusion_world": ("Dragon Ball", "Bandai"),
+    "dragon_ball_super": ("Dragon Ball", "Bandai"),
+    "dragon_ball_z": ("Dragon Ball", "Bandai"),
+    "dragon_ball_super_divers": ("Dragon Ball", "Bandai"),
+    "super_dragon_ball_heroes": ("Dragon Ball", "Bandai"),
+}
+
 # Verified against eBay's own category URLs (multiple independent listing
 # pages under each ID), not guessed: Toys & Hobbies > Collectible Card
 # Games > CCG Individual Cards is 183454, and its sibling > Mixed Card
@@ -131,6 +150,7 @@ def convert_row(row: dict, args) -> dict:
     is_lot = "bulk lot" in row["title"].lower()
     title = sanitize_title(row["title"])
     name, _, number = title.partition(" #")
+    franchise, manufacturer = GAME_ITEM_SPECIFICS.get(row.get("game") or "pokemon", (FRANCHISE, MANUFACTURER))
 
     out = {
         "*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8)": "Add",
@@ -139,8 +159,8 @@ def convert_row(row: dict, args) -> dict:
         "*Title": title[:80],
         "*ConditionID": args.lot_condition_id if is_lot else args.condition_id,
         "*C:Type": TYPE,
-        "*C:Franchise": FRANCHISE,
-        "*C:Manufacturer": MANUFACTURER,
+        "*C:Franchise": franchise,
+        "*C:Manufacturer": manufacturer,
         "PicURL": row["image_url"],
         "*Description": sanitize_title(row["description"]),
         "*Format": "FixedPrice",
@@ -190,18 +210,19 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     parent (Trait=Value1;Value2;...) and the one specific value that row
     is on each child (Trait=Value).
 
-    The trait is "MPN" and the value is "001/162 Pineco" (padded number /
-    set total, then name) -- matching a real, live, successful competitor
-    listing found and inspected on 2026-09-14 ("Force Collectables"'
-    Temporal Forces "Pick your card" listing), not our own first guess.
-    That first guess used "Card #" as the trait name with a bare number
-    as the value; "Card #" itself only avoided the *initial* failure
-    ("Card Number is not allowed as a variation specific" -- Card Number
-    is a required item specific in this category and can't double as the
-    variation trait), but told a buyer nothing useful in the picker. MPN
-    sidesteps the conflict entirely (it's a different item specific, not
-    competing with the required Card Number one) and is the field real
-    sellers in this category actually use.
+    The trait is "MPN" and the value is "001 - Pineco (N)" (padded number,
+    name, then an abbreviated printing tag) -- matching a real, live
+    competitor listing the user pointed to directly on 2026-09-21
+    (blitzkrieg1994's Vivid Voltage "Complete Your Master Set" listing,
+    values like "001 - Weedle (N)" / "001 - Weddle (RH)"). This replaced an
+    earlier "padded/total Name (Reverse Holo)" format inspected from a
+    different competitor ("Force Collectables") on 2026-09-14 -- dropping
+    the "/total" denominator and spelling out the printing in full both
+    made the value longer than this newer, live reference actually uses.
+    "Card #" as the trait name was rejected before either reference was
+    found ("Card Number is not allowed as a variation specific" -- Card
+    Number is a required item specific in this category and can't double
+    as the variation trait); MPN sidesteps that conflict entirely.
 
     A second card sharing the same printed number *and the same printing*
     is skipped, not included as a second variation with a colliding trait
@@ -209,13 +230,12 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     VariationSpecifics trait value" for exactly this (a reprint/alt-art
     sharing its base card's number). eBay's variation model has no room
     for two options with an identical trait value. A different printing of
-    the *same* number (Normal vs. Reverse Holo of card #148) is not this
-    case -- the printing is folded into the value itself ("148/162 Pineco
-    (Reverse Holo)"), which is also how a buyer is told which is which,
-    per the user's request that each option show whether it's normal or
-    foil. The skipped card stays real inventory, just not sold through
-    this listing; the returned skip reasons are what a caller reports so
-    it isn't silently dropped.
+    the *same* number (Normal vs. Reverse Holo of card #001) is not this
+    case -- the printing is folded into the value itself ("001 - Weedle
+    (RH)"), which is also how a buyer is told which is which. The skipped
+    card stays real inventory, just not sold through this listing; the
+    returned skip reasons are what a caller reports so it isn't silently
+    dropped.
 
     The parent's own picture is the set's logo (cards[0]["set_logo_url"],
     exported by export_ebay_bulk_listing.py), not one card's photo -- a
@@ -224,6 +244,13 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     that first card's photo only if the set has no logo on file.
     """
     VARIATION_TRAIT = "MPN"
+    # Matches the reference listing's own tags exactly (N/RH); a printing
+    # this app tracks that reference never shows gets a short tag in the
+    # same style rather than the full word, for consistency in the picker.
+    VARIANT_TAGS = {
+        "Normal": "N", "Reverse Holo": "RH", "Holo": "H",
+        "Pokeball Pattern": "PB", "Masterball Pattern": "MB",
+    }
     values: list[str] = []
     seen: set[tuple[str, str]] = set()
     child_rows = []
@@ -244,15 +271,14 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
         seen.add(key)
         set_total = (card.get("set_total") or "").strip()
         padded = number.zfill(len(set_total)) if set_total else number
-        # "001/162 Pineco (Reverse Holo)" -- bare "148" told a buyer
-        # nothing, and without the printing a buyer can't tell a Normal
-        # and a Reverse Holo of the same card apart in the picker. ; and |
-        # are eBay's own separators in this field, so real card text can't
-        # collide with them.
-        value = f"{padded}/{set_total} {child.get('C:Card Name', '')}".strip() if set_total else \
-            f"{padded} {child.get('C:Card Name', '')}".strip()
+        # "001 - Pineco (N)" -- bare "148" told a buyer nothing, and
+        # without the printing a buyer can't tell a Normal and a Reverse
+        # Holo of the same card apart in the picker. ; and | are eBay's
+        # own separators in this field, so real card text can't collide
+        # with them.
+        value = f"{padded} - {child.get('C:Card Name', '')}".strip()
         if variant:
-            value = f"{value} ({variant})"
+            value = f"{value} ({VARIANT_TAGS.get(variant, variant)})"
         value = value.replace(";", ",").replace("|", "-")
         values.append(value)
         child["Relationship"] = "Variation"
@@ -265,7 +291,7 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     parent = dict(child_rows[0])
     parent.update({
         "CustomLabel": _parent_sku(set_name),
-        "*Title": sanitize_title(f"{set_name} - pick your card")[:80],
+        "*Title": sanitize_title(f"{set_name} - Complete Your Master Set")[:80],
         "*Description": sanitize_title(
             f"Choose your card from {set_name}. Select a variation below to see its price and photo."
         ),

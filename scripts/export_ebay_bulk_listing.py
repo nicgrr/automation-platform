@@ -63,7 +63,7 @@ couldn't be fetched by eBay's own servers even if it were used.
 import argparse
 import csv
 import sys
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
 
@@ -169,10 +169,29 @@ def _lot_covered_set_ids(session, status: ShopListingStatus) -> set[str]:
     }
 
 
+def _is_pokemon_row(tcg: TcgCard | None) -> bool:
+    """convert_to_ebay_template.py's convert_row hardcodes Franchise=Pokémon
+    and Manufacturer=The Pokémon Company on every row it converts -- correct
+    for the vast majority of this shop's stock, but a real mislabeling risk
+    the day a different game's cards get catalogued too (TcgCard.game is
+    exactly the field that makes CatalogItem/TcgCard generic across games,
+    per that model's own docstring). A card with no TcgCard row at all
+    (a Collectible/Accessory/etc.) isn't Pokemon either -- this export is
+    singles-card-shaped, not a catalogue-wide one, so it's excluded the
+    same way a Dragon Ball or Chinese-market card now is."""
+    return tcg is not None and tcg.game == "pokemon"
+
+
 def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
                        lot_overlap_max_price: Decimal | None = Decimal("2")) -> tuple[list[dict], list[str]]:
     """Every single-card listing is one card per sale, so it's always
     letter-appropriate regardless of price -- no tiering needed here.
+
+    Any TCG card qualifies, not just Pokemon (fixed 2026-09-22 -- see
+    "game" in the row dict and convert_to_ebay_template.py's GAME_ITEM_SPECIFICS,
+    which is what actually reads it): a non-card catalogue item (a
+    Collectible/Accessory/etc, no TcgCard row at all) is still excluded,
+    since this export is singles-card-shaped, not catalogue-wide.
 
     `lot_overlap_max_price` guards against double-selling: build_bulk_lots.py
     sweeps cheap commons (<=$2 by its own default) into a set-wide lot
@@ -181,7 +200,10 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
     physical card the lot also promises -- listing it again individually
     risks selling it twice. A single priced above the threshold in that
     same set wasn't lot-eligible in the first place and is safe. Pass
-    None to disable the check entirely (e.g. if lots have been retired).
+    None to disable the check entirely (e.g. if lots have been retired, or
+    the caller is doing its own set-based grouping instead -- see
+    build_set_grouped_rows, which always passes None since it has its own,
+    unrelated notion of which cards belong together).
     """
     listings = session.scalars(
         select(ShopListing).where(ShopListing.status == status).order_by(ShopListing.title)
@@ -190,9 +212,13 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
 
     rows, skipped = [], []
     for listing in listings:
+        tcg = session.get(TcgCard, listing.catalog_item_id)
+        if tcg is None:
+            skipped.append(f"{listing.title} ({listing.id}) -- not a TCG card (no TcgCard row; "
+                           f"this export is card-shaped, not catalogue-wide)")
+            continue
         item = session.get(CatalogItem, listing.catalog_item_id)
         if lot_set_ids and listing.price <= lot_overlap_max_price:
-            tcg = session.get(TcgCard, listing.catalog_item_id)
             if tcg and tcg.set_id in lot_set_ids:
                 skipped.append(f"{listing.title} ({listing.id}) -- already covered by an active bulk lot for its set")
                 continue
@@ -216,12 +242,49 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
             "set_total": single_set_total(session, item),
             "variant": single_variant(session, listing),
             "set_logo_url": single_set_logo_url(session, item),
+            "game": tcg.game,
         })
     return rows, skipped
 
 
+def build_set_grouped_rows(session, *, status: ShopListingStatus, letter_policy: str,
+                            min_set_size: int = 2) -> tuple[list[dict], dict[str, list[dict]], list[str]]:
+    """Every active listing, grouped by set: a set with `min_set_size` or
+    more active listings becomes one "pick your card" variation listing
+    (see convert_to_ebay_template.py's build_variation_group), a smaller
+    set's cards stay individual singles. No price ceiling and no Bulk
+    Master lot dependency, unlike build_variation_rows -- Nic's own
+    request 2026-09-22 was "every set I own becomes one listing", not
+    just the cheap commons a lot already covers (that's still what
+    build_variation_rows is for -- this is a second, independent grouping
+    the /ebay-export page picks between, not a replacement for it).
+
+    Returns (singles, variation_groups, skipped) -- variation_groups is
+    {set_name: [row, ...]}, singles is every row whose set didn't reach
+    min_set_size. Every price is the listing's own real price: no
+    discount, matching Nic's explicit choice (2026-09-22) to keep full
+    market value once expensive cards are included in this grouping too.
+    """
+    all_rows, skipped = build_single_rows(session, status=status, letter_policy=letter_policy,
+                                          lot_overlap_max_price=None)
+
+    by_set: dict[str, list[dict]] = {}
+    for row in all_rows:
+        by_set.setdefault(row["set_name"] or "(no set)", []).append(row)
+
+    singles: list[dict] = []
+    variation_groups: dict[str, list[dict]] = {}
+    for set_name, rows in by_set.items():
+        if len(rows) >= min_set_size:
+            variation_groups[set_name] = rows
+        else:
+            singles.extend(rows)
+    return singles, variation_groups, skipped
+
+
 def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: str,
-                          max_price: Decimal = Decimal("2")) -> tuple[list[dict], list[str]]:
+                          max_price: Decimal = Decimal("2"),
+                          normal_discount_pct: Decimal = Decimal("40")) -> tuple[list[dict], list[str]]:
     """The exact inverse population of build_single_rows's lot-overlap
     exclusion: cheap commons whose set already has an active Bulk Master
     lot. Those are real, sellable cards -- today a buyer can only get one
@@ -235,16 +298,27 @@ def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: s
     grouped by set_name once read back) -- each row is still one real
     card with its own sku/price/quantity/photo, just destined to become a
     variation of a shared parent listing rather than its own listing.
+
+    `normal_discount_pct` knocks a percentage off the Normal (non-foil)
+    printing only, per the user's request (2026-09-21) after seeing a real
+    competitor listing price every card in a set flat at $1 regardless of
+    market value: individual market pricing stays for everything, but
+    Normals -- the least desirable printing, and the bulk of a set's
+    filler -- undercut a bit rather than sitting at full market alongside
+    the foils. Never applied to Reverse Holo/Holo/pattern printings.
     """
     listings = session.scalars(
         select(ShopListing).where(ShopListing.status == status, ShopListing.price <= max_price)
         .order_by(ShopListing.title)
     ).all()
     lot_set_ids = _lot_covered_set_ids(session, status)
+    discount_multiplier = Decimal("1") - normal_discount_pct / Decimal("100")
 
     rows, skipped = [], []
     for listing in listings:
         tcg = session.get(TcgCard, listing.catalog_item_id)
+        if not _is_pokemon_row(tcg):
+            continue  # see _is_pokemon_row -- this export hardcodes Franchise=Pokémon
         if not (tcg and tcg.set_id in lot_set_ids):
             continue  # not the lot-covered population this export targets
         item = session.get(CatalogItem, listing.catalog_item_id)
@@ -252,12 +326,16 @@ def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: s
         if not url:
             skipped.append(f"{listing.title} ({listing.id}) -- no publicly-hosted image on file")
             continue
+        variant = single_variant(session, listing)
+        price = listing.price
+        if variant == "Normal" and normal_discount_pct > 0:
+            price = (price * discount_multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         rows.append({
             "sku": listing.id,
             "title": listing.title,
             "description": listing.description or listing.title,
             "condition": listing.condition or "",
-            "price": f"{listing.price:.2f}",
+            "price": f"{price:.2f}",
             "currency": listing.currency,
             "quantity": listing.quantity,
             "weight_grams": SINGLE_CARD_WEIGHT_GRAMS,
@@ -266,7 +344,7 @@ def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: s
             "set_name": single_set_name(session, item),
             "rarity": single_rarity(session, item),
             "set_total": single_set_total(session, item),
-            "variant": single_variant(session, listing),
+            "variant": variant,
             "set_logo_url": single_set_logo_url(session, item),
         })
     return rows, skipped
@@ -322,6 +400,10 @@ def main(argv: list[str] | None = None) -> int:
                              "assumed to be the same physical cards the lot promises and is excluded to avoid "
                              "double-selling (default 2, matching build_bulk_lots.py's own default). Pass a "
                              "negative number to disable this check entirely.")
+    parser.add_argument("--normal-discount-pct", type=Decimal, default=Decimal("40"),
+                        help="with --variations, knock this percentage off the Normal (non-foil) printing's own "
+                             "market price only -- Reverse Holo/Holo/pattern printings are never discounted "
+                             "(default 40, i.e. Normals list at 60%% of market)")
     parser.add_argument("--out", default="ebay_bulk_listing.csv", help="output CSV path")
     parser.add_argument("--dry-run", action="store_true", help="print what would be exported, write nothing")
     args = parser.parse_args(argv)
@@ -339,7 +421,8 @@ def main(argv: list[str] | None = None) -> int:
         skipped: list[str] = []
         if args.variations:
             rows, skipped = build_variation_rows(session, status=status, letter_policy=args.letter_policy,
-                                                 max_price=args.lot_overlap_max_price)
+                                                 max_price=args.lot_overlap_max_price,
+                                                 normal_discount_pct=args.normal_discount_pct)
         else:
             if not args.lots_only:
                 overlap_price = args.lot_overlap_max_price if args.lot_overlap_max_price >= 0 else None

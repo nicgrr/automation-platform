@@ -7,6 +7,36 @@ from scripts.convert_to_ebay_template import (
 )
 
 
+# --- Franchise/Manufacturer by game (fixed 2026-09-22 -- was hardcoded
+# Pokémon on every row, which would have mislabeled a Dragon Ball card) --
+
+def test_a_pokemon_row_gets_pokemon_franchise():
+    out = convert_row(_row(game="pokemon"), _args())
+    assert out["*C:Franchise"] == "Pokémon"
+    assert out["*C:Manufacturer"] == "The Pokémon Company"
+
+
+def test_a_dragon_ball_row_gets_dragon_ball_franchise_not_pokemon():
+    out = convert_row(_row(game="dragon_ball_super_divers"), _args())
+    assert out["*C:Franchise"] == "Dragon Ball"
+    assert out["*C:Manufacturer"] == "Bandai"
+
+
+def test_a_one_piece_row_gets_one_piece_franchise():
+    out = convert_row(_row(game="one_piece"), _args())
+    assert out["*C:Franchise"] == "One Piece"
+    assert out["*C:Manufacturer"] == "Bandai"
+
+
+def test_a_row_with_no_game_field_falls_back_to_pokemon():
+    """build_variation_rows' own rows don't carry "game" (that population
+    is Pokemon-only) -- must not KeyError, and must default correctly."""
+    row = _row()
+    assert "game" not in row
+    out = convert_row(row, _args())
+    assert out["*C:Franchise"] == "Pokémon"
+
+
 def _args(**overrides):
     base = dict(condition_id="4000", lot_condition_id="1000", location="Sydney NSW", dispatch_days="1",
                 payment_policy="Payments", return_policy="Returns")
@@ -208,7 +238,7 @@ def test_the_parent_row_has_no_relationship_and_lists_every_value():
     rows, _ = build_variation_group("Obsidian Flames", _cards(4, 21, 63), _args())
     parent = rows[0]
     assert parent["Relationship"] == ""
-    assert parent["RelationshipDetails"] == "MPN=04/99 Card4;21/99 Card21;63/99 Card63"
+    assert parent["RelationshipDetails"] == "MPN=04 - Card4;21 - Card21;63 - Card63"
     assert parent["*Quantity"] == ""
     assert parent["*StartPrice"] == ""
     assert parent["C:Card Name"] == ""
@@ -222,23 +252,23 @@ def test_each_child_row_is_marked_variation_with_its_own_value_and_price():
     nothing useful in the picker."""
     rows, _ = build_variation_group("Obsidian Flames", _cards(4, 21), _args())
     children = rows[1:]
-    assert {c["RelationshipDetails"] for c in children} == {"MPN=04/99 Card4", "MPN=21/99 Card21"}
+    assert {c["RelationshipDetails"] for c in children} == {"MPN=04 - Card4", "MPN=21 - Card21"}
     for c in children:
         assert c["Relationship"] == "Variation"
     prices = {c["RelationshipDetails"]: c["*StartPrice"] for c in children}
-    assert prices["MPN=04/99 Card4"] == "4.00"
-    assert prices["MPN=21/99 Card21"] == "21.00"
+    assert prices["MPN=04 - Card4"] == "4.00"
+    assert prices["MPN=21 - Card21"] == "21.00"
 
 
 def test_the_padding_matches_the_sets_own_digit_width():
     rows, _ = build_variation_group("Obsidian Flames", _cards(4, set_total="8"), _args())
-    assert rows[1]["RelationshipDetails"] == "MPN=4/8 Card4"
+    assert rows[1]["RelationshipDetails"] == "MPN=4 - Card4"
 
 
 def test_the_parent_gets_a_pick_your_card_title_and_the_sets_own_category_id():
     rows, _ = build_variation_group("Obsidian Flames", _cards(4), _args())
     parent = rows[0]
-    assert parent["*Title"] == "Obsidian Flames - pick your card"
+    assert parent["*Title"] == "Obsidian Flames - Complete Your Master Set"
     assert parent["*Category"] == SINGLE_CATEGORY_ID
     assert parent["CustomLabel"] == "set-variation-obsidian-flames"
 
@@ -248,7 +278,7 @@ def test_a_card_with_no_readable_number_is_skipped_not_a_broken_variation():
     rows, skipped = build_variation_group("Obsidian Flames", cards, _args())
     # only the one real card became a variation; the other contributed nothing
     assert len(rows) == 2
-    assert rows[1]["RelationshipDetails"] == "MPN=04/99 Card4"
+    assert rows[1]["RelationshipDetails"] == "MPN=04 - Card4"
     assert "No Number Card" in skipped[0]
 
 
@@ -310,7 +340,7 @@ def test_the_variant_is_appended_to_the_variation_value():
     value is the only label eBay shows there."""
     cards = [_row(sku="sku-4", title="Card4 #4", price="4.00", set_total="99", variant="Reverse Holo")]
     rows, _ = build_variation_group("Obsidian Flames", cards, _args())
-    assert rows[1]["RelationshipDetails"] == "MPN=04/99 Card4 (Reverse Holo)"
+    assert rows[1]["RelationshipDetails"] == "MPN=04 - Card4 (RH)"
 
 
 def test_two_different_printings_of_the_same_number_are_both_included():
@@ -326,7 +356,7 @@ def test_two_different_printings_of_the_same_number_are_both_included():
     assert skipped == []
     children = rows[1:]
     assert {c["RelationshipDetails"] for c in children} == {
-        "MPN=04/99 Card4 (Normal)", "MPN=04/99 Card4 (Reverse Holo)",
+        "MPN=04 - Card4 (N)", "MPN=04 - Card4 (RH)",
     }
 
 
