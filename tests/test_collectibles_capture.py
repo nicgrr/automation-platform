@@ -105,6 +105,39 @@ def test_capture_ai_failure_still_creates_row_for_manual_entry(client, session):
     assert capture.status == CardCaptureStatus.PENDING_REVIEW
 
 
+def test_capture_db_failure_returns_a_controlled_error_not_a_crash(client, session):
+    """Same failure mode as accessories.py, same fix: an AI-call failure is
+    already caught cleanly, but the fallback row it produces can still hit
+    its own DB error on commit, and until now that second failure went
+    uncaught -- a raw 500 with nothing in the audit log, and a session left
+    dead for every request after it."""
+    with patch("automation_control.collectibles.extract_collectible_details", return_value=[]), \
+         patch.object(session, "commit", side_effect=Exception("database is locked")):
+        resp = client.post("/collectibles/capture", files=_upload(), follow_redirects=False)
+
+    assert resp.status_code == 500
+    assert "failed to save this capture" in resp.json()["detail"]
+    assert session.query(CapturedCollectible).count() == 0
+
+    with patch("automation_control.collectibles.extract_collectible_details", return_value=[]):
+        resp2 = client.post("/collectibles/capture", files=_upload(), follow_redirects=False)
+    assert resp2.status_code == 303
+
+
+def test_capture_records_the_real_failure_reason_in_the_audit_log(client, session):
+    from sqlalchemy import select
+    from automation_control.models import AuditEvent
+
+    with patch("automation_control.collectibles.extract_collectible_details", side_effect=RuntimeError("boom")):
+        client.post("/collectibles/capture", files=_upload(), follow_redirects=False)
+
+    event = session.scalars(
+        select(AuditEvent).where(AuditEvent.action == "collectible.capture")
+    ).one()
+    assert event.outcome == "failed"
+    assert event.details == {"error": "boom"}
+
+
 def test_capture_multiple_figures_creates_multiple_rows(client, session):
     figures = [
         ExtractedCollectible(brand="Sonny Angel", series="Fruits", character="Peach", variant="", is_secret=False, blind_box_series="", unreadable_fields=[]),
@@ -443,7 +476,7 @@ def _row_order(body: str, names: list[str]) -> list[str]:
 
 def test_list_shows_ebay_low_and_median(client, session):
     _collectible(session, "Fruit Secret", low=60.60, median=421.09)
-    body = client.get("/collectibles").text
+    body = client.get("/collectibles?show=all").text
     assert "$60.60" in body and "$421.09" in body
     assert "eBay low" in body and "eBay median" in body
 
@@ -461,7 +494,7 @@ def test_sort_by_ebay_price_descending(client, session):
     _collectible(session, "Cheap One", median=20.00)
     _collectible(session, "Dear One", median=400.00)
     _collectible(session, "Middle One", median=90.00)
-    body = client.get("/collectibles?sort=ebay_desc").text
+    body = client.get("/collectibles?show=all&sort=ebay_desc").text
     assert _row_order(body, ["Dear One", "Middle One", "Cheap One"]) == [
         "Dear One", "Middle One", "Cheap One"]
 
@@ -469,7 +502,7 @@ def test_sort_by_ebay_price_descending(client, session):
 def test_sort_by_ebay_price_ascending(client, session):
     _collectible(session, "Cheap One", median=20.00)
     _collectible(session, "Dear One", median=400.00)
-    body = client.get("/collectibles?sort=ebay_asc").text
+    body = client.get("/collectibles?show=all&sort=ebay_asc").text
     assert _row_order(body, ["Cheap One", "Dear One"]) == ["Cheap One", "Dear One"]
 
 
@@ -478,7 +511,7 @@ def test_unpriced_items_sort_last_not_as_zero(client, session):
     of "low to high", burying the ones you can actually act on."""
     _collectible(session, "Unpriced One")
     _collectible(session, "Cheap One", median=20.00)
-    body = client.get("/collectibles?sort=ebay_asc").text
+    body = client.get("/collectibles?show=all&sort=ebay_asc").text
     assert _row_order(body, ["Cheap One", "Unpriced One"]) == ["Cheap One", "Unpriced One"]
 
 
@@ -489,10 +522,64 @@ def test_sort_by_most_owned(client, session):
     assert _row_order(body, ["Five Copies", "One Copy"]) == ["Five Copies", "One Copy"]
 
 
+def test_default_view_shows_only_owned_figures(client, session):
+    """Nic: "just have my items that I own" -- the default landing view,
+    not a filter you have to apply."""
+    _collectible(session, "Not Owned Yet", owned=0)
+    _collectible(session, "Owned One", owned=1)
+    body = client.get("/collectibles").text
+    assert "Owned One" in body
+    assert "Not Owned Yet" not in body
+
+
+def test_show_all_still_reaches_the_full_catalogue(client, session):
+    _collectible(session, "Not Owned Yet", owned=0)
+    body = client.get("/collectibles?show=all").text
+    assert "Not Owned Yet" in body
+
+
+def test_owned_figure_with_a_photo_shows_a_thumbnail(client, session, tmp_path):
+    from PIL import Image
+
+    from automation_control.models import InventoryItem
+
+    photo_path = tmp_path / "figure.jpg"
+    Image.new("RGB", (400, 400), (10, 20, 30)).save(photo_path, "JPEG")
+    item_id = _collectible(session, "Photographed Figure", owned=1)
+    item = session.query(InventoryItem).filter_by(catalog_item_id=item_id).one()
+    item.scan_image_path = str(photo_path)
+    session.commit()
+
+    body = client.get("/collectibles").text
+    assert f"/collectibles/thumb/{item.id}" in body
+
+    thumb = client.get(f"/collectibles/thumb/{item.id}")
+    assert thumb.status_code == 200
+
+
+def test_owned_figure_with_no_photo_falls_back_to_text(client, session):
+    _collectible(session, "No Photo Figure", owned=1)
+    body = client.get("/collectibles").text
+    assert "No Photo Figure" in body
+    assert "/collectibles/thumb/" not in body
+
+
+def test_thumb_404s_for_an_item_with_no_photo(client, session):
+    from automation_control.models import InventoryItem
+
+    item_id = _collectible(session, "No Photo Figure", owned=1)
+    item = session.query(InventoryItem).filter_by(catalog_item_id=item_id).one()
+    assert client.get(f"/collectibles/thumb/{item.id}").status_code == 404
+
+
+def test_thumb_404s_for_an_unknown_item(client):
+    assert client.get("/collectibles/thumb/does-not-exist").status_code == 404
+
+
 def test_secrets_first_sort(client, session):
     _collectible(session, "Regular Figure", secret=False)
     _collectible(session, "Secret Figure", secret=True)
-    body = client.get("/collectibles?sort=secret_first").text
+    body = client.get("/collectibles?show=all&sort=secret_first").text
     assert _row_order(body, ["Secret Figure", "Regular Figure"]) == [
         "Secret Figure", "Regular Figure"]
 
@@ -500,7 +587,7 @@ def test_secrets_first_sort(client, session):
 def test_filter_by_brand(client, session):
     _collectible(session, "Angel Figure", brand="Sonny Angel")
     _collectible(session, "Smiski Figure", brand="Smiski")
-    body = client.get("/collectibles?brand=Smiski").text
+    body = client.get("/collectibles?show=all&brand=Smiski").text
     assert "Smiski Figure" in body
     assert "Angel Figure" not in body
 
@@ -508,7 +595,7 @@ def test_filter_by_brand(client, session):
 def test_filter_to_secrets_only(client, session):
     _collectible(session, "Regular Figure", secret=False)
     _collectible(session, "Secret Figure", secret=True)
-    body = client.get("/collectibles?secret_only=1").text
+    body = client.get("/collectibles?show=all&secret_only=1").text
     assert "Secret Figure" in body
     assert "Regular Figure" not in body
 
@@ -516,7 +603,7 @@ def test_filter_to_secrets_only(client, session):
 def test_an_unknown_sort_falls_back_to_name(client, session):
     _collectible(session, "Alpha")
     _collectible(session, "Beta")
-    body = client.get("/collectibles?sort=nonsense").text
+    body = client.get("/collectibles?show=all&sort=nonsense").text
     assert _row_order(body, ["Alpha", "Beta"]) == ["Alpha", "Beta"]
 
 
@@ -536,7 +623,7 @@ def test_the_newest_ebay_price_wins(client, session):
                           price=Decimal("250.00"), currency="AUD"))
     session.commit()
 
-    body = client.get("/collectibles").text
+    body = client.get("/collectibles?show=all").text
     assert "$250.00" in body
     assert "$100.00" not in body
 

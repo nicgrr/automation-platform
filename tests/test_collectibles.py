@@ -34,7 +34,11 @@ def test_add_a_secret_figure_and_list_it(client):
     )
     assert create.status_code == 303
 
-    listing = client.get("/collectibles")
+    # No quantity given in the POST -- create_collectible defaults it to
+    # 0 (Form("0")), so this is a catalogue entry, not an owned one; the
+    # default /collectibles view only shows what's owned (see its
+    # docstring), so the full catalogue is what this checks.
+    listing = client.get("/collectibles?show=all")
     assert "Sonny Angel Fruits Series - Secret Pineapple" in listing.text
     assert "secret" in listing.text
     assert "$18.00" in listing.text
@@ -42,7 +46,7 @@ def test_add_a_secret_figure_and_list_it(client):
 
 def test_a_non_secret_figure_shows_no_secret_badge(client):
     client.post("/collectibles", data={"name": "Smiski Bathroom Series", "brand": "Smiski", "series": "", "character": "", "variant": "", "blind_box_series": "", "is_secret": "", "retail_price": ""}, follow_redirects=False)
-    listing = client.get("/collectibles")
+    listing = client.get("/collectibles?show=all")  # quantity omitted -> not owned, catalogue-only
     assert "Smiski Bathroom Series" in listing.text
 
 
@@ -66,7 +70,7 @@ def test_adding_with_a_quantity_creates_an_inventory_item(client, session):
     assert item.catalog_item_id is not None
 
     listing = client.get("/collectibles")
-    assert ">3<" in listing.text
+    assert "Qty: 3" in listing.text
 
 
 def test_adding_with_no_quantity_creates_no_inventory_item(client, session):
@@ -77,5 +81,7 @@ def test_adding_with_no_quantity_creates_no_inventory_item(client, session):
         follow_redirects=False,
     )
     assert session.query(InventoryItem).count() == 0
-    listing = client.get("/collectibles")
-    assert ">0<" in listing.text
+    # Not owned (no InventoryItem row), so it's on the full catalogue, not
+    # the default owned-only view.
+    listing = client.get("/collectibles?show=all")
+    assert "Smiski Bathroom Series" in listing.text

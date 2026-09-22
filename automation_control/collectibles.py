@@ -32,7 +32,7 @@ from .card_recognition import extract_collectible_details
 from .config import get_settings
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card, remove_background
-from .images import serve_image
+from .images import serve_image, serve_thumb
 from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .reverse_image_search import ReverseImageSearchError, search_image
 from . import vocabulary
@@ -98,11 +98,141 @@ def collectibles_page(
     sort: str = Query("name"),
     brand: str = Query(""),
     secret_only: str = Query(""),
+    show: str = Query("owned"),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
+    """Owned figures as photo tiles by default -- "just have my items that
+    I own and its photos" (Nic, after the old catalogue-first table showed
+    every possible figure, owned or not, as a dense text row with no
+    picture). `show=all` switches to the full catalogue table underneath
+    it -- e.g. to see what a series' secret variant looks like before you
+    own it -- without that being the thing you land on.
+    """
     sort_key = sort if sort in COLLECTIBLE_SORTS else "name"
+    show_all = show == "all"
 
+    if show_all:
+        return _collectibles_catalogue_page(session, sort_key, brand, secret_only)
+
+    stmt = (
+        select(InventoryItem, CatalogItem, CollectibleProduct)
+        .join(CatalogItem, CatalogItem.id == InventoryItem.catalog_item_id)
+        .join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id)
+        .where(InventoryItem.quantity > 0)
+    )
+    if brand.strip():
+        stmt = stmt.where(CollectibleProduct.brand.ilike(f"%{brand.strip()}%"))
+    if secret_only:
+        stmt = stmt.where(CollectibleProduct.is_secret.is_(True))
+    rows = session.execute(stmt).all()
+
+    prices = _ebay_prices(session, {item.id for _, item, _ in rows})
+
+    def low_of(item_id: str) -> float | None:
+        row = prices.get(item_id, {}).get(EBAY_LOW)
+        return float(row.price) if row else None
+
+    def median_of(item_id: str) -> float | None:
+        row = prices.get(item_id, {}).get(EBAY_MEDIAN)
+        return float(row.price) if row else None
+
+    def price_key(triple, reverse: bool):
+        value = median_of(triple[1].id)
+        missing = 1  # always last
+        if value is None:
+            return (missing, 0.0)
+        return (0, -value if reverse else value)
+
+    orders = {
+        "name": lambda r: sorted(r, key=lambda t: t[1].name.lower()),
+        "brand": lambda r: sorted(r, key=lambda t: ((t[2].brand or "~").lower(), t[1].name.lower())),
+        "series": lambda r: sorted(r, key=lambda t: ((t[2].series or "~").lower(), t[1].name.lower())),
+        "owned_desc": lambda r: sorted(r, key=lambda t: (-(t[0].quantity or 0), t[1].name.lower())),
+        "secret_first": lambda r: sorted(r, key=lambda t: (not t[2].is_secret, t[1].name.lower())),
+        "ebay_desc": lambda r: sorted(r, key=lambda t: price_key(t, reverse=True)),
+        "ebay_asc": lambda r: sorted(r, key=lambda t: price_key(t, reverse=False)),
+    }
+    rows = orders[sort_key](rows)
+
+    def money(value: float | None) -> str:
+        return "&mdash;" if value is None else f"${value:,.2f}"
+
+    tiles = []
+    for inv, item, cp in rows:
+        art = (
+            f"<img src='/collectibles/thumb/{escape(inv.id)}' alt='' loading='lazy' decoding='async'>"
+            if inv.scan_image_path else f"<span class='set-fallback'>{escape(item.name)}</span>"
+        )
+        meta_bits = [b for b in (cp.brand, cp.series) if b]
+        tiles.append(
+            "<div class='set-tile'>"
+            f"<div class='set-art'>{art}{pill('secret', 'warn') if cp.is_secret else ''}</div>"
+            f"<div class='set-name'>{escape(item.name)}</div>"
+            f"<div class='set-meta'>{escape(' · '.join(meta_bits)) or '&mdash;'}</div>"
+            f"<div class='set-meta'>Qty: {inv.quantity} &middot; eBay median: <strong>{money(median_of(item.id))}</strong></div>"
+            "</div>"
+        )
+
+    priced_count = sum(1 for _, item, _ in rows if median_of(item.id) is not None)
+    filters = (
+        "<form class='panel filters' method='get' action='/collectibles'>"
+        f"<label class='field'>Brand<input name='brand' value='{escape(brand)}' placeholder='Sonny Angel…'></label>"
+        f"<label class='field'>Sort<select name='sort'>"
+        + "".join(
+            f"<option value='{escape(k)}'{' selected' if k == sort_key else ''}>{escape(v)}</option>"
+            for k, v in COLLECTIBLE_SORTS.items()
+        )
+        + "</select></label>"
+        f"<label class='field checkbox'><input type='checkbox' name='secret_only' value='1'"
+        f"{' checked' if secret_only else ''}> Secrets only</label>"
+        "<button type='submit'>Apply</button>"
+        "<a class='btn ghost' href='/collectibles'>Reset</a>"
+        "</form>"
+    )
+
+    grid = (
+        f"<p class='subtitle'>{len(rows)} owned &middot; {priced_count} with an eBay price. "
+        "<a href='/collectibles?show=all'>Show the full catalogue</a> (including ones you don't own yet).</p>"
+        + f"<div class='set-grid'>{''.join(tiles) or '<p class=muted>No owned collectibles match those filters.</p>'}</div>"
+        + "<p class='muted' style='margin:14px 0 0;font-size:12.5px'>eBay figures are "
+        "<strong>active listing</strong> asking prices, not completed sales &mdash; an upper "
+        "bound, not a valuation.</p>"
+    )
+
+    form = (
+        "<div class='panel'><h2>Add a collectible</h2>"
+        "<form method='post' action='/collectibles' class='calc-form'>"
+        "<label>Name<input name='name' required placeholder='Sonny Angel Fruits Series - Peach'></label>"
+        "<label>Brand<input name='brand' placeholder='Sonny Angel, Smiski, ...'></label>"
+        "<label>Series<input name='series'></label>"
+        "<label>Character<input name='character'></label>"
+        "<label>Variant<input name='variant'></label>"
+        "<label>Blind box series<input name='blind_box_series'></label>"
+        "<label><input name='is_secret' type='checkbox' value='true' style='width:auto'> Secret / chase figure</label>"
+        "<label>Retail price<input name='retail_price' type='number' step='0.01'></label>"
+        # Defaults to 1, matching the review form. At 0 no InventoryItem is
+        # created at all, and list_for_sale only sees quantity > 0 -- so the
+        # old default of 0 silently produced a catalogue entry that could
+        # never be listed. 22 collectibles were in that state.
+        "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='1'></label>"
+        "<button type='submit'>Add</button></form></div>"
+    )
+    pending_count = len(session.scalars(select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)).all())
+    body = (
+        brand_header("Collectibles")
+        + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
+          f"<a href='/collectibles/review'>Review queue ({pending_count})</a> &nbsp; "
+          f"<a href='/collectibles/identify'>Identify from a link</a></p></div>"
+        + filters + grid + form + _COLLECTIBLE_LIST_STYLE + _STYLE
+    )
+    return HTMLResponse(page("EzBay — Collectibles", body))
+
+
+def _collectibles_catalogue_page(session: Session, sort_key: str, brand: str, secret_only: str) -> HTMLResponse:
+    """The old table view, every catalogued figure whether owned or not --
+    kept one click away (?show=all) for checking what a variant looks like
+    before you own it, rather than removed outright."""
     stmt = (
         select(CatalogItem, CollectibleProduct)
         .join(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id)
@@ -127,13 +257,9 @@ def collectibles_page(
         row = prices.get(item_id, {}).get(EBAY_MEDIAN)
         return float(row.price) if row else None
 
-    # Sorted in Python rather than SQL: the eBay figure is assembled from
-    # the price history above, so it isn't a column to ORDER BY. Unpriced
-    # items sort last in both directions rather than counting as zero,
-    # which would put every unpriced figure at the top of "low to high".
     def price_key(pair, reverse: bool):
         value = median_of(pair[0].id)
-        missing = 1  # always last
+        missing = 1
         if value is None:
             return (missing, 0.0)
         return (0, -value if reverse else value)
@@ -170,6 +296,7 @@ def collectibles_page(
     priced_count = sum(1 for item, _ in rows if median_of(item.id) is not None)
     filters = (
         "<form class='panel filters' method='get' action='/collectibles'>"
+        "<input type='hidden' name='show' value='all'>"
         f"<label class='field'>Brand<input name='brand' value='{escape(brand)}' placeholder='Sonny Angel…'></label>"
         f"<label class='field'>Sort<select name='sort'>"
         + "".join(
@@ -180,12 +307,13 @@ def collectibles_page(
         f"<label class='field checkbox'><input type='checkbox' name='secret_only' value='1'"
         f"{' checked' if secret_only else ''}> Secrets only</label>"
         "<button type='submit'>Apply</button>"
-        "<a class='btn ghost' href='/collectibles'>Reset</a>"
+        "<a class='btn ghost' href='/collectibles?show=all'>Reset</a>"
         "</form>"
     )
 
     table = (
-        f"<p class='subtitle'>{len(rows)} catalogued · {priced_count} with an eBay price.</p>"
+        f"<p class='subtitle'>{len(rows)} catalogued · {priced_count} with an eBay price. "
+        "<a href='/collectibles'>&larr; Back to what you own</a></p>"
         + "<div class='panel'><div class='table-wrap'><table>"
         "<thead><tr><th>Name</th><th class='opt'>Brand</th><th class='opt'>Series</th>"
         "<th class='opt'>Variant</th><th></th>"
@@ -197,32 +325,7 @@ def collectibles_page(
         "bound, not a valuation.</p></div>"
     )
 
-    form = (
-        "<div class='panel'><h2>Add a collectible</h2>"
-        "<form method='post' action='/collectibles' class='calc-form'>"
-        "<label>Name<input name='name' required placeholder='Sonny Angel Fruits Series - Peach'></label>"
-        "<label>Brand<input name='brand' placeholder='Sonny Angel, Smiski, ...'></label>"
-        "<label>Series<input name='series'></label>"
-        "<label>Character<input name='character'></label>"
-        "<label>Variant<input name='variant'></label>"
-        "<label>Blind box series<input name='blind_box_series'></label>"
-        "<label><input name='is_secret' type='checkbox' value='true' style='width:auto'> Secret / chase figure</label>"
-        "<label>Retail price<input name='retail_price' type='number' step='0.01'></label>"
-        # Defaults to 1, matching the review form. At 0 no InventoryItem is
-        # created at all, and list_for_sale only sees quantity > 0 -- so the
-        # old default of 0 silently produced a catalogue entry that could
-        # never be listed. 22 collectibles were in that state.
-        "<label>Quantity owned<input name='quantity' type='number' step='1' min='0' value='1'></label>"
-        "<button type='submit'>Add</button></form></div>"
-    )
-    pending_count = len(session.scalars(select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)).all())
-    body = (
-        brand_header("Collectibles")
-        + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
-          f"<a href='/collectibles/review'>Review queue ({pending_count})</a> &nbsp; "
-          f"<a href='/collectibles/identify'>Identify from a link</a></p></div>"
-        + filters + table + form + _COLLECTIBLE_LIST_STYLE + _STYLE
-    )
+    body = brand_header("Collectibles — full catalogue") + filters + table + _COLLECTIBLE_LIST_STYLE + _STYLE
     return HTMLResponse(page("EzBay — Collectibles", body))
 
 
@@ -343,13 +446,28 @@ def _process_collectible_photo(photo_path: Path, settings, session: Session, use
             status=CardCaptureStatus.PENDING_REVIEW, **dict.fromkeys(CAPTURE_FIELDS),
         ))
 
-    session.add_all(records)
-    session.commit()
+    try:
+        session.add_all(records)
+        session.commit()
+    except Exception:
+        # Roll back before the caller (the route below, or the bulk batch
+        # loop) touches this session again -- record_event's own commit
+        # included, or that fails too with a much more confusing error.
+        # See accessories.py's _process_accessory_photo for the write-up of
+        # the failure this closes: an AI-call failure handled cleanly, then
+        # the fallback row it produces failing to save and surfacing as an
+        # unexplained 500 with nothing in the audit log.
+        session.rollback()
+        raise
+
     for record in records:
+        # outcome != "success" means this record IS blank_note -- an AI
+        # failure or a miss, not a real find -- so the reason belongs in
+        # the audit trail rather than an empty {}.
         record_event(
             session, actor_type="user", actor_id=user, action="collectible.capture",
             resource_type="captured_collectible", resource_id=record.id, outcome=outcome,
-            correlation_id=str(uuid.uuid4()), details={},
+            correlation_id=str(uuid.uuid4()), details=blank_note if outcome != "success" else {},
         )
     return records
 
@@ -365,7 +483,10 @@ async def collectible_capture_submit(
         raise HTTPException(status_code=503, detail="collectible recognition is not configured (ANTHROPIC_API_KEY missing)")
 
     photo_path = _save_collectible_photo(await photo.read(), photo.content_type, settings)
-    records = _process_collectible_photo(photo_path, settings, session, user)
+    try:
+        records = _process_collectible_photo(photo_path, settings, session, user)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to save this capture: {exc}") from exc
     return RedirectResponse(f"/collectibles/review/{records[0].id}", status_code=303)
 
 
@@ -913,6 +1034,23 @@ def collectible_capture_image(capture_id: str, user: str = Depends(require_dashb
     )
 
 
+THUMB_WIDTH = 220
+
+
+@router.get("/collectibles/thumb/{item_id}")
+def collectible_thumb(item_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    """A small JPEG of an owned figure's own photo, for the tile grid --
+    same resize-and-cache convention as /inventory/thumb, so a cabinet of
+    forty figures doesn't mean forty full-size photos on one page load."""
+    item = session.get(InventoryItem, item_id)
+    if not item or not item.scan_image_path:
+        raise HTTPException(status_code=404, detail="no image for this item")
+    source = Path(item.scan_image_path)
+    if not source.exists():
+        raise HTTPException(status_code=404, detail="image file missing")
+    return serve_thumb(source, f"collectible-{item_id}-{THUMB_WIDTH}.jpg", THUMB_WIDTH)
+
+
 _COLLECTIBLE_LIST_STYLE = """<style>
 .filters{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
 .filters .field{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--text-dim)}
@@ -920,6 +1058,20 @@ _COLLECTIBLE_LIST_STYLE = """<style>
 .filters .field.checkbox input{width:auto}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 td.num.strong{font-weight:600}
+/* Owned-figures tile grid -- same visual language as /inventory's set
+   tiles (a photo, not a link here since there's no per-figure page yet). */
+.set-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:18px;align-items:start;margin:14px 0}
+.set-tile{display:flex;flex-direction:column;gap:3px;min-width:0;background:var(--panel);
+  border:1px solid var(--panel-border);border-radius:14px;padding:10px}
+.set-tile>*{min-width:0;max-width:100%}
+.set-art{position:relative;display:grid;place-items:center;height:140px;border-radius:10px;
+  background:#f4f5f7;border:1px solid var(--panel-border);overflow:hidden}
+.set-art img{max-width:92%;max-height:92%;object-fit:contain}
+.set-fallback{font-weight:700;font-size:15px;color:#12161c;padding:0 8px;text-align:center}
+.set-art .pill{position:absolute;top:7px;right:7px}
+.set-name{font-weight:600;font-size:14px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-meta{font-size:12.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-meta strong{color:var(--text)}
 /* A nine-column table on a phone puts the prices past the right edge,
    where they may as well not exist -- this is a list you read on mobile.
    Drop to what the question actually needs: which figure, is it a secret,
