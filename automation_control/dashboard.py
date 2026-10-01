@@ -69,6 +69,32 @@ def _jobs_html() -> str:
             "<p class='jobs-foot'>Logs are in <code>scan_ingest_data/logs/</code>.</p></div>")
 
 
+def _recovery_html() -> str:
+    """Show whether usable recovery evidence is recent, not merely scheduled."""
+    from .recovery_health import recovery_statuses
+
+    statuses = recovery_statuses()
+    hurt = [status for status in statuses if status.needs_attention]
+    if not hurt:
+        detail = " &middot; ".join(
+            f"{escape(status.label.lower())} {escape(status.detail)}" for status in statuses
+        )
+        return (
+            "<div class='jobs jobs-ok'><span class='jobs-dot'></span>"
+            f"Recovery checks healthy &middot; {detail}</div>"
+        )
+    rows = "".join(
+        f"<li><strong>{escape(status.label)}</strong> &mdash; {escape(status.detail)}</li>"
+        for status in hurt
+    )
+    phrase = "check needs" if len(hurt) == 1 else "checks need"
+    return (
+        f"<div class='jobs jobs-bad'><p class='jobs-head'>{len(hurt)} recovery {phrase} "
+        f"attention</p><ul>{rows}</ul>"
+        "<p class='jobs-foot'>Backup and restore evidence must both be recent.</p></div>"
+    )
+
+
 def _storefront_readiness_html(settings) -> str:
     from .storefront_readiness import storefront_readiness_issues
 
@@ -342,6 +368,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     <p>A live view of inventory, sales, and purchasing &middot; as of {now:%Y-%m-%d %H:%M} UTC</p>
   </div>
   {_jobs_html()}
+  {_recovery_html()}
   {_storefront_readiness_html(settings)}
   <div class="widget-grid">{grid}</div>
 

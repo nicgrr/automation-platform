@@ -32,7 +32,8 @@ reliability and rollback improve before business workflows or schemas are remove
 - [x] Add inventory-audit, scanner-button, scanner-recovery and backup jobs to health.
 - [x] Add storefront HTTP/configuration health once its service is deployed.
 - [x] Make job problems persistent and prominent on the dashboard until recovered.
-- [ ] Add backup age and last successful restore-drill status.
+- [x] Add backup age and last successful restore-drill status, with a monthly
+  non-destructive drill and dashboard/CRM alerts when evidence becomes stale.
 - [x] Perform and document a restore into a temporary database (integrity and
   foreign keys clean, migration to head succeeded, restored app health HTTP 200).
 - [x] Classify the seven stale/missing-price holdings as supported-stale or

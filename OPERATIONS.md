@@ -28,6 +28,7 @@ sudo journalctl -u ezbay -f
 | `restic-backup.timer` | daily, 03:00 | Whole-filesystem encrypted backup to OneDrive (pre-existing, not built by this project) |
 | `restic-check-monthly.timer` | monthly | Checks backup-repository integrity |
 | `restic-maintenance.timer` | weekly | Applies retention and repository maintenance |
+| `ezbay-restore-drill.timer` | monthly | Restores the newest manual SQLite snapshot into a temporary database, migrates and boots it |
 | `ezbay-reconciliation-audit.timer` | daily, 03:17 | Inventory-vs-listings drift audit (read-only) — shown on the dashboard and in logs |
 
 ```bash
@@ -82,19 +83,26 @@ Repeat without touching production:
 
 ```bash
 cd /home/nic/automation-platform
-drill_dir="$(mktemp -d /tmp/ezbay-restore-drill.XXXXXX)"
-restored_db="$drill_dir/restored.sqlite"
-cp backups/<snapshot>.sqlite "$restored_db"
-sqlite3 "$restored_db" 'PRAGMA integrity_check; SELECT count(*) FROM pragma_foreign_key_check;'
-AUTOMATION_DATABASE_URL="sqlite:///$restored_db" .venv/bin/alembic upgrade head
-AUTOMATION_DATABASE_URL="sqlite:///$restored_db" .venv/bin/alembic current
-sqlite3 "$restored_db" 'PRAGMA integrity_check; SELECT count(*) FROM pragma_foreign_key_check;'
+.venv/bin/python -m scripts.restore_drill
+# or select an exact snapshot:
+.venv/bin/python -m scripts.restore_drill --snapshot backups/<snapshot>.sqlite
 ```
 
-The expected results are `ok`, zero violations and the current Alembic head.
-Use the application startup check against the temporary URL before accepting a
-drill as complete. Temporary drill copies contain real business data and must
-remain local; allow `/tmp` housekeeping to remove them.
+The command copies the snapshot beneath a private temporary directory, verifies
+integrity and foreign keys, migrates it to the current Alembic head, proves key
+row counts were preserved, and boots the application health endpoint against the
+restored copy. Temporary business data is removed when the command exits. Its
+atomic status record drives the dashboard's restore-age warning.
+
+Install the tracked monthly unit with:
+
+```bash
+sudo install -d -o nic -g ezbay -m 2775 /home/nic/automation-platform/scan_ingest_data/status
+sudo install -m 0644 docs/systemd/ezbay-restore-drill.service /etc/systemd/system/
+sudo install -m 0644 docs/systemd/ezbay-restore-drill.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ezbay-restore-drill.timer
+```
 
 ## Deploying a release
 

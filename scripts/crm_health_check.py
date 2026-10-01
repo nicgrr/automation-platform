@@ -104,6 +104,18 @@ def main() -> int:
         print("  all running on schedule.")
     print()
 
+    print("=== Recovery evidence ===")
+    from automation_control.recovery_health import recovery_statuses
+    recovery_issue = False
+    for status in recovery_statuses():
+        print(f"  {status.label}: {status.detail}")
+        if status.needs_attention:
+            recovery_issue = True
+            healthy = False
+    if not recovery_issue:
+        print("  backup and restore evidence are current.")
+    print()
+
     print("All clear." if healthy else "Needs attention -- see sections above.")
     return 0 if healthy else 1
 

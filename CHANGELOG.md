@@ -3,6 +3,15 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-10-02 — Recovery evidence on the dashboard
+
+The dashboard and on-demand CRM health report now verify that the latest
+encrypted-backup success is recent and that a real restore drill has passed in
+the last 45 days. A repeatable, non-destructive restore drill copies a snapshot
+to temporary storage, verifies integrity and foreign keys, migrates it to the
+current schema, preserves key row counts and boots the application health
+endpoint. A tracked monthly systemd timer keeps that evidence current.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

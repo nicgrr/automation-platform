@@ -191,6 +191,7 @@ def test_collectible_market_watch_is_one_of_the_monitored_jobs():
     "Encrypted backup",
     "Backup integrity check",
     "Backup maintenance",
+    "Restore drill",
     "NL Vault storefront",
 ])
 def test_operational_dependencies_are_monitored(label):

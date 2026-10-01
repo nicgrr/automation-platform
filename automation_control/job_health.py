@@ -88,6 +88,8 @@ JOBS = (
         "backup repository corruption can remain undetected"),
     Job("restic-maintenance.service", "restic-maintenance.timer", "Backup maintenance",
         "backup retention and repository maintenance stop running"),
+    Job("ezbay-restore-drill.service", "ezbay-restore-drill.timer", "Restore drill",
+        "backup snapshots stop being proven readable and bootable"),
     Job("nl-vault.service", None, "NL Vault storefront",
         "the shop is unavailable even if its Tailscale proxy is still listening",
         "http://127.0.0.1:8090/health"),

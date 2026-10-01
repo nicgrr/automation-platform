@@ -89,6 +89,8 @@ def test_manual_only_item_is_not_a_false_stale_price_alert(session):
 
 def test_main_returns_zero_when_every_section_is_clean(session, capsys, monkeypatch):
     import scripts.crm_health_check as mod
+    import automation_control.recovery_health as recovery_mod
+    from automation_control.recovery_health import RecoveryStatus
 
     monkeypatch.setattr(mod, "SessionLocal", lambda: session)
     session.close = lambda: None
@@ -96,6 +98,10 @@ def test_main_returns_zero_when_every_section_is_clean(session, capsys, monkeypa
     session.__exit__ = lambda *a: None
     monkeypatch.setattr(mod, "queue_counts", lambda s, settings: {"/review": 0})
     monkeypatch.setattr(mod, "JOBS", ())
+    monkeypatch.setattr(recovery_mod, "recovery_statuses", lambda: [
+        RecoveryStatus("Encrypted backup", True, "last success 1h ago"),
+        RecoveryStatus("Restore drill", True, "last success 1d ago"),
+    ])
 
     assert main() == 0
     assert "All clear." in capsys.readouterr().out
@@ -103,6 +109,8 @@ def test_main_returns_zero_when_every_section_is_clean(session, capsys, monkeypa
 
 def test_main_returns_one_when_the_backlog_is_nonzero(session, capsys, monkeypatch):
     import scripts.crm_health_check as mod
+    import automation_control.recovery_health as recovery_mod
+    from automation_control.recovery_health import RecoveryStatus
 
     monkeypatch.setattr(mod, "SessionLocal", lambda: session)
     session.close = lambda: None
@@ -110,6 +118,10 @@ def test_main_returns_one_when_the_backlog_is_nonzero(session, capsys, monkeypat
     session.__exit__ = lambda *a: None
     monkeypatch.setattr(mod, "queue_counts", lambda s, settings: {"/review": 5})
     monkeypatch.setattr(mod, "JOBS", ())
+    monkeypatch.setattr(recovery_mod, "recovery_statuses", lambda: [
+        RecoveryStatus("Encrypted backup", True, "last success 1h ago"),
+        RecoveryStatus("Restore drill", True, "last success 1d ago"),
+    ])
 
     assert main() == 1
     assert "Needs attention" in capsys.readouterr().out

@@ -1,0 +1,17 @@
+[Unit]
+Description=EZBay non-destructive database restore drill
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=nic
+Group=ezbay
+WorkingDirectory=/home/nic/automation-platform
+ExecStart=/home/nic/automation-platform/.venv/bin/python -m scripts.restore_drill
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/nic/automation-platform/scan_ingest_data/status
+

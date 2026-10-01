@@ -208,11 +208,30 @@ def test_a_healthy_dashboard_says_so_in_one_line(client):
     from automation_control.job_health import JOBS, OK, JobStatus
 
     fine = [JobStatus(job, OK) for job in JOBS]
-    with patch("automation_control.job_health.all_statuses", lambda *a, **k: fine):
+    from automation_control.recovery_health import RecoveryStatus
+    recovery = [
+        RecoveryStatus("Encrypted backup", True, "last success 2h ago"),
+        RecoveryStatus("Restore drill", True, "last success 10d ago"),
+    ]
+    with patch("automation_control.job_health.all_statuses", lambda *a, **k: fine), \
+         patch("automation_control.recovery_health.recovery_statuses", lambda: recovery):
         page = client.get("/dashboard").text
 
     assert f"All {len(JOBS)} background jobs healthy" in page
     assert "needs attention" not in page
+    assert "Recovery checks healthy" in page
+
+
+def test_dashboard_warns_when_restore_evidence_is_missing(client):
+    from automation_control.recovery_health import RecoveryStatus
+
+    statuses = [RecoveryStatus("Restore drill", False, "no status has been recorded")]
+    with patch("automation_control.recovery_health.recovery_statuses", lambda: statuses):
+        page = client.get("/dashboard").text
+
+    assert "1 recovery check needs attention" in page
+    assert "Restore drill" in page
+    assert "no status has been recorded" in page
 
 
 # --- the eBay Listings widget ----------------------------------------------
