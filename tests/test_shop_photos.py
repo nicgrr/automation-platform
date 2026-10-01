@@ -119,27 +119,30 @@ def test_listing_without_a_scan_falls_back_to_reference_art(client, session, med
     assert "/photo/l1" not in body
 
 
-def test_a_listing_with_both_prefers_the_stock_photo(client, session, media_root):
-    """Reference art currently wins over the seller's own scan -- see
-    common._art's docstring: a chunk of scanned photos were found saved
-    genuinely upside down (a scan-ingest bug), so a correct stock photo
-    beats a possibly-wrong real one until that's fixed."""
+def test_a_listing_with_both_prefers_the_own_photo(client, session, media_root):
+    """Reverted 2026-09-29 -- see common._art's docstring: the seller's
+    own scan is back to winning over reference art now that a full
+    backfill (scripts/backfill_inventory_photo_rotation.py) confirmed no
+    already-committed photo is still saved wrong-orientation."""
     _, photo = media_root
     make_listing(session, photo)
     body = client.get("/shop/game-pokemon").text
-    assert "images.pokemontcg.io" in body
-    assert "Stock image" in body
-    # the real photo must not also be rendered -- two images would be shown
-    assert "/photo/l1" not in body
-    assert "Actual card" not in body
+    assert "/photo/l1" in body
+    assert "Actual card" in body
+    # the stock photo must not also be rendered -- two images would be shown
+    assert "images.pokemontcg.io" not in body
+    assert "Stock image" not in body
 
 
-def test_item_page_prefers_the_stock_photo_too(client, session, media_root):
+def test_item_page_prefers_the_own_photo_too(client, session, media_root):
+    """The page's own social-preview meta tags may still reference the
+    stock image URL for Open Graph purposes -- that's unrelated to _art()
+    -- so this checks the actual rendered <img> tag, not the whole page."""
     _, photo = media_root
     make_listing(session, photo)
     body = client.get("/item/l1").text
-    assert "images.pokemontcg.io" in body
-    assert "/photo/l1" not in body
+    assert "<img src='/photo/l1'" in body
+    assert "<img src='https://images.pokemontcg.io" not in body
 
 
 def test_a_listing_with_only_a_scan_still_falls_back_to_it(client, session, media_root):

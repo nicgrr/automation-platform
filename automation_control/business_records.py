@@ -34,7 +34,7 @@ def _dec(value: str, default: str = "0") -> Decimal:
 
 @router.get("/suppliers", response_class=HTMLResponse)
 def suppliers_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    suppliers = session.scalars(select(Supplier).order_by(Supplier.name)).all()
+    suppliers = session.scalars(select(Supplier).order_by(Supplier.name).limit(500)).all()
     status_kind = {
         SupplierStatus.ACTIVE: "ok", SupplierStatus.APPROVED: "ok",
         SupplierStatus.APPLY: "warn", SupplierStatus.APPLICATION_SENT: "warn", SupplierStatus.PAUSED: "warn",
@@ -144,7 +144,7 @@ def create_supplier_product(
 
 @router.get("/goals", response_class=HTMLResponse)
 def goals_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    goals = session.scalars(select(Goal).order_by(Goal.achieved_at.is_(None).desc(), Goal.created_at)).all()
+    goals = session.scalars(select(Goal).order_by(Goal.achieved_at.is_(None).desc(), Goal.created_at).limit(500)).all()
     cards = []
     for g in goals:
         pct = min(100, float(g.current_value / g.target_value * 100)) if g.target_value else 0
@@ -277,12 +277,17 @@ def release_calendar_page(user: str = Depends(require_dashboard_user), session: 
     order = {"order deadline soon": 0, "deadline passed": 0, "releasing soon": 1, "upcoming": 2, "released": 3}
     entries = sorted(entries, key=lambda e: (order.get(_release_status(e, today)[0], 2),
                                              _parse_date(e.release_date) or date.max))
+    total = len(entries)
+    entries = entries[:200]
 
     rows = "".join(_release_row(e, today) for e in entries) or "<tr><td colspan=6>No upcoming releases tracked yet.</td></tr>"
+    cap_note = (
+        f"<p class='muted'>{len(entries)} of {total} shown, capped at 200 rows.</p>" if total > len(entries) else ""
+    )
     table = (
         "<div class='panel'><div class='table-wrap'><table>"
         "<thead><tr><th>Product</th><th>Release date</th><th>Order deadline</th><th>Wholesale</th><th>Retail</th><th></th></tr></thead>"
-        f"<tbody>{rows}</tbody></table></div></div>"
+        f"<tbody>{rows}</tbody></table></div>{cap_note}</div>"
     )
     form = (
         "<div class='panel'><h2>Add a release</h2>"

@@ -31,6 +31,12 @@ def make_engine(url: str | None = None):
         @event.listens_for(created, "connect")
         def _sqlite_pragmas(dbapi_connection, _record):
             cursor = dbapi_connection.cursor()
+            # SQLite deliberately leaves referential integrity disabled on
+            # every new connection unless the application opts in.  Without
+            # this, declared ForeignKey constraints are documentation only:
+            # deleting an inventory row can silently leave a live shop
+            # listing or a label pointing at an id that no longer exists.
+            cursor.execute("PRAGMA foreign_keys=ON")
             # busy_timeout first, and it must be: switching journal mode
             # needs an exclusive lock, so on a database that is already busy
             # the switch itself fails instantly without a timeout set.

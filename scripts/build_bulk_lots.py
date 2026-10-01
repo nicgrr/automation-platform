@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             session.add(BulkLot(
-                set_id=set_id, game="pokemon", title=title,
+                set_id=set_id, game=(card_set.game if card_set else None) or "pokemon", title=title,
                 description=(
                     f"{bucket['cards']} cards from {set_name}, sorted and sleeved. "
                     "Exact contents vary; no duplicates beyond what's listed."

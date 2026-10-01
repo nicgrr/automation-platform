@@ -135,7 +135,7 @@ def test_an_unreadable_unit_is_unknown_not_a_crash(monkeypatch):
     _install(monkeypatch, {})
     status = status_for(TIMED, NOW)
     assert status.state == UNKNOWN
-    assert status.needs_attention is False
+    assert status.needs_attention is True
 
 
 def test_a_systemctl_that_will_not_run_is_survived(monkeypatch):
@@ -159,3 +159,23 @@ def test_ebay_listings_cache_is_one_of_the_monitored_jobs():
 
     labels = [job.label for job in JOBS]
     assert "eBay listings cache" in labels
+
+
+def test_collectible_market_watch_is_one_of_the_monitored_jobs():
+    from automation_control.job_health import JOBS
+
+    assert "Collectible market watches" in [job.label for job in JOBS]
+
+
+@pytest.mark.parametrize("label", [
+    "Scanner button",
+    "Scanner recovery",
+    "Inventory photo audit",
+    "Encrypted backup",
+    "Backup integrity check",
+    "Backup maintenance",
+])
+def test_operational_dependencies_are_monitored(label):
+    from automation_control.job_health import JOBS
+
+    assert label in [job.label for job in JOBS]

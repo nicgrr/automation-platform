@@ -140,11 +140,31 @@ def test_build_listings_groups_bundled_cards_into_one_listing(session, listings_
 # --- routes ---
 
 def test_listings_build_schedules_background_task_and_redirects(client):
-    with patch("fastapi.BackgroundTasks.add_task") as mock_add_task:
+    with patch("automation_control.listings_review._r2_configured", return_value=True), \
+         patch("fastapi.BackgroundTasks.add_task") as mock_add_task:
         resp = client.post("/listings/build", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/listings/review?building=1"
     assert mock_add_task.call_args.args[0] is _run_build_listings
+
+
+def test_listings_build_does_not_schedule_work_when_r2_is_missing(client):
+    with patch("automation_control.listings_review._r2_configured", return_value=False), \
+         patch("fastapi.BackgroundTasks.add_task") as mock_add_task:
+        resp = client.post("/listings/build", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/listings/review?configuration=r2"
+    mock_add_task.assert_not_called()
+
+
+def test_listings_review_explains_why_build_is_disabled(client):
+    with patch("automation_control.listings_review._r2_configured", return_value=False):
+        resp = client.get("/listings/review")
+
+    assert resp.status_code == 200
+    assert "R2 image hosting is not configured" in resp.text
+    assert "button disabled" in resp.text
 
 
 def test_listings_review_requires_auth():

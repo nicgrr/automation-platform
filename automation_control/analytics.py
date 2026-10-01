@@ -93,13 +93,13 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         channel_totals[name] = channel_totals.get(name, 0.0) + float(s.gross_amount)
     best_channel = max(channel_totals, key=channel_totals.get) if channel_totals else None
 
+    potential_purchases = session.scalars(select(PotentialPurchase)).all()
     potential_value = sum(
-        float(p.market_value or 0) for p in session.scalars(select(PotentialPurchase)).all()
-        if p.status in OPEN_POTENTIAL_STATUSES
+        float(p.market_value or 0) for p in potential_purchases if p.status in OPEN_POTENTIAL_STATUSES
     )
     open_offers = session.scalar(select(func.count()).select_from(PurchaseLot).where(PurchaseLot.status == PurchaseLotStatus.OFFER_SENT)) or 0
     open_offers += sum(
-        1 for p in session.scalars(select(PotentialPurchase)).all()
+        1 for p in potential_purchases
         if p.status in (PotentialPurchaseStatus.OFFER_SENT, PotentialPurchaseStatus.COUNTER_OFFER)
     )
 

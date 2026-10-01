@@ -180,6 +180,36 @@ def parse_item_condition(xml_text: str) -> ItemCondition:
     )
 
 
+@dataclass(frozen=True)
+class ItemDetails:
+    """A live listing's real photos and description straight from eBay --
+    the PictureDetails/PictureURL block and Description field GetItem
+    already returns under DetailLevel=ReturnAll, which get_item_condition
+    fetches and discards. Split into its own call rather than folded into
+    that one: a caller wanting only the condition (the existing use)
+    shouldn't pay for parsing fields it didn't ask for, and vice versa."""
+
+    picture_urls: list[str]
+    description: str | None
+
+
+def parse_item_details(xml_text: str) -> ItemDetails:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        raise EbayApiError(f"eBay Trading API returned unparseable XML: {exc}") from exc
+
+    ack = _text(root, "eb:Ack")
+    if ack not in ("Success", "Warning"):
+        message = _text(root, "eb:Errors/eb:LongMessage") or _text(root, "eb:Errors/eb:ShortMessage") or ack
+        raise EbayApiError(f"eBay Trading API request failed: {message}")
+
+    item = root.find("eb:Item", _NS)
+    urls = [el.text for el in item.findall("eb:PictureDetails/eb:PictureURL", _NS)] if item is not None else []
+    description = _text(item, "eb:Description") if item is not None else None
+    return ItemDetails(picture_urls=[u for u in urls if u], description=description)
+
+
 class EbayTradingReadAdapter:
     """Read-only. Deliberately has no create/revise/end methods, the same
     constraint adapters/ebay.py's Sell API client holds itself to -- the
@@ -253,3 +283,21 @@ class EbayTradingReadAdapter:
         if response.status_code >= 400:
             raise EbayApiError(f"eBay Trading API request failed ({response.status_code})")
         return parse_item_condition(response.text)
+
+    async def get_item_details(self, item_id: str) -> ItemDetails:
+        """Photos and description for one already-live listing -- the
+        one-off backfill for listings that only ever came through
+        GetMyeBaySelling's compact ActiveList (title/price/quantity only,
+        no PictureDetails or Description at all). See
+        scripts/backfill_ebay_listing_photos.py, the caller."""
+        body = (
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+            "<GetItemRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">"
+            f"<ItemID>{item_id}</ItemID>"
+            "<DetailLevel>ReturnAll</DetailLevel>"
+            "</GetItemRequest>"
+        )
+        response = await self.client.post(self._url, content=body, headers=self._headers("GetItem"))
+        if response.status_code >= 400:
+            raise EbayApiError(f"eBay Trading API request failed ({response.status_code})")
+        return parse_item_details(response.text)

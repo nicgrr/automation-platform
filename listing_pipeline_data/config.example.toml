@@ -53,6 +53,8 @@ term_order = ["game", "character", "card_number", "rarity", "set_name"]
 "BUNDLE A - Example lot name" = "Pokemon TCG Mixed Rare Bundle Lot of 6"
 
 [classification]
+# false means every physical card remains its own single-card listing.
+bundling_enabled = false
 # Cards priced (suggested_price, in AUD) below this are auto-grouped into
 # bulk lots by automation_control/classification.py, instead of being
 # listed as singles. A human can still override the grouping during price

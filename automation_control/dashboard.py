@@ -22,7 +22,7 @@ from .database import get_session
 from .inventory_review import _aud, _latest_ebay_prices, _latest_prices
 from .models import (
     AuditEvent, CollectibleProduct, InventoryItem, InventoryStatus, Marketplace,
-    PotentialPurchase, PotentialPurchaseStatus, Sale, TcgCard,
+    PotentialPurchase, PotentialPurchaseStatus, RetailerProgram, Sale, TcgCard,
 )
 from .nav_counts import queue_counts
 from .ui import ADMIN_NAV, page
@@ -70,20 +70,7 @@ def _jobs_html() -> str:
 
 
 def _quicklinks_html(counts: dict[str, int | None], storefront_url: str) -> str:
-    """Rendered from ui.ADMIN_NAV rather than hand-written here.
-
-    This block used to be a hardcoded copy of the nav drawer's list, and
-    the two had already drifted in both directions: photo audit was only
-    ever reachable from the dashboard, while analytics, shop orders, shop
-    pricing, shop listings, personal collection, contact messages and
-    identify-from-a-link were only ever in the drawer. Same source now, so
-    that can't recur -- adding a module to ADMIN_NAV puts it in both.
-
-    A collapsed group would be skipped: on the dashboard there's no
-    disclosure to hide one behind. Nothing is collapsed at the moment --
-    the group that was is now ui.HIDDEN_NAV, which this never sees, so
-    hiding a module from the drawer hides it from here too.
-    """
+    """The same eleven workflow entrances shown in the shared drawer."""
     columns = []
     for title, links, collapsed in ADMIN_NAV:
         if collapsed:
@@ -190,6 +177,15 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     open_potentials.sort(key=lambda p: float(p.market_value - (p.asking_price or p.market_value)), reverse=True)
     top_potentials = open_potentials[:5]
 
+    # -- Gameology Guild goal ---------------------------------------------
+    # Read from the same service as the full tracker so its spend, fund and
+    # recommendation can never drift from the compact home widget.
+    guild_program = session.scalar(select(RetailerProgram).where(RetailerProgram.slug == "gameology-guild"))
+    guild_state = None
+    if guild_program is not None:
+        from .retailer_goals_service import program_state
+        guild_state = program_state(session, guild_program)
+
     events = session.scalars(select(AuditEvent).order_by(desc(AuditEvent.occurred_at)).limit(6)).all()
 
     # ---- widgets ----
@@ -198,6 +194,29 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         f"<div class='gauge-wrap'>{gauge_chart(priced_pct, color='#0891b2', label='priced')}"
         f"<div class='gauge-caption'>{priced_count:,} of {scanned_holdings:,} holdings have a known market price</div></div></div>"
     )
+
+    guild_widget = ""
+    if guild_state is not None:
+        target = next((m.target_amount for m in guild_state["milestones"] if m.target_amount == 5000), None)
+        target = target or max((m.target_amount for m in guild_state["milestones"]), default=1)
+        pct = min(100, float(guild_state["spend"] / target * 100)) if target else 0
+        best = guild_state["recommendation"]
+        if best:
+            best_line = (
+                f"<div class='guild-best'><span>Best current match</span>"
+                f"<strong>{escape(best['product'].name)}</strong>"
+                f"<small>{f'${best['gameology_price']:,.2f}' if best['gameology_price'] is not None else 'price needed'}</small></div>"
+            )
+        else:
+            best_line = "<div class='guild-best'><span>Best current match</span><strong>Add prices to rank the queue</strong></div>"
+        guild_widget = (
+            "<div class='widget guild-widget'><div class='widget-head'><h3>GAMEOLOGY</h3>"
+            "<a href='/retailer-goals' class='widget-link'>Open tracker</a></div>"
+            f"<div class='big-number'>${guild_state['spend']:,.0f} / ${target:,.0f}</div>"
+            f"<div class='dash-progress'><span style='width:{pct:.1f}%'></span></div>"
+            f"<div class='guild-fund'>Fund <strong>${guild_state['fund']['available']:,.2f}</strong></div>"
+            + best_line + "</div>"
+        )
 
     # -- widgets that only appear once they have something to say --------
     #
@@ -293,6 +312,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     )
 
     grid = "".join([
+        guild_widget,
         gauge_widget,
         sales_widget if recent_sales else "",
         buys_widget if top_potentials else "",
@@ -360,7 +380,7 @@ _STYLE = """
 .ops-events{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;
   font-size:11.5px;color:var(--text-dim);max-height:110px;overflow-y:auto}
 
-.quicklinks{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:26px;
+.quicklinks{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:20px;margin-top:26px;
   padding-top:22px;border-top:1px solid var(--panel-border)}
 @media (max-width:780px){.quicklinks{grid-template-columns:repeat(2,1fr)}}
 .quicklink-group h4{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin:0 0 10px}
@@ -370,4 +390,10 @@ _STYLE = """
 .ql-count{display:inline-block;min-width:18px;padding:0 6px;margin-left:4px;border-radius:999px;
   font-size:11px;font-weight:700;background:var(--warning-bg);color:var(--warning);
   font-variant-numeric:tabular-nums}
+.guild-widget{border-color:rgba(var(--accent-rgb),.28);background:linear-gradient(145deg,var(--panel),rgba(var(--accent-rgb),.05))}
+.dash-progress{height:9px;border-radius:999px;background:var(--surface-sunken);overflow:hidden;margin:12px 0}
+.dash-progress span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.guild-fund{font-size:12px;color:var(--text-dim);margin-bottom:13px}.guild-fund strong{color:var(--text);font-size:16px;margin-left:5px}
+.guild-best{display:flex;flex-direction:column;gap:3px;border-top:1px solid var(--panel-border);padding-top:11px}
+.guild-best span,.guild-best small{font-size:11px;color:var(--text-dim)}.guild-best strong{font-size:13px}
 """

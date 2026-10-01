@@ -2,7 +2,7 @@ import base64
 import mimetypes
 from pathlib import Path
 
-from anthropic import Anthropic
+from anthropic import APIError, Anthropic
 from pydantic import BaseModel
 
 MODEL = "claude-opus-5"
@@ -35,6 +35,20 @@ class RecognitionError(Exception):
     photo shows cards from a different game than the one asked about, or a
     transient bad response. Distinct from a successfully-parsed empty list
     (which just means no card was found, a normal outcome)."""
+
+
+def _parse_message(api_key: str, **kwargs):
+    """Give every recognition caller the same stable failure contract.
+
+    Provider/network/credit errors are operational failures, not internal
+    application bugs.  Routes already turn RecognitionError into a useful
+    502 response; wrapping the SDK's APIError here ensures all six model
+    entry points reach that handling instead of leaking a 500 traceback.
+    """
+    try:
+        return Anthropic(api_key=api_key).messages.parse(**kwargs)
+    except APIError as exc:
+        raise RecognitionError("recognition provider request failed") from exc
 
 
 def _extraction_prompt_front_and_back(game: str) -> str:
@@ -85,6 +99,59 @@ class ExtractedCards(BaseModel):
     cards: list[ExtractedCard]
 
 
+class ExtractedCardDetailsScreenshot(BaseModel):
+    """Fields read from a pricing/catalogue webpage screenshot.
+
+    This is separate from ExtractedCard because a screenshot is evidence
+    about one product record and its guide price, not a photograph whose
+    physical card bounds/rotation/foil need detecting.
+    """
+
+    card_name: str
+    set_name: str
+    card_number: str
+    rarity: str
+    language: str
+    ungraded_price: str
+    currency: str
+    source_site: str
+    unreadable_fields: list[str]
+
+
+_DETAILS_SCREENSHOT_PROMPT = (
+    "Read this screenshot of a trading-card product/details or price-guide webpage. "
+    "It describes ONE card. Extract the main card/product name, set name, card number, "
+    "rarity, language, the page's UNGRADED/RAW guide price, its ISO currency code, and "
+    "the source website. Keep card_name separate from card_number and set_name: for a "
+    "title such as 'SS3 Gogeta, Marvelous Might BT12-136 Dragon Ball Super Vicious "
+    "Rejuvenation', card_name is 'SS3 Gogeta, Marvelous Might', card_number is "
+    "'BT12-136', and set_name is 'Vicious Rejuvenation'. Return ungraded_price as only "
+    "the numeric decimal value, with no currency symbol. An 'A$', 'AU$', or Australian "
+    "dollar marker means currency AUD. Read the dedicated Ungraded/Raw value from the "
+    "price table; NEVER substitute a graded value (PSA/CGC/grade 7-10), an advertisement, "
+    "an eBay listing tile, shipping price, or sale-count text. If rarity or language is "
+    "not explicitly shown, return an empty string and include that field in unreadable_fields. "
+    "Do not infer missing details from general trading-card knowledge."
+)
+
+
+def extract_card_details_screenshot(path: Path, api_key: str) -> ExtractedCardDetailsScreenshot:
+    """Read identity and ungraded price from a details-page screenshot."""
+    response = _parse_message(
+        api_key,
+        model=MODEL,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": [
+            _image_block(path),
+            {"type": "text", "text": _DETAILS_SCREENSHOT_PROMPT},
+        ]}],
+        output_format=ExtractedCardDetailsScreenshot,
+    )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return card details matching the screenshot schema")
+    return response.parsed_output
+
+
 class RotationCheck(BaseModel):
     rotation_degrees: int
 
@@ -111,8 +178,8 @@ def extract_card_details(front_path: Path, back_path: Path | None, api_key: str,
     else:
         content.append({"type": "text", "text": _extraction_prompt_front_only(game)})
 
-    client = Anthropic(api_key=api_key)
-    response = client.messages.parse(
+    response = _parse_message(
+        api_key,
         model=MODEL,
         max_tokens=4096,
         messages=[{"role": "user", "content": content}],
@@ -177,8 +244,8 @@ def extract_collectible_details(photo_path: Path, api_key: str, max_tokens: int 
     # outright -- the whole batch is lost, not partially returned -- so the
     # ceiling is a parameter with headroom. Bounding boxes cost another
     # four floats per figure, which is what pushed 42 figures past 8192.
-    client = Anthropic(api_key=api_key)
-    response = client.messages.parse(
+    response = _parse_message(
+        api_key,
         model=MODEL,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": [
@@ -235,8 +302,8 @@ def extract_accessory_details(photo_path: Path, api_key: str, max_tokens: int = 
     land in CapturedAccessory pending human confirmation, never straight
     into the catalogue.
     """
-    client = Anthropic(api_key=api_key)
-    response = client.messages.parse(
+    response = _parse_message(
+        api_key,
         model=MODEL,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": [
@@ -302,8 +369,8 @@ def extract_listing_items(api_key: str, photo_path: Path | None = None, text: st
         content.append({"type": "text", "text": f"Listing text:\n\n{text.strip()}"})
     content.append({"type": "text", "text": _LISTING_PROMPT})
 
-    client = Anthropic(api_key=api_key)
-    response = client.messages.parse(
+    response = _parse_message(
+        api_key,
         model=MODEL, max_tokens=4096,
         messages=[{"role": "user", "content": content}],
         output_format=ExtractedListing,
@@ -320,13 +387,15 @@ def detect_rotation(image_path: Path, api_key: str) -> int:
     capture flow, which gets its per-card rotation from extract_card_details
     instead.
     """
-    client = Anthropic(api_key=api_key)
-    response = client.messages.parse(
+    response = _parse_message(
+        api_key,
         model=MODEL,
         max_tokens=1024,
         messages=[{"role": "user", "content": [_image_block(image_path), {"type": "text", "text": ROTATION_CHECK_PROMPT}]}],
         output_format=RotationCheck,
     )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return a response matching the expected rotation schema")
     return response.parsed_output.rotation_degrees
 
 
@@ -375,8 +444,8 @@ def extract_collectible_listing(text: str, api_key: str, max_tokens: int = 2048)
     list means "nothing recognizable", which is a normal answer, not an
     error.
     """
-    client = Anthropic(api_key=api_key)
-    response = client.messages.parse(
+    response = _parse_message(
+        api_key,
         model=MODEL,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": f"{_COLLECTIBLE_LISTING_PROMPT}\n\n---\n\n{text[:60000]}"}],

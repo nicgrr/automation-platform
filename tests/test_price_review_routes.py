@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -28,6 +29,24 @@ def _clear_price_check_guard():
     yield
     pr._price_check_run_id = None
     pr._price_check_started_at = None
+
+
+@pytest.fixture(autouse=True)
+def _bundling_enabled_for_legacy_bundle_tests():
+    """Route tests are isolated from the operator's live business setting.
+
+    Most of this file predates the singles-only switch and intentionally
+    exercises the optional bundle workflow. Tests for the disabled mode
+    override this patch locally.
+    """
+    classification = SimpleNamespace(
+        bundling_enabled=True,
+        bulk_price_threshold_aud=Decimal("8.00"),
+        max_lot_size=8,
+    )
+    with patch("automation_control.price_review.load_pipeline_config",
+               return_value=SimpleNamespace(classification=classification)):
+        yield
 
 
 @pytest.fixture
@@ -325,6 +344,7 @@ def test_price_review_form_shows_suggested_price(client, session):
     assert resp.status_code == 200
     assert "12.50" in resp.text
     assert "pokemontcg_market_usd_to_aud" in resp.text
+    assert "Choose printing" in resp.text
 
 
 def test_price_review_form_404_for_unknown_card(client):
@@ -395,6 +415,94 @@ def test_price_review_approve_with_bundle_shares_bundle_id_and_price(client, ses
     assert refreshed_main.bundle_id == refreshed_partner.bundle_id
     assert refreshed_main.approved_price == refreshed_partner.approved_price == Decimal("40.00")
     assert refreshed_partner.pricing_status == PricingStatus.PRICE_APPROVED
+
+
+def test_singles_only_mode_hides_and_ignores_bundle_controls(client, session):
+    main = _reviewed_card(character="Zapdos ex", pricing_status=PricingStatus.PENDING_PRICE_REVIEW,
+                          bundle_id="old-auto-group")
+    partner = _reviewed_card(character="Flareon", card_number="168",
+                             pricing_status=PricingStatus.PENDING_PRICE_REVIEW,
+                             bundle_id="old-auto-group")
+    session.add_all([main, partner])
+    session.commit()
+
+    disabled = SimpleNamespace(classification=SimpleNamespace(bundling_enabled=False))
+    with patch("automation_control.price_review.load_pipeline_config", return_value=disabled):
+        page = client.get(f"/cards/pricing/{main.id}").text
+        resp = client.post(
+            f"/cards/pricing/{main.id}",
+            data={"action": "approve", "price": "4.00", "bundle_with": [partner.id]},
+            follow_redirects=False,
+        )
+
+    assert "Bundle with" not in page
+    assert resp.status_code == 303
+    session.expire_all()
+    assert session.get(CapturedCard, main.id).bundle_id is None
+    assert session.get(CapturedCard, partner.id).pricing_status == PricingStatus.PENDING_PRICE_REVIEW
+
+
+def test_approved_cards_appear_in_their_own_section(client, session):
+    """Real gap, found 2026-10-01: an approved card dropped off every list
+    on the page, so there was no way back to it to change the price."""
+    card = _reviewed_card(character="Snorlax", set_name="Jungle", card_number="11",
+                          pricing_status=PricingStatus.PRICE_APPROVED, approved_price=Decimal("8.00"))
+    session.add(card)
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Approved, not yet listed (1)" in page
+    assert "Snorlax" in page
+    assert "AUD $8.00" in page
+    assert f"/cards/pricing/{card.id}" in page
+
+
+def test_reopening_an_approved_card_shows_its_current_price(client, session):
+    """Previously fell through to suggested_price (None for a manually
+    approved card), so the field showed blank instead of what was set."""
+    card = _reviewed_card(pricing_status=PricingStatus.PRICE_APPROVED, approved_price=Decimal("8.00"),
+                          suggested_price=None)
+    session.add(card)
+    session.commit()
+
+    page = client.get(f"/cards/pricing/{card.id}").text
+
+    assert "value='8.00'" in page
+
+
+def test_reopening_a_bundled_card_still_shows_its_bundle_mate_as_checked(client, session):
+    """Previously the bundle-candidates query only looked at NOT_PRICED/
+    PENDING_PRICE_REVIEW cards, so a PRICE_APPROVED bundle mate's checkbox
+    never rendered -- re-approving with the (empty) form would leave the
+    mate on its old price while this card's price changed underneath it."""
+    bundle_id = "shared-bundle-1"
+    main = _reviewed_card(character="Chikorita", pricing_status=PricingStatus.PRICE_APPROVED,
+                          approved_price=Decimal("2.50"), bundle_id=bundle_id)
+    partner = _reviewed_card(character="Totodile", card_number="41", pricing_status=PricingStatus.PRICE_APPROVED,
+                             approved_price=Decimal("2.50"), bundle_id=bundle_id)
+    session.add_all([main, partner])
+    session.commit()
+
+    page = client.get(f"/cards/pricing/{main.id}").text
+
+    assert f"value='{partner.id}' checked" in page
+
+
+def test_editing_a_bundled_card_with_its_mate_checked_keeps_prices_in_sync(client, session):
+    bundle_id = "shared-bundle-2"
+    main = _reviewed_card(character="Chikorita", pricing_status=PricingStatus.PRICE_APPROVED,
+                          approved_price=Decimal("2.50"), bundle_id=bundle_id)
+    partner = _reviewed_card(character="Totodile", card_number="41", pricing_status=PricingStatus.PRICE_APPROVED,
+                             approved_price=Decimal("2.50"), bundle_id=bundle_id)
+    session.add_all([main, partner])
+    session.commit()
+
+    client.post(f"/cards/pricing/{main.id}", data={"action": "approve", "price": "3.00", "bundle_with": [partner.id]})
+
+    session.expire_all()
+    assert session.get(CapturedCard, main.id).approved_price == Decimal("3.00")
+    assert session.get(CapturedCard, partner.id).approved_price == Decimal("3.00")
 
 
 def test_price_review_auto_advances_to_next_pending_card(client, session):
@@ -484,8 +592,11 @@ def test_the_page_splits_retryable_from_blocked(client, session):
     assert "Needs your decision (1)" in page
     assert "Retry 2 lookups" in page
     assert "Try these anyway" in page
-    # The reason belongs next to the card only where it's a decision to make.
-    assert page.index("Needs your decision") < page.index("ambiguous match")
+    # The reason belongs next to the card only where it's a decision to make,
+    # grouped by what kind of decision -- not the raw technical error text.
+    assert page.index("Needs your decision") < page.index("Ambiguous match")
+    assert "2 candidates" in page
+    assert "ambiguous match for 'Tyrunt'" not in page
 
 
 def test_a_card_never_checked_is_ready_not_blocked(client, session):
@@ -497,6 +608,57 @@ def test_a_card_never_checked_is_ready_not_blocked(client, session):
     assert "Ready to price (1)" in page
     assert "Needs your decision (0)" in page
     assert "Check prices" in page  # not "Retry", nothing has failed yet
+
+
+def test_the_decision_list_is_grouped_by_what_kind_of_decision(client, session):
+    """Real feedback, 2026-09-30: the flat list of raw technical error
+    strings was hard to scan on a phone. Grouping by reason means the
+    section heading carries the meaning instead of every row repeating it."""
+    session.add_all([
+        _reviewed_card(character="Mega Starmie ex", set_name="POR", card_number="021",
+                       price_lookup_error="no priced match found for 'Mega Starmie ex' "
+                                          "('POR' #'021/088') after 2 search variant(s)"),
+        _reviewed_card(character="Tyrunt", set_name="MEP", card_number="070",
+                       price_lookup_error="ambiguous match for 'Tyrunt' (query='name:\"Tyrunt\"' "
+                                          "#'070', promo_filter=False): 2 candidates with different prices"),
+        _reviewed_card(character=None, set_name=None,
+                       price_lookup_error="missing character or set name, needs manual price"),
+    ])
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "No match found (1)" in page
+    assert "Ambiguous match (1)" in page
+    assert "Incomplete capture (1)" in page
+    assert "2 variant(s) tried" in page
+    assert "2 candidates" in page
+    # the raw technical strings themselves no longer print
+    assert "search variant(s)" not in page.replace("2 variant(s) tried", "")
+    assert "promo_filter" not in page
+
+
+def test_each_blocked_card_gets_an_ebay_sold_listings_search_link(client, session):
+    session.add(_reviewed_card(character="Mega Lucario ex", set_name="Mega Ascension", card_number="113",
+                               price_lookup_error="no priced match found for 'Mega Lucario ex'"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "ebay.com.au/sch/i.html" in page
+    assert "Mega+Lucario+ex" in page
+    assert "LH_Sold=1" in page
+    assert "target='_blank'" in page
+
+
+def test_an_empty_category_prints_no_heading(client, session):
+    session.add(_reviewed_card(character="Tyrunt", price_lookup_error="ambiguous match for 'Tyrunt': 2 candidates"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "No match found" not in page
+    assert "Incomplete capture" not in page
 
 
 # --- inventory prices, the "check everything" button ------------------------
@@ -574,6 +736,103 @@ def test_refresh_ebay_runs_the_import_script(client, session):
 
     assert resp.status_code == 303
     import_prices.assert_called_once_with([])
+
+
+# --- unpriced inventory: the actual list behind the dashboard's % figure ----
+
+def test_unpriced_inventory_lists_a_held_card_with_no_price_at_all(client, session):
+    """Real feedback, 2026-10-01: a bare percentage on the dashboard gave no
+    way to act on it -- this is the list the percentage is counting."""
+    _held_card(session, "xy11-1")
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Unpriced inventory (1)" in page
+    assert "xy11-1" in page
+    assert "eBay search" in page
+
+
+def test_unpriced_inventory_shows_the_real_set_name_not_the_raw_set_id(client, session):
+    """Real gap, found 2026-10-01: this used to show (and eBay-search for)
+    the raw set_id code like 'cn-csv10c' directly -- not a string any real
+    eBay listing title would ever contain."""
+    from automation_control.models import CardSet, TcgCard
+
+    _held_card(session, "card-1")
+    session.add(CardSet(id="cn-csv10c", name="Chasing Glory Together", game="pokemon"))
+    session.add(TcgCard(catalog_item_id="card-1", game="pokemon", set_id="cn-csv10c", number="104/222"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Chasing Glory Together" in page
+    assert "cn-csv10c" not in page
+
+
+def test_unpriced_inventory_falls_back_to_the_raw_set_id_when_the_set_is_not_cached(client, session):
+    from automation_control.models import TcgCard
+
+    _held_card(session, "card-1")
+    session.add(TcgCard(catalog_item_id="card-1", game="pokemon", set_id="xy11", number="1"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "xy11" in page
+
+
+def test_a_card_priced_by_either_source_is_not_in_the_unpriced_list(client, session):
+    from automation_control.models import CardVariant, CardPrice
+
+    _held_card(session, "xy11-1")
+    _held_card(session, "xy11-2")
+    session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL,
+                          source="ebay_active_low", price=Decimal("5.00"), currency="AUD"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Unpriced inventory (1)" in page
+    assert "xy11-2" in page
+
+
+def test_every_held_card_priced_shows_the_all_clear_message(client, session):
+    _held_card(session, "xy11-1")
+    session.commit()
+
+    from automation_control.models import CardVariant, CardPrice
+    session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL,
+                          source="ebay_active_low", price=Decimal("5.00"), currency="AUD"))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Unpriced inventory (0)" in page
+    assert "Every held card has a price from at least one source." in page
+
+
+def test_the_pricing_jobs_last_run_time_shows_when_known(client, session):
+    """Answers "do they even run?" on the page itself instead of needing a
+    terminal -- real question asked 2026-10-01."""
+    from datetime import UTC, datetime
+    from unittest.mock import MagicMock
+
+    fake_status = MagicMock(state="ok", last_run=datetime(2026, 10, 1, 3, 55, tzinfo=UTC), detail="")
+    with patch("automation_control.job_health.status_for", return_value=fake_status):
+        page = client.get("/cards/pricing").text
+
+    assert "Last ran Thu 03:55" in page
+
+
+def test_a_failed_pricing_job_shows_a_warning_on_the_page(client, session):
+    from unittest.mock import MagicMock
+
+    fake_status = MagicMock(state="failed", last_run=None, detail="TypeError: boom")
+    with patch("automation_control.job_health.status_for", return_value=fake_status):
+        page = client.get("/cards/pricing").text
+
+    assert "Last run failed -- TypeError: boom" in page
 
 
 def test_a_crash_in_the_ebay_refresh_is_recorded(client, session):

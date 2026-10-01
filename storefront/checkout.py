@@ -478,7 +478,7 @@ def _decrement_stock(session: Session, order: ShopOrder) -> list[tuple[str, int]
         if item.listing_id:
             listing = session.get(ShopListing, item.listing_id)
             if listing is not None:
-                new_quantity = decrement_listing_quantity(listing, item.quantity)
+                new_quantity = decrement_listing_quantity(session, listing, item.quantity)
                 if new_quantity is not None:
                     changed.append((listing.id, new_quantity))
         else:

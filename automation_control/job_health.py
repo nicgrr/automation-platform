@@ -64,10 +64,27 @@ JOBS = (
         "Card price backfill", "held cards stop getting a market value"),
     Job("ebay-listings-refresh.service", "ebay-listings-refresh.timer", "eBay listings cache",
         "the dashboard widget and /settings' listing count go stale"),
+    Job("market-watch-scan.service", "market-watch-scan.timer", "Collectible market watches",
+        "new Australia/Japan marketplace finds and alert emails stop arriving"),
     Job("ebay-order-import.service", "ebay-order-import.timer", "eBay orders",
         "sales stop coming back into stock"),
     Job("scan-ingest.service", None, "Scan ingest",
         "scanned sheets pile up in the watch folder"),
+    Job("scanbd.service", None, "Scanner button",
+        "pressing the physical scanner button no longer starts a scan"),
+    Job("scanbd-restart.service", "scanbd-restart.timer", "Scanner recovery",
+        "scanbd's known memory-leak and duplicate-trigger failure is no longer cleared daily"),
+    Job("inventory-audit.service", "inventory-audit.timer", "Inventory photo audit",
+        "wrong-card photos stop being detected before stock is listed"),
+    Job("ezbay-reconciliation-audit.service", "ezbay-reconciliation-audit.timer",
+        "Inventory-vs-listings audit", "inventory/listing drift (a card sold but still "
+        "listed, or vice versa) goes unnoticed until someone spots it by hand"),
+    Job("restic-backup.service", "restic-backup.timer", "Encrypted backup",
+        "the platform and its database are no longer being copied to off-host storage"),
+    Job("restic-check-monthly.service", "restic-check-monthly.timer", "Backup integrity check",
+        "backup repository corruption can remain undetected"),
+    Job("restic-maintenance.service", "restic-maintenance.timer", "Backup maintenance",
+        "backup retention and repository maintenance stop running"),
 )
 
 
@@ -82,7 +99,10 @@ class JobStatus:
 
     @property
     def needs_attention(self) -> bool:
-        return self.state in (FAILED, OVERDUE)
+        # UNKNOWN must not collapse into a green "all healthy" banner. It
+        # means the dashboard could not establish whether the job is healthy
+        # (missing/renamed unit, unavailable systemd, or a timed-out query).
+        return self.state in (FAILED, OVERDUE, UNKNOWN)
 
 
 def _show(unit: str, properties: list[str]) -> dict[str, str]:

@@ -33,6 +33,32 @@ class Settings(BaseSettings):
     # seller's eBay account opted into "Business Policies" first, set up
     # once in Seller Hub (or via eBay's Account API) rather than assumed.
     ebay_marketplace_id: str = "EBAY_AU"
+    # Cross-market collectible watches. Secrets stay in the environment;
+    # the dashboard only reports whether each destination is configured.
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    discord_webhook_url: str | None = None
+    market_alert_max_landed_aud: float | None = None
+    # Seller/item locations admitted by market search and market watch.
+    # Kept as comma-separated ISO 3166-1 alpha-2 codes so deployment can
+    # change scope without a code or schema migration.
+    market_allowed_countries: str = "AU,JP"
+    # Optional public-web discovery. Brave's ordinary Search plan does not
+    # automatically grant the right to persist results, so storage remains
+    # explicitly off until the account's chosen plan permits it.
+    brave_search_api_key: str | None = None
+    brave_search_storage_permitted: bool = False
+    market_public_search_domains: str = (
+        "gumtree.com.au,depop.com,buyee.jp,zenmarket.jp,fromjapan.co.jp"
+    )
+    # Optional dedicated mailbox for Gumtree/Buyee/other saved-search mail.
+    # An uploaded .eml works without these settings.
+    market_alert_imap_host: str | None = None
+    market_alert_imap_port: int = 993
+    market_alert_imap_username: str | None = None
+    market_alert_imap_password: str | None = None
+    market_alert_imap_mailbox: str = "INBOX"
+    market_alert_imap_use_ssl: bool = True
     ebay_payment_policy_id: str | None = None
     ebay_fulfillment_policy_id: str | None = None
     ebay_return_policy_id: str | None = None

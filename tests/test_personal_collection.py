@@ -131,3 +131,34 @@ def test_upload_photo_404s_for_an_item_not_in_personal_collection(client, sessio
 
     resp = client.post(f"/personal-collection/{inv_id}/upload-photo", files={"photo": ("x.jpg", b"data", "image/jpeg")})
     assert resp.status_code == 404
+
+
+# --- unpriced filter ---------------------------------------------------
+
+def test_unpriced_filter_shows_only_items_with_no_price(client, session):
+    make_personal_collection_item(session, "Priced", price="10")
+    make_personal_collection_item(session, "Unpriced")
+
+    page = client.get("/personal-collection?sort=unpriced").text
+
+    assert "Unpriced" in page
+    assert "Priced" not in page
+
+
+def test_unpriced_filter_count_reflects_the_filtered_rows_not_the_total(client, session):
+    make_personal_collection_item(session, "Priced", price="10")
+    make_personal_collection_item(session, "Unpriced")
+
+    page = client.get("/personal-collection?sort=unpriced").text
+
+    assert "1 item(s) with no price on file" in page
+
+
+def test_default_sort_still_shows_every_item_regardless_of_price(client, session):
+    make_personal_collection_item(session, "Priced", price="10")
+    make_personal_collection_item(session, "Unpriced")
+
+    page = client.get("/personal-collection").text
+
+    assert "Priced" in page
+    assert "Unpriced" in page

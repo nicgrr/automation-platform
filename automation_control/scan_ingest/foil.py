@@ -1,9 +1,15 @@
 """Conservative foil assessment for identified scan crops.
 
-This starts in shadow mode: callers log the assessment but continue using
-the operator-selected variant.  The catalogue can rule impossible printings
-in or out, while regional image measurements provide calibration data for a
-future automatic classifier without risking inventory corruption today.
+No longer purely shadow mode (updated 2026-09-29 -- see session.py, which
+is the actual caller and the source of truth for what happens with this
+assessment): a catalogue fact (exactly one known printing exists, >=0.98
+confidence) or a trained-classifier suggestion clearing
+`session.CONFIDENCE_AUTOCOMMIT` (0.95, calibrated against real
+cross-validated accuracy -- see foil_features.py/train_foil_classifier.py)
+overrides the operator's declared batch variant outright. Below that bar,
+the assessment is still logged but never acted on, so most cards -- the
+ones the model isn't confident about -- fall through to the operator's own
+call rather than a shaky guess.
 """
 
 from dataclasses import dataclass, field

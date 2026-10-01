@@ -12,7 +12,9 @@ from decimal import Decimal
 import pytest
 
 from automation_control.adapters.ebay import EbayApiError
-from automation_control.adapters.ebay_trading import EbayTradingReadAdapter, parse_active_listings, parse_item_condition
+from automation_control.adapters.ebay_trading import (
+    EbayTradingReadAdapter, parse_active_listings, parse_item_condition, parse_item_details,
+)
 
 SUCCESS_ONE_PAGE = """<?xml version='1.0' encoding='UTF-8'?>
 <GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents">
@@ -262,6 +264,64 @@ async def test_get_item_condition_calls_getitem_with_the_right_item_id():
     condition = await adapter.get_item_condition("267900001111")
 
     assert condition.condition_id == "3000"
+    url, headers, body = client.calls[0]
+    assert headers["X-EBAY-API-CALL-NAME"] == "GetItem"
+    assert "<ItemID>267900001111</ItemID>" in body
+
+
+# --- get_item_details / parse_item_details: the photo/description backfill ---
+
+GET_ITEM_WITH_PHOTOS_AND_DESCRIPTION = """<?xml version='1.0' encoding='UTF-8'?>
+<GetItemResponse xmlns="urn:ebay:apis:eBLBaseComponents">
+<Ack>Success</Ack>
+<Item>
+<ItemID>267900001111</ItemID>
+<PictureDetails>
+<PictureURL>https://i.ebayimg.com/00/s/a.jpg</PictureURL>
+<PictureURL>https://i.ebayimg.com/00/s/b.jpg</PictureURL>
+</PictureDetails>
+<Description>&lt;p&gt;Near mint, ships tracked.&lt;/p&gt;</Description>
+</Item>
+</GetItemResponse>"""
+
+GET_ITEM_WITH_NEITHER = """<?xml version='1.0' encoding='UTF-8'?>
+<GetItemResponse xmlns="urn:ebay:apis:eBLBaseComponents">
+<Ack>Success</Ack>
+<Item>
+<ItemID>267900001111</ItemID>
+</Item>
+</GetItemResponse>"""
+
+
+def test_parse_item_details_reads_every_picture_url_in_order():
+    details = parse_item_details(GET_ITEM_WITH_PHOTOS_AND_DESCRIPTION)
+    assert details.picture_urls == ["https://i.ebayimg.com/00/s/a.jpg", "https://i.ebayimg.com/00/s/b.jpg"]
+
+
+def test_parse_item_details_reads_the_description():
+    details = parse_item_details(GET_ITEM_WITH_PHOTOS_AND_DESCRIPTION)
+    assert details.description == "<p>Near mint, ships tracked.</p>"
+
+
+def test_parse_item_details_handles_an_item_with_neither():
+    details = parse_item_details(GET_ITEM_WITH_NEITHER)
+    assert details.picture_urls == []
+    assert details.description is None
+
+
+def test_parse_item_details_raises_with_ebays_own_message_on_failure():
+    with pytest.raises(EbayApiError, match="invalid"):
+        parse_item_details(GET_ITEM_FAILURE)
+
+
+@pytest.mark.asyncio
+async def test_get_item_details_calls_getitem_with_the_right_item_id():
+    client = _FakeClient([GET_ITEM_WITH_PHOTOS_AND_DESCRIPTION])
+    adapter = EbayTradingReadAdapter("tok", "app-id", environment="production", client=client)
+
+    details = await adapter.get_item_details("267900001111")
+
+    assert details.picture_urls == ["https://i.ebayimg.com/00/s/a.jpg", "https://i.ebayimg.com/00/s/b.jpg"]
     url, headers, body = client.calls[0]
     assert headers["X-EBAY-API-CALL-NAME"] == "GetItem"
     assert "<ItemID>267900001111</ItemID>" in body

@@ -1,21 +1,25 @@
 """Turn "is this actually foil?" into labelled data instead of a one-off fix.
 
-`assess_foil` runs on every card as it's scanned and logs a guess, but
-deliberately never picks the committed variant -- there's no confirmed
-sample yet to say its threshold means anything (see that module's
-docstring). The first real check of that threshold (2026-09-06, against 758
-items) found no separation between "normal" and its flagged candidates: a
-single noise-centred bell curve, not two clusters. Two confirmed
-reverse-holos that same night sat at body_bias 6 and 12, clearly outside
-that noise band -- real signal, but two points is not a calibration.
+`assess_foil` runs on every card as it's scanned and logs a guess. The
+original weak signal (body_bias) never picked the committed variant on its
+own -- the first real check of it (2026-09-06, against 758 items) found no
+separation between "normal" and its flagged candidates: a single
+noise-centred bell curve, not two clusters. Two confirmed reverse-holos
+that same night sat at body_bias 6 and 12, clearly outside that noise band
+-- real signal, but two points is not a calibration.
 
-This page is where more of those points come from. It surfaces one
-candidate at a time -- an inventory item filed as one printing whose photo
-the weak signal thinks looks like another -- and asks a human to confirm or
-reject it. Every answer is kept as a `FoilLabel` row (metrics included) so
-the threshold can eventually be set from real confirmed examples across
-every set, not a guess. A "yes" also re-files the item immediately, using
-the same merge-or-create logic `commit_card` uses for a normal scan.
+This page is where those calibration points come from, and it's still the
+right place to build more: it surfaces one candidate at a time -- an
+inventory item filed as one printing whose photo the weak signal thinks
+looks like another -- and asks a human to confirm or reject it. Every
+answer is kept as a `FoilLabel` row (metrics included). That labelled data
+is what `scripts/train_foil_classifier.py` actually trains on, and its
+resulting model **does** now pick the committed variant on its own once
+confident enough (>=0.95, see scan_ingest/session.py's
+CONFIDENCE_AUTOCOMMIT) -- this page keeps feeding it better labels, not
+gating whether a card ever gets auto-filed at all. A "yes" also re-files
+the item immediately, using the same merge-or-create logic `commit_card`
+uses for a normal scan.
 """
 
 import json
@@ -128,7 +132,17 @@ def _compute_candidates(session: Session) -> list[dict]:
 def _pending(session: Session) -> list[dict]:
     candidates = _load_or_compute(session)
     labeled = _labeled_item_ids(session)
-    return [c for c in candidates if c["item_id"] not in labeled]
+    still_held = set(session.scalars(select(InventoryItem.id)))
+    # A cached candidate whose InventoryItem has since been deleted or
+    # merged elsewhere (another decide's merge-or-create, a manual
+    # cleanup) is a dead end -- and since the page only ever renders
+    # pending[0], one stale entry at the front jams the whole queue: every
+    # image request and every decide POST 404s, with no way to skip past
+    # it (confirmed live, 2026-09-25 -- see FoilLabel commit history for
+    # the item, deleted after this cache was built). Filtered here rather
+    # than only fixed by a manual rescan, so a future deletion elsewhere
+    # can't wedge this page again.
+    return [c for c in candidates if c["item_id"] not in labeled and c["item_id"] in still_held]
 
 
 @router.get("", response_class=HTMLResponse)
@@ -285,4 +299,8 @@ _STYLE = """<style>
 .variant-btn.current{border-color:var(--accent-2)}
 .variant-btn .tag{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
   color:var(--text-dim);background:var(--surface-sunken);padding:2px 7px;border-radius:999px}
+@media (max-width: 500px) {
+  .foil-card{padding:14px}
+  .variant-btn{flex-basis:100px;padding:12px 8px}
+}
 </style>"""

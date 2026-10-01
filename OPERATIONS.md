@@ -18,12 +18,16 @@ sudo journalctl -u ezbay -f
 | Timer | Schedule | What |
 |---|---|---|
 | `inventory-audit.timer` | hourly, 22:00→14:00 | Photo-identity audit (read-only) |
-| `foil-refresh.timer` | hourly, 22:00→14:00 | Refreshes `/foil-review` candidates (read-only) |
-| `sheet-check.timer` | daily, 20:30 | Reports stuck sheets in `watch/` (read-only) |
-| `scanbd-restart.timer` | daily, 14:00 | Restarts `scanbd` pre-emptively |
+| `scanbd-restart.timer` | daily, 00:00 | Restarts `scanbd` pre-emptively |
 | `pokemonpricetracker-backfill.timer` | daily, 12:00 | Prices already-scanned inventory via the paid API — **rate-limit-sensitive, see below** |
 | `ebay-order-import.timer` | every 10 min | Polls eBay orders, reflects a sale onto the matching `ShopListing` — see below |
+| `ebay-listings-refresh.timer` | hourly | Refreshes the mirrored eBay listing cache |
+| `ebay-price-import.timer` | daily, approximately 03:17 | Refreshes eBay market prices |
+| `market-watch-scan.timer` | twice daily | Refreshes AU/JP collectible watches |
 | `restic-backup.timer` | daily, 03:00 | Whole-filesystem encrypted backup to OneDrive (pre-existing, not built by this project) |
+| `restic-check-monthly.timer` | monthly | Checks backup-repository integrity |
+| `restic-maintenance.timer` | weekly | Applies retention and repository maintenance |
+| `ezbay-reconciliation-audit.timer` | daily, 03:17 | Inventory-vs-listings drift audit (read-only) — shown on the dashboard and in logs |
 
 ```bash
 sudo systemctl list-timers --all
@@ -63,26 +67,37 @@ restic -r <repo> restore <snapshot-id> --target /tmp/restore --include /home/nic
 Repository location and password are in `/etc/restic-onedrive/` — not printed here
 per the "never print secrets" rule; confirmed to exist, not read.
 
-## Deploying a code change
+## Deploying a release
 
 ```bash
 cd /home/nic/automation-platform
-git pull                                      # or: apply the local commit
-.venv/bin/python -m pytest -q                 # must be green before restarting
+git status --short                            # must be clean
+git describe --tags --always --dirty          # record exactly what will run
+.venv/bin/python -m pytest -q                 # must be green
+.venv/bin/alembic current                     # must match head
+.venv/bin/alembic check                       # must report no new operations
+sqlite3 automation.db ".backup '/home/nic/backups/automation-pre-release-$(date +%Y%m%d-%H%M%S).db'"
 sudo systemctl restart ezbay                  # for API/dashboard changes
 sudo systemctl restart scan-ingest            # for scan_ingest pipeline changes
+curl --fail http://127.0.0.1:8080/health
 ```
 
-Always run the test suite before restarting a live service — this has been the
-working pattern all of tonight's session and caught real regressions before deploy.
+Deploy only committed, tagged revisions. Settings shows both the Git revision and
+database revision currently in use. If smoke checks fail, stop writers, restore the
+pre-release database only when the release included a data migration, return to the
+previous tag and restart both services.
 
-## Running a migration script
+## Running a schema migration
 
 ```bash
-.venv/bin/python -m scripts.migrate_<name> --dry-run   # review first
-.venv/bin/python -m scripts.migrate_<name>              # then commit
+.venv/bin/alembic current
+.venv/bin/alembic upgrade head
+.venv/bin/alembic check
 ```
-Take a manual backup first (above) regardless of what the nightly restic run last did.
+
+Take a manual backup first regardless of what the nightly restic run last did. The
+scripts under `scripts/migrations/` are pre-Alembic history and must not be used for
+new schema work. Production was baselined at `20261001_01` on 1 October 2026.
 
 ## Rate-limit-sensitive: pokemonpricetracker.com
 
@@ -117,6 +132,35 @@ Once configured, enable it the same way as any other timer:
 ```bash
 sudo systemctl enable --now ebay-order-import.timer
 ```
+
+## Inventory-vs-listings reconciliation audit
+
+`scripts/audit_inventory_vs_listings.py` (run nightly via
+`ezbay-reconciliation-audit.timer` / `scripts/run-reconciliation-audit.sh`)
+formalizes four checks found and fixed by hand on 2026-09-28/29 after a
+real overselling bug (a sold card was never marked sold in inventory —
+see `automation_control/stock.py`'s `decrement_listing_quantity`): sold
+orders whose inventory is still AVAILABLE, ACTIVE listings whose
+inventory is gone/sold, the same inventory item behind two ACTIVE
+listings, and variation listings mixing languages among their children.
+
+Read-only — it only reports. Per the owner decision on 1 October 2026, operational
+alerts are dashboard-only; Discord/email should not be configured as the incident
+channel. Findings remain visible through the dashboard health state and logs.
+
+```bash
+sudo systemctl status ezbay-reconciliation-audit.timer
+sudo journalctl -u ezbay-reconciliation-audit -f
+.venv/bin/python -m scripts.audit_inventory_vs_listings   # run on demand
+```
+
+If a finding turns out to be real drift rather than noise, the same
+one-off repair scripts from the original incident still apply:
+`scripts/repair_inventory_after_ebay_sales.py` (inventory left
+AVAILABLE after a real sale) and
+`scripts/repair_active_listings_with_sold_inventory.py` (a listing left
+ACTIVE after its own inventory sold) — both idempotent, both take
+`--dry-run`.
 
 ## Other Docker containers on this host
 

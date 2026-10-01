@@ -44,6 +44,16 @@ GAMES: dict[str, Game] = {g.key: g for g in (
     # SDBH turned out to be this game instead, identified via eBay/Google
     # Lens reverse image search).
     Game("dragon_ball_super_divers", "Dragon Ball Super Divers", "Dragon Ball Super Divers (Japanese arcade card game)"),
+    # Bandai's original late-1980s/1990s Japanese vending-machine cards.
+    # Their continuous collector numbers and set parts are unrelated to
+    # the later Score, Panini, Masters, Fusion World, Heroes or Divers
+    # games, so keeping a distinct key prevents similarly named cards from
+    # being filed into the wrong Dragon Ball product line.
+    Game("dragon_ball_carddass", "Dragon Ball Carddass (Japanese)", "vintage Japanese Dragon Ball Carddass Hondan cards"),
+    # Collector-made foil art cards sold under DBHA numbers.  These are
+    # deliberately not labelled Super Dragon Ball Heroes: the publisher's
+    # own product collection calls them unofficial SDBH-inspired cards.
+    Game("dragon_ball_art_card", "Dragon Ball Art Cards (Unofficial)", "unofficial Dragon Ball character art cards"),
 )}
 
 # Display names for every game the scanner knows, Pokemon included.

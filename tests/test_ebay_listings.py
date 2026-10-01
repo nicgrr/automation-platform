@@ -109,11 +109,129 @@ def test_a_second_refresh_updates_price_rather_than_duplicating_the_row(client, 
     assert rows[0].current_price_minor == 1500
 
 
+def test_refresh_preserves_imported_bundle_details(client, session):
+    session.add(EbayListing(
+        ebay_listing_id="111", title="Legacy bundle", currency="AUD",
+        current_price_minor=1000, listing_status="Active", quantity=1,
+        raw_snapshot={
+            "source": "trading_api", "seller_reference": "NIC-10",
+            "bundle_contents": [{
+                "name": "Zapdos ex", "set": "Black Star Promos",
+                "number": "SVP 049", "rarity": "Promo",
+            }],
+            "inventory_overlap_review": {"status": "confirmed_distinct"},
+        },
+    ))
+    session.commit()
+
+    with patch("automation_control.ebay_listings.ebay_services", return_value=_FAKE_SERVICES), \
+         patch("automation_control.ebay_listings.valid_user_access_token", new=AsyncMock(return_value="tok")), \
+         patch("automation_control.ebay_listings.EbayTradingReadAdapter") as adapter_cls:
+        adapter_cls.return_value.get_active_listings = AsyncMock(return_value=[_listing(price="15.00")])
+        client.post("/ebay-listings/refresh")
+
+    row = session.query(EbayListing).one()
+    assert row.current_price_minor == 1500
+    assert row.raw_snapshot["seller_reference"] == "NIC-10"
+    assert row.raw_snapshot["bundle_contents"][0]["number"] == "SVP 049"
+    assert row.raw_snapshot["inventory_overlap_review"]["status"] == "confirmed_distinct"
+
+    list_page = client.get("/ebay-listings").text
+    assert "href='/ebay-listings/111'" in list_page
+    assert "1 cards" in list_page  # the tile's bundle-size flag
+
+    detail_page = client.get("/ebay-listings/111").text
+    assert "1 exact card imported" in detail_page
+    assert "Zapdos ex" in detail_page
+    assert "SVP 049" in detail_page
+    assert "Confirmed as separate physical copies" in detail_page
+
+
+# --- reconciliation by absence (2026-09-27) -- GetMyeBaySelling's
+# ActiveList only ever reports what's still active, so a listing that
+# fell off it (ended, sold through) needs the fetch that no longer sees
+# it to be the thing that notices, not another separate check. Real
+# incident this closes: 7 listings ended by hand on eBay stayed "Active"
+# in this cache through a real refresh, and kept blocking re-export for
+# good since ebay_bulk_export.py's _active_variation_parents treats
+# "Active" as gospel. ------------------------------------------------
+
+def test_a_listing_missing_from_a_fresh_fetch_is_marked_ended(client, session):
+    session.add(EbayListing(ebay_listing_id="222", title="Old Item", currency="AUD",
+                            current_price_minor=1000, listing_status="Active", quantity=1))
+    session.commit()
+
+    with patch("automation_control.ebay_listings.ebay_services", return_value=_FAKE_SERVICES), \
+         patch("automation_control.ebay_listings.valid_user_access_token", new=AsyncMock(return_value="tok")), \
+         patch("automation_control.ebay_listings.EbayTradingReadAdapter") as adapter_cls:
+        # The fresh ActiveList has one real listing on it -- "222" simply
+        # isn't among them, exactly like a listing the seller ended.
+        adapter_cls.return_value.get_active_listings = AsyncMock(return_value=[_listing(item_id="111")])
+        client.post("/ebay-listings/refresh")
+
+    row = session.query(EbayListing).filter_by(ebay_listing_id="222").one()
+    assert row.listing_status == "Ended"
+
+
+def test_an_ended_listing_is_never_resurrected_by_a_later_fetch_still_not_seeing_it(client, session):
+    """Once marked Ended, a row must not flip back and forth on every
+    refresh -- only actually reappearing in a fresh ActiveList should
+    ever make something Active again."""
+    session.add(EbayListing(ebay_listing_id="222", title="Old Item", currency="AUD",
+                            current_price_minor=1000, listing_status="Ended", quantity=1))
+    session.commit()
+
+    with patch("automation_control.ebay_listings.ebay_services", return_value=_FAKE_SERVICES), \
+         patch("automation_control.ebay_listings.valid_user_access_token", new=AsyncMock(return_value="tok")), \
+         patch("automation_control.ebay_listings.EbayTradingReadAdapter") as adapter_cls:
+        adapter_cls.return_value.get_active_listings = AsyncMock(return_value=[_listing(item_id="111")])
+        client.post("/ebay-listings/refresh")
+
+    row = session.query(EbayListing).filter_by(ebay_listing_id="222").one()
+    assert row.listing_status == "Ended"
+
+
+def test_an_empty_fresh_fetch_reconciles_nothing_rather_than_ending_everything(client, session):
+    """A zero-length ActiveList is far more likely a transient fetch
+    problem than every listing ending at once -- treating it as gospel
+    would risk wiping out a whole account's Active status over one bad
+    response."""
+    session.add(EbayListing(ebay_listing_id="222", title="Old Item", currency="AUD",
+                            current_price_minor=1000, listing_status="Active", quantity=1))
+    session.commit()
+
+    with patch("automation_control.ebay_listings.ebay_services", return_value=_FAKE_SERVICES), \
+         patch("automation_control.ebay_listings.valid_user_access_token", new=AsyncMock(return_value="tok")), \
+         patch("automation_control.ebay_listings.EbayTradingReadAdapter") as adapter_cls:
+        adapter_cls.return_value.get_active_listings = AsyncMock(return_value=[])
+        client.post("/ebay-listings/refresh")
+
+    row = session.query(EbayListing).filter_by(ebay_listing_id="222").one()
+    assert row.listing_status == "Active"
+
+
+def test_a_listing_still_present_stays_active_and_is_not_touched_by_reconciliation(client, session):
+    session.add(EbayListing(ebay_listing_id="111", title="Old Title", currency="AUD",
+                            current_price_minor=1000, listing_status="Active", quantity=1))
+    session.commit()
+
+    with patch("automation_control.ebay_listings.ebay_services", return_value=_FAKE_SERVICES), \
+         patch("automation_control.ebay_listings.valid_user_access_token", new=AsyncMock(return_value="tok")), \
+         patch("automation_control.ebay_listings.EbayTradingReadAdapter") as adapter_cls:
+        adapter_cls.return_value.get_active_listings = AsyncMock(return_value=[_listing(item_id="111", price="20.00")])
+        client.post("/ebay-listings/refresh")
+
+    row = session.query(EbayListing).filter_by(ebay_listing_id="111").one()
+    assert row.listing_status == "Active"
+    assert row.current_price_minor == 2000
+
+
 def test_a_delisted_item_stops_appearing_on_the_page_but_the_row_stays(client, session):
     """A listing that ends is simply absent from the next refresh's
-    results -- there is no explicit "ended" signal from this call to act
-    on, so the row is left as the last-known state rather than guessed at
-    or deleted."""
+    results -- there is no explicit "ended" signal from this call, only
+    absence to reconcile against (see the tests above this one). Either
+    way the row itself is kept, not deleted, so its history stays
+    intact -- only listing_status changes underneath it."""
     with patch("automation_control.ebay_listings.ebay_services", return_value=_FAKE_SERVICES), \
          patch("automation_control.ebay_listings.valid_user_access_token", new=AsyncMock(return_value="tok")), \
          patch("automation_control.ebay_listings.EbayTradingReadAdapter") as adapter_cls:
@@ -146,8 +264,152 @@ def test_the_view_item_link_points_at_the_real_ebay_listing(client):
         adapter_cls.return_value.get_active_listings = AsyncMock(return_value=[_listing("267785450003")])
         client.post("/ebay-listings/refresh")
 
+    list_page = client.get("/ebay-listings").text
+    assert "href='/ebay-listings/267785450003'" in list_page
+
+    detail_page = client.get("/ebay-listings/267785450003").text
+    assert "href='https://x/267785450003'" in detail_page
+
+
+# --- tile grid + detail page --------------------------------------------
+
+def test_a_listing_with_a_cached_photo_shows_it_on_the_tile(client, session):
+    session.add(EbayListing(
+        ebay_listing_id="1", title="Pikachu", currency="AUD", current_price_minor=500,
+        listing_status="Active", quantity=1,
+        raw_snapshot={"source": "trading_api", "image_urls": ["https://i.ebayimg.com/pika.jpg"]},
+    ))
+    session.commit()
+
     page = client.get("/ebay-listings").text
-    assert "href='https://x/267785450003'" in page
+
+    assert "src='https://i.ebayimg.com/pika.jpg'" in page
+    assert "No photo cached" not in page
+
+
+def test_rendered_tiles_are_capped_at_200_but_stats_still_cover_everything(client, session):
+    """Matches shop_listings_admin.py's own pattern: the individual cards
+    rendered on the page are capped, but the aggregate stats above them
+    (Active listings count, total value) must still reflect every row --
+    those numbers going wrong because of a rendering cap would be worse
+    than the cap itself."""
+    for i in range(205):
+        session.add(EbayListing(ebay_listing_id=str(i), title=f"Card {i}", currency="AUD",
+                                current_price_minor=100, listing_status="Active", quantity=1,
+                                raw_snapshot={"source": "trading_api"}))
+    session.commit()
+
+    page = client.get("/ebay-listings").text
+
+    assert page.count("class='ebay-tile'") == 200
+    assert "205 of 200 shown" not in page  # wrong order would read backwards
+    assert "200 of 205 shown, capped at 200 rows." in page
+    assert "<div class='value'>205</div>" in page  # the stats total, uncapped
+
+
+def test_a_listing_with_no_cached_photo_shows_a_placeholder(client, session):
+    session.add(EbayListing(ebay_listing_id="1", title="Pikachu", currency="AUD",
+                            current_price_minor=500, listing_status="Active", quantity=1,
+                            raw_snapshot={"source": "trading_api"}))
+    session.commit()
+
+    page = client.get("/ebay-listings").text
+
+    assert "No photo cached" in page
+
+
+def test_detail_page_shows_every_cached_photo_not_just_the_first(client, session):
+    session.add(EbayListing(
+        ebay_listing_id="1", title="Bundle", currency="AUD", current_price_minor=1000,
+        listing_status="Active", quantity=1,
+        raw_snapshot={"source": "trading_api", "image_urls": ["https://x/a.jpg", "https://x/b.jpg", "https://x/c.jpg"]},
+    ))
+    session.commit()
+
+    page = client.get("/ebay-listings/1").text
+
+    assert page.count("<img src=") == 3
+    assert "https://x/a.jpg" in page and "https://x/b.jpg" in page and "https://x/c.jpg" in page
+
+
+def test_detail_page_shows_price_qty_and_sold(client, session):
+    session.add(EbayListing(ebay_listing_id="1", title="Pikachu", currency="AUD",
+                            current_price_minor=1250, listing_status="Active", quantity=3,
+                            raw_snapshot={"source": "trading_api", "quantity_sold": 7}))
+    session.commit()
+
+    page = client.get("/ebay-listings/1").text
+
+    assert "AUD $12.50" in page
+    assert ">3<" in page
+    assert ">7<" in page
+
+
+def test_detail_page_notes_it_is_read_only(client, session):
+    session.add(EbayListing(ebay_listing_id="1", title="Pikachu", currency="AUD",
+                            current_price_minor=500, listing_status="Active",
+                            raw_snapshot={"source": "trading_api"}))
+    session.commit()
+
+    page = client.get("/ebay-listings/1").text
+
+    assert "no way to edit a live listing from here yet" in page
+
+
+def test_detail_page_404s_for_an_unknown_listing(client):
+    assert client.get("/ebay-listings/does-not-exist").status_code == 404
+
+
+def test_detail_page_404s_for_a_sell_api_sourced_row(client, session):
+    """The Sell API sync writes into the same shared table with a
+    different `source` tag -- this route is scoped to trading_api rows
+    only, same guard `_cached_rows` already applies to the list page."""
+    session.add(EbayListing(ebay_listing_id="1", title="Pikachu", currency="AUD",
+                            current_price_minor=500, listing_status="Active",
+                            raw_snapshot={"source": "sell_api"}))
+    session.commit()
+
+    assert client.get("/ebay-listings/1").status_code == 404
+
+
+def test_detail_page_shows_a_cached_description_in_a_sandboxed_frame(client, session):
+    session.add(EbayListing(ebay_listing_id="1", title="Pikachu", currency="AUD",
+                            current_price_minor=500, listing_status="Active",
+                            raw_snapshot={"source": "trading_api", "description": "<p>Near mint</p>"}))
+    session.commit()
+
+    page = client.get("/ebay-listings/1").text
+
+    assert "sandbox=\"\"" in page
+    assert "Near mint" in page
+    assert "No description cached" not in page
+
+
+def test_detail_page_says_when_no_description_is_cached(client, session):
+    session.add(EbayListing(ebay_listing_id="1", title="Pikachu", currency="AUD",
+                            current_price_minor=500, listing_status="Active",
+                            raw_snapshot={"source": "trading_api"}))
+    session.commit()
+
+    page = client.get("/ebay-listings/1").text
+
+    assert "No description cached for this listing yet" in page
+
+
+def test_a_malicious_description_cannot_break_out_of_the_srcdoc_attribute(client, session):
+    """A description containing a literal double-quote must not be able
+    to close the srcdoc="..." attribute early and inject an attribute of
+    its own onto the iframe tag."""
+    session.add(EbayListing(ebay_listing_id="1", title="Pikachu", currency="AUD",
+                            current_price_minor=500, listing_status="Active",
+                            raw_snapshot={"source": "trading_api",
+                                         "description": '"><script>alert(1)</script>'}))
+    session.commit()
+
+    page = client.get("/ebay-listings/1").text
+
+    assert "<script>alert(1)</script>" not in page
+    assert "&quot;&gt;&lt;script&gt;" in page
 
 
 def test_settings_links_to_the_page_when_checked(client, session):

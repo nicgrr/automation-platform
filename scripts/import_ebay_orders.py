@@ -159,7 +159,7 @@ async def run(args) -> int:
 
                 if isinstance(target, ShopListing):
                     record.shop_listing_id = target.id
-                new_quantity = decrement_listing_quantity(target, quantity)
+                new_quantity = decrement_listing_quantity(session, target, quantity)
                 if link is not None and new_quantity is not None:
                     link.last_pushed_quantity = new_quantity
                     if new_quantity == 0:

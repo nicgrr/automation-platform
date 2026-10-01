@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+.claude/
 .env
 .env.*
 !.env.example
@@ -19,6 +20,14 @@ listing_pipeline_data/*
 scan_ingest_data/*
 !scan_ingest_data/session.env.example
 captured_cards/
+# Local safety snapshots and review crops are operational data, not source.
+# Older recovery artifacts already committed under backups/ remain tracked;
+# these rules only keep new generated material out of release commits.
+/backups/*.db
+/backups/*.sqlite
+/backups/*.sqlite3
+/backups/review-crops-*/
+/backups/*relink*.json
 *.egg-info/
 *.db-wal
 *.db-shm
@@ -40,3 +49,4 @@ static/personal_collection_photos/*
 /ebay_variation*.csv
 /ebay-category-listing-template.csv
 /cards_by_set_review.csv
+/ebay_fix*.csv

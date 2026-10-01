@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.api import app
+from automation_control.adapters.ebay import EbaySandboxReadAdapter
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard
@@ -50,6 +51,17 @@ def test_market_search_page_requires_login():
     app.dependency_overrides.clear()
     resp = TestClient(app).get("/market-search")
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_ebay_adapter_sends_official_item_location_filter():
+    adapter = EbaySandboxReadAdapter("token", environment="production")
+    adapter._get = AsyncMock(return_value={"itemSummaries": []})
+
+    await adapter.search_market("Sonny Angel", marketplace="EBAY_AU", item_location_country="JP")
+
+    assert adapter._get.await_args.kwargs["params"]["filter"] == "itemLocationCountry:JP"
+    assert adapter._get.await_args.kwargs["headers"]["X-EBAY-C-MARKETPLACE-ID"] == "EBAY_AU"
 
 
 def test_blank_query_shows_a_prompt_not_a_search(client):
@@ -100,25 +112,48 @@ def test_search_failure_is_handled_gracefully(client, configured_settings):
     assert "failed" in resp.text.lower()
 
 
-def test_marketplace_selector_defaults_to_australia_and_offers_international(client):
+def test_location_selector_defaults_to_australia_and_offers_japan(client):
     resp = client.get("/market-search")
-    assert "<option value='EBAY_AU' selected>Australia</option>" in resp.text
-    assert "International (US)" in resp.text
+    assert "<option value='AU' selected>Australia</option>" in resp.text
+    assert "<option value='JP'>Japan</option>" in resp.text
+    assert "International (US)" not in resp.text
 
 
-def test_choosing_international_marketplace_is_passed_to_the_search(client, configured_settings):
+def test_choosing_japan_is_passed_as_an_item_location_filter(client, configured_settings):
     with patch("automation_control.ebay_oauth.EbayOAuthClient.application_token", new=AsyncMock(return_value={"access_token": "app-token"})), \
          patch("automation_control.market_search.EbaySandboxReadAdapter.search_market", new=AsyncMock(return_value={"itemSummaries": []})) as mocked:
-        resp = client.get("/market-search?q=charizard&marketplace=EBAY_US")
+        resp = client.get("/market-search?q=charizard&country=JP")
 
     assert resp.status_code == 200
-    assert "<option value='EBAY_US' selected>International (US)</option>" in resp.text
-    mocked.assert_awaited_once_with("charizard", marketplace="EBAY_US")
+    assert "<option value='JP' selected>Japan</option>" in resp.text
+    mocked.assert_awaited_once_with("charizard", marketplace="EBAY_AU", item_location_country="JP")
 
 
-def test_an_unknown_marketplace_falls_back_to_the_default(client):
-    resp = client.get("/market-search?marketplace=EBAY_XX")
-    assert "<option value='EBAY_AU' selected>Australia</option>" in resp.text
+def test_an_unknown_country_falls_back_to_the_default(client):
+    resp = client.get("/market-search?country=US")
+    assert "<option value='AU' selected>Australia</option>" in resp.text
+
+
+def test_json_market_search_is_also_restricted_to_requested_allowed_country(client, configured_settings):
+    with patch("automation_control.ebay_oauth.EbayOAuthClient.application_token", new=AsyncMock(return_value={"access_token": "app-token"})), \
+         patch("automation_control.api.EbaySandboxReadAdapter.search_market", new=AsyncMock(return_value={
+             "itemSummaries": [
+                 {"itemId": "jp-1", "title": "Japan item", "price": {"value": "1000", "currency": "JPY"}, "itemLocation": {"country": "JP"}},
+                 {"itemId": "us-1", "title": "Unexpected item", "price": {"value": "10", "currency": "USD"}, "itemLocation": {"country": "US"}},
+             ]
+         })) as mocked:
+        resp = client.get("/api/ebay/market-search?q=Sonny+Angel&country=JP")
+
+    assert resp.status_code == 200
+    assert resp.json()["country"] == "JP"
+    assert [item["ebay_item_id"] for item in resp.json()["items"]] == ["jp-1"]
+    mocked.assert_awaited_once_with("Sonny Angel", marketplace="EBAY_AU", item_location_country="JP")
+
+
+def test_json_market_search_rejects_country_outside_australia_and_japan(client):
+    resp = client.get("/api/ebay/market-search?q=Sonny+Angel&country=US")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Seller location must be Australia or Japan"
 
 
 def test_pasting_a_link_uses_its_page_title_as_the_search(client, configured_settings):
@@ -171,7 +206,7 @@ def test_screenshot_search_shows_lens_results_as_pickable_links_not_an_auto_sear
 
     assert resp.status_code == 200
     assert "Sonny Angel Animal Series 1 Monkey" in resp.text
-    assert "href='/market-search?q=Sonny%20Angel%20Animal%20Series%201%20Monkey&marketplace=EBAY_AU'" in resp.text
+    assert "href='/market-search?q=Sonny%20Angel%20Animal%20Series%201%20Monkey&country=AU'" in resp.text
 
 
 def test_screenshot_search_failure_shows_the_real_error(client, apify_token):

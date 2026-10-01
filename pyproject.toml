@@ -7,6 +7,7 @@ name = "personal-automation-platform"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+  "alembic>=1.13,<2",
   "anthropic>=0.69,<1",
   "boto3>=1.34,<2",
   "cryptography>=43,<47",
@@ -35,7 +36,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<1"]
+# Starlette 1.x still falls back to legacy httpx when httpx2 is absent, but
+# that compatibility path hangs this suite's TestClient requests.  httpx is
+# retained above for the application's outbound clients; httpx2 is the
+# test-client runtime Starlette now prefers.
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<1", "httpx2>=2,<3"]
 
 [tool.setuptools.packages.find]
 include = ["automation_control*"]

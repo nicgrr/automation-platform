@@ -76,6 +76,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 80px; }
 .pill.bad { background: var(--danger-bg); color: var(--danger); }
 .pill.warn { background: var(--warning-bg); color: var(--warning); }
 .pill.neutral { background: var(--neutral-bg); color: var(--accent); }
+.pill.info { background: rgba(124, 58, 237, 0.12); color: var(--accent-2); }
 
 .panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; box-shadow: var(--shadow); }
 .panel h2 { margin: 0 0 16px; font-size: 14px; letter-spacing: 0.02em; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; }
@@ -143,6 +144,13 @@ TOPBAR_STYLE = """<style>
   background:transparent;border:1px solid var(--panel-border);border-radius:8px;color:var(--text-dim);padding:0}
 .navtoggle:hover{border-color:var(--accent);color:var(--accent)}
 .navtoggle svg{width:16px;height:16px}
+.topbar-refresh{display:inline-grid;place-items:center;width:34px;height:34px;flex:none;cursor:pointer;
+  background:transparent;border:1px solid var(--panel-border);border-radius:8px;color:var(--text-dim);padding:0}
+.topbar-refresh:hover{border-color:var(--accent);color:var(--accent);filter:none}
+.topbar-refresh:disabled{opacity:.55;cursor:wait}
+.topbar-refresh svg{width:17px;height:17px}
+.topbar-refresh.is-refreshing svg{animation:refresh-spin .7s linear infinite}
+@keyframes refresh-spin{to{transform:rotate(360deg)}}
 
 .scrim{position:fixed;inset:0;background:rgba(18,20,28,.38);opacity:0;pointer-events:none;
   transition:opacity .16s ease;z-index:28}
@@ -229,47 +237,62 @@ body.nav-open .sidenav{transform:none}
 }
 </style>"""
 
-# Grouped by what you're doing, not by which pipeline the code grew out of.
-# The old grouping ("Card capture & listings" vs "Bulk scan & catalogue")
-# named two code lineages rather than two activities, which is why the same
-# task -- review something -- was split across two groups, why the label
-# "Review queue" appeared twice pointing at two different queues, and why
-# "Business" ended up a thirteen-item drawer holding shop administration,
-# a personal collection and a link-identify tool side by side.
-#
-# Each group is (title, links, collapsed); a link is (href, label).
-# `collapsed` puts the group behind a disclosure that's shut by default.
-# Nothing uses it at the moment -- the one group that did is now HIDDEN_NAV
-# below -- but it stays because it's the right answer for a group that has
-# a little data rather than none.
+# The drawer is intentionally a map of workflows, not a catalogue of every
+# route EzBay happens to expose. The old version listed 39 destinations at
+# once; seven review queues, seven capture variants and fourteen selling / buying
+# tools all competed at the same visual level. ADMIN_NAV is now the short map.
+# TOOL_NAV below remains the complete map used by Ctrl-K and the workflow hubs,
+# so condensing the drawer never makes a tool undiscoverable or breaks a saved
+# direct URL.
 ADMIN_NAV = [
-    ("Today", [
+    ("Home", [
         ("/dashboard", "Dashboard"),
         ("/analytics", "Analytics"),
+    ], False),
+    ("Stock", [
+        ("/scan-add", "Scan & add"),
+        ("/review-centre", "Review centre"),
+        ("/inventory", "Inventory"),
+        ("/personal-collection", "Personal collection"),
+    ], False),
+    ("Selling", [
+        ("/ebay", "eBay"),
+        ("/nl-vault", "NL Vault shop"),
+    ], False),
+    ("Buying & research", [
+        ("/retailer-goals", "Retailer Goals"),
+        ("/market-tools", "Market tools"),
+    ], False),
+    ("System", [
+        ("/settings", "Settings & data"),
+    ], False),
+]
+
+
+# Every individual tool remains in the command palette and on one of the
+# workflow hub pages. Keeping this separate from ADMIN_NAV is the important
+# part: the drawer stays calm while Ctrl-K still answers precise requests such
+# as "foil", "bulk cards" or "eBay export" in one step.
+TOOL_NAV = [
+    ("Scanning", [
         ("/feed", "Scan feed"),
         ("/scan-ingest", "Scanner status & logs"),
-        ("/settings", "Settings"),
     ], False),
     ("Review", [
         ("/review", "Scan crops"),
-        ("/foil-review", "Foil"),
+        ("/foil-review", "Foil review"),
         ("/inventory-audit", "Photo audit"),
         ("/collectibles/review", "Photographed collectibles"),
         ("/accessories/review", "Photographed supplies"),
         ("/cards/review", "Photographed cards"),
-        ("/cards/pricing", "Prices"),
+        ("/cards/pricing", "Card price review"),
     ], False),
-    ("Stock", [
-        ("/inventory", "Inventory"),
+    ("Inventory", [
         ("/search", "Search catalogue"),
         ("/sealed-products", "Sealed products"),
         ("/collectibles", "Collectibles"),
         ("/accessories", "Card supplies"),
-        ("/personal-collection", "Personal collection"),
     ], False),
-    # Both ways stock enters the business, together: the flatbed scanner
-    # for pile-processing at the desk, the camera for anything found while
-    # out. They were previously three groups apart.
     ("Add stock", [
         ("/cards/capture", "Photograph a card"),
         ("/collectibles/capture", "Photograph a collectible"),
@@ -279,21 +302,54 @@ ADMIN_NAV = [
         ("/accessories/capture/bulk", "Bulk upload supplies"),
         ("/collectibles/identify", "Identify from a link"),
     ], False),
-    ("Sell & buy", [
+    ("NL Vault", [
         ("/shop-listings", "Shop listings"),
         ("/shop-pricing", "Shop pricing"),
         ("/shop-orders", "Shop orders"),
         ("/contact-messages", "Contact messages"),
+    ], False),
+    ("eBay", [
         ("/listings/review", "eBay drafts (unpublished)"),
         ("/ebay-listings", "eBay live listings"),
+        ("/ebay-sales", "eBay sales (pack assistant)"),
+        ("/ebay-export", "eBay bulk upload file"),
+    ], False),
+    ("Market tools", [
         ("/market-search", "Market search"),
+        ("/market-watch", "Sonny Angel watch"),
         ("/deal-check", "Deal check"),
         ("/buying-calculator", "Buying calculator"),
         ("/release-calendar", "Release calendar"),
-        ("/ebay-export", "eBay bulk upload file"),
+    ], False),
+    ("Data", [
         ("/export", "Export data"),
     ], False),
 ]
+
+
+# Which condensed drawer item should stay highlighted while an individual
+# tool is open. The client picks the longest matching prefix, so
+# /collectibles/review correctly belongs to Review rather than the broader
+# /collectibles inventory family.
+NAV_ACTIVE_PREFIXES = {
+    "/dashboard": ("/dashboard",),
+    "/analytics": ("/analytics",),
+    "/scan-add": (
+        "/scan-add", "/feed", "/scan-ingest", "/cards/capture",
+        "/collectibles/capture", "/accessories/capture", "/collectibles/identify",
+    ),
+    "/review-centre": (
+        "/review-centre", "/review", "/foil-review", "/inventory-audit",
+        "/collectibles/review", "/accessories/review", "/cards/review", "/cards/pricing",
+    ),
+    "/inventory": ("/inventory", "/search", "/sealed-products", "/collectibles", "/accessories"),
+    "/personal-collection": ("/personal-collection",),
+    "/ebay": ("/ebay", "/listings/review", "/ebay-listings", "/ebay-sales", "/ebay-export"),
+    "/nl-vault": ("/nl-vault", "/shop-listings", "/shop-pricing", "/shop-orders", "/contact-messages"),
+    "/retailer-goals": ("/retailer-goals",),
+    "/market-tools": ("/market-tools", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar"),
+    "/settings": ("/settings", "/export"),
+}
 
 # Built, routed, and deliberately not listed anywhere.
 #
@@ -327,11 +383,15 @@ HIDDEN_NAV = [
 # Which links get a "work waiting" badge. Kept next to the nav rather than
 # inside nav_counts.py so the two halves of the contract -- what the server
 # counts, and what the drawer shows -- are visible together.
-NAV_COUNT_HREFS = {
-    "/review", "/foil-review", "/inventory-audit",
-    "/collectibles/review", "/accessories/review", "/cards/review", "/cards/pricing",
-    "/listings/review",
-}
+# Only /review-centre is actually in ADMIN_NAV (the drawer was condensed
+# from ~39 links down to today's 11 -- see ADMIN_NAV's own comment); the
+# other seven review-queue routes this set used to list are never passed
+# to _nav_link at all, so a badge span for them could never exist in the
+# DOM to begin with. Harmless as dead weight (queue_counts() below still
+# computes their real numbers, just for dashboard.py's Operations widget
+# and /review-centre's own inline breakdown, not a nav badge), but listed
+# here it read as "these have badges too", which they never did.
+NAV_COUNT_HREFS = {"/review-centre"}
 
 
 def _nav_link(href: str, label: str) -> str:
@@ -339,8 +399,9 @@ def _nav_link(href: str, label: str) -> str:
         f"<span class='navcount' data-count-for='{href}' hidden></span>"
         if href in NAV_COUNT_HREFS else ""
     )
+    prefixes = "|".join(NAV_ACTIVE_PREFIXES.get(href, (href,)))
     return (
-        f"<a href='{href}' data-nav-href='{href}'>"
+        f"<a href='{href}' data-nav-href='{href}' data-nav-prefixes='{escape(prefixes, quote=True)}'>"
         f"<span class='navlabel'>{escape(label)}</span>{badge}</a>"
     )
 
@@ -359,13 +420,12 @@ def _nav_group(title: str, links: list, collapsed: bool) -> str:
 
 
 def _sidenav_html() -> str:
-    """Every module in one drawer. Until now only /dashboard listed them
-    all, so any other page was two clicks from everywhere -- back to the
-    dashboard, then out again. /dashboard now renders its own quicklinks
-    from this same ADMIN_NAV (see dashboard.py) rather than keeping a
-    second hand-maintained copy, which is what let the two drift apart:
-    photo audit existed only on the dashboard, and eight links existed
-    only here."""
+    """The eleven workflow entrances shared by every EzBay page.
+
+    Individual tools live on their workflow hub and in Ctrl-K rather than
+    expanding this drawer back into the forty-link route catalogue it
+    replaced. The dashboard renders its quicklinks from this same source.
+    """
     groups = "".join(_nav_group(title, links, collapsed) for title, links, collapsed in ADMIN_NAV)
     return (
         "<div class='scrim' data-nav-close></div>"
@@ -394,8 +454,12 @@ def _palette_html() -> str:
     with the network down. Card search stays in the topbar box, which is
     always visible and already does exactly that."""
     rows = []
-    for title, links, _collapsed in ADMIN_NAV:
+    seen = set()
+    for title, links, _collapsed in ADMIN_NAV + TOOL_NAV:
         for href, label in links:
+            if href in seen:
+                continue
+            seen.add(href)
             rows.append(
                 f"<div class='pal-item' data-href='{href}' "
                 f"data-hay='{escape((label + ' ' + title + ' ' + href).lower(), quote=True)}'>"
@@ -417,6 +481,14 @@ def _palette_html() -> str:
 NAV_SCRIPT = r"""<script>
 (function(){
   var body = document.body;
+  document.querySelectorAll('[data-page-refresh]').forEach(function(button){
+    button.addEventListener('click', function(){
+      button.disabled = true;
+      button.classList.add('is-refreshing');
+      button.setAttribute('aria-label', 'Refreshing page');
+      location.reload();
+    });
+  });
   function nav(href){
     if (window.EzBayProgress) window.EzBayProgress.go(href); else location.href = href;
   }
@@ -439,17 +511,20 @@ NAV_SCRIPT = r"""<script>
   });
 
   // -- active page --------------------------------------------------
-  // Longest match wins, so /cards/capture/bulk highlights the bulk link
-  // rather than its parent. Done here rather than server-side because
+  // Longest alias match wins, so /collectibles/review highlights Review
+  // rather than the broader Inventory family. Done here rather than server-side because
   // page() has no request to read a path from, and threading one through
   // all fifty call sites to light up one link is a bad trade.
   (function(){
     var here = location.pathname.replace(/\/+$/, '') || '/';
     var best = null, bestLen = -1;
     document.querySelectorAll('[data-nav-href]').forEach(function(a){
-      var href = a.getAttribute('data-nav-href').replace(/\/+$/, '') || '/';
-      var hit = here === href || here.indexOf(href + '/') === 0;
-      if (hit && href.length > bestLen) { best = a; bestLen = href.length; }
+      var prefixes = (a.getAttribute('data-nav-prefixes') || a.getAttribute('data-nav-href')).split('|');
+      prefixes.forEach(function(raw){
+        var prefix = raw.replace(/\/+$/, '') || '/';
+        var hit = here === prefix || here.indexOf(prefix + '/') === 0;
+        if (hit && prefix.length > bestLen) { best = a; bestLen = prefix.length; }
+      });
     });
     if (best) {
       best.classList.add('is-active');
@@ -563,9 +638,8 @@ NAV_SCRIPT = r"""<script>
 
 _TOPBAR_NAV_LINKS = [
     ("/dashboard", "Dashboard"),
-    ("/analytics", "Analytics"),
     ("/inventory", "Inventory"),
-    ("/feed", "Scan feed"),
+    ("/review-centre", "Review"),
 ]
 
 
@@ -583,6 +657,9 @@ def _topbar_html(search_value: str = "") -> str:
         f"<input id='global-search-input' name='q' value='{safe_value}' placeholder='Search cards, sets, characters…' autocomplete='off'>"
         "<div id='global-search-results' class='autocomplete-dropdown' hidden></div>"
         "</div></form>"
+        "<button class='topbar-refresh' type='button' data-page-refresh aria-label='Refresh page' title='Refresh page'>"
+        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+        "<path d='M20 11a8.1 8.1 0 1 0 2.2 5.5'/><path d='M20 4v7h-7'/></svg></button>"
         f"<nav class='topbar-nav'>{nav}</nav>"
         "</header>"
     )
@@ -1013,6 +1090,45 @@ PROGRESS_HTML = (
     "<div class='npremain' data-progress-label hidden></div>"
 )
 
+CSRF_SCRIPT = r"""<script>
+(function(){
+  // Double-submit-cookie CSRF (added 2026-09-29, see auth.csrf_token_for):
+  // attaches the token to every form post and every fetch()-based POST
+  // automatically, so no individual page or template needs to know this
+  // exists. Independent of the progress bar below -- must not be gated
+  // on any element existing in the DOM.
+  function csrfToken(){
+    var m = document.cookie.match(/(?:^|; )rbay_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if ((form.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+    if (form.querySelector("input[name='_csrf']")) return;
+    var token = csrfToken();
+    if (!token) return;
+    var input = document.createElement('input');
+    input.type = 'hidden'; input.name = '_csrf'; input.value = token;
+    form.appendChild(input);
+  }, true);  // capture phase: runs before any page's own submit handler
+             // (e.g. a custom fetch()-based upload flow) reads form data
+
+  var realFetch = window.fetch;
+  window.fetch = function(input, init){
+    try {
+      if (init && typeof init.method === 'string' && init.method.toUpperCase() === 'POST'
+          && typeof FormData !== 'undefined' && init.body instanceof FormData && !init.body.has('_csrf')) {
+        var token = csrfToken();
+        if (token) init.body.append('_csrf', token);
+      }
+    } catch (e) {}
+    return realFetch.call(this, input, init);
+  };
+})();
+</script>"""
+
 PROGRESS_SCRIPT = r"""<script>
 (function(){
   var bar = document.querySelector('[data-progress]');
@@ -1190,7 +1306,7 @@ def page(title: str, body: str, head_extra: str = "", show_nav: bool = True, sea
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{title}</title>{STYLE}{TOPBAR_STYLE}{QUICK_PRICE_STYLE}{PHOTO_FIELD_STYLE}"
         f"{PROGRESS_STYLE}{_PWA_HEAD}{head_extra}</head>"
-        f"<body>{PROGRESS_HTML}{chrome}<main>{body}</main>{PROGRESS_SCRIPT}{script}</body></html>"
+        f"<body>{PROGRESS_HTML}{chrome}<main>{body}</main>{CSRF_SCRIPT}{PROGRESS_SCRIPT}{script}</body></html>"
     )
 
 

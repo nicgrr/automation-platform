@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .adapters.r2 import R2UploadError, upload_card_image
+from .adapters.r2 import R2UploadError, is_configured as _r2_configured, upload_card_image
 from .approvals import decide_approval
 from .audit import record_event
 from .auth import require_dashboard_user
@@ -61,7 +61,7 @@ def _run_build_listings(user: str, settings) -> None:
     reasoning as _run_price_check in price_review.py.
     """
     with SessionLocal() as session:
-        if not all([settings.r2_endpoint_url, settings.r2_access_key_id, settings.r2_secret_access_key, settings.r2_bucket_name]):
+        if not _r2_configured(settings):
             record_event(session, actor_type="user", actor_id=user, action="listing.build", resource_type="pending_listing", resource_id=None, outcome="failed", correlation_id=_correlation_id(), details={"error": "R2 image hosting is not configured"})
             return
 
@@ -113,6 +113,8 @@ def _run_build_listings(user: str, settings) -> None:
 @router.post("/build")
 def listings_build(request: Request, background_tasks: BackgroundTasks, user: str = Depends(require_dashboard_user)):
     settings = request.app.state.settings
+    if not _r2_configured(settings):
+        return RedirectResponse("/listings/review?configuration=r2", status_code=303)
     background_tasks.add_task(_run_build_listings, user, settings)
     return RedirectResponse("/listings/review?building=1", status_code=303)
 
@@ -126,12 +128,21 @@ def listings_list(request: Request, user: str = Depends(require_dashboard_user),
 
     head_extra = "<meta http-equiv='refresh' content='4'>" if request.query_params.get("building") else ""
     note = "<p class='subtitle'>Building listings in the background -- this page refreshes automatically.</p>" if request.query_params.get("building") else ""
+    r2_ready = _r2_configured(request.app.state.settings)
+    if r2_ready:
+        build_control = "<form method='post' action='/listings/build'><button>Build from approved cards</button></form>"
+    else:
+        build_control = (
+            "<div class='notice'><b>Listing build unavailable:</b> R2 image hosting is not configured. "
+            "Add the four R2 settings before building listings.</div>"
+            "<button disabled title='Configure R2 image hosting first'>Build from approved cards</button>"
+        )
 
     body = (
         brand_header("Draft listings")
         + note
         + f"<div class='panel'><h2>Draft listings ({len(drafts)})</h2><ul class='events'>{rows}</ul>"
-        + "<form method='post' action='/listings/build'><button>Build from approved cards</button></form></div>"
+        + build_control + "</div>"
     )
     return HTMLResponse(page("EzBay — Draft listings", body, head_extra=head_extra))
 

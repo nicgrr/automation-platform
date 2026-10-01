@@ -1,7 +1,8 @@
-"""Scan-ingest reference catalogues for non-Pokemon games, from TCGplayer.
+"""Scan-ingest reference catalogues from TCGplayer.
 
-pokemontcg.io only covers Pokemon. For One Piece and the Dragon Ball games
-the source is tcgcsv.com, the same free, keyless, daily mirror of
+Pokemon's ordinary sets come from pokemontcg.io. For One Piece, the Dragon
+Ball games, and Pokemon special reprint sets which that source omits, the
+source is tcgcsv.com, the same free, keyless, daily mirror of
 TCGplayer's catalogue that scripts/backfill_one_piece_images_from_tcgplayer.py
 already uses. One TCGplayer "group" becomes one CardSet, and every product
 carrying a card Number becomes a CatalogCard with a reference image and
@@ -39,7 +40,7 @@ from sqlalchemy.orm import Session
 
 from ..models import CardSet, CatalogCard, CatalogItem, CatalogItemType, TcgCard
 from .catalog import CacheResult, _compute_phashes
-from .games import GAMES
+from .games import GAME_LABELS
 
 API_BASE = "https://tcgcsv.com/tcgplayer"
 HEADERS = {"User-Agent": "ezbay-scan-catalog/1.0"}
@@ -62,6 +63,13 @@ TCGPLAYER_GAMES: dict[str, TcgplayerGame] = {g.key: g for g in (
     TcgplayerGame("dragon_ball_super", 27, "dbs"),
     TcgplayerGame("dragon_ball_z", 23, "dbz"),
 )}
+
+# Pokemon's main catalogue remains pokemontcg.io. TCGplayer also has exact
+# products/images/prices for stamped special reprint sets which are absent
+# there, notably the annual Trick or Trade sets. This source is deliberately
+# separate from TCGPLAYER_GAMES so `--game all` cannot accidentally import
+# TCGplayer's entire duplicate Pokemon catalogue.
+POKEMON_SPECIAL_GAME = TcgplayerGame("pokemon", 3, "pkm")
 
 # "OP01-024", "BT1-001", "FS11-01", "P-001" -> (set code, number)
 _CODE_RE = re.compile(r"^([A-Za-z0-9]+)-(\d+[A-Za-z]?)$")
@@ -189,13 +197,22 @@ def cache_group(
     session.add(card_set)
     card_set.name = group.get("name") or set_id
     card_set.code = group.get("abbreviation")
-    card_set.series = GAMES[game.key].label
+    card_set.series = GAME_LABELS.get(game.key, game.key.replace("_", " ").title())
     card_set.game = game.key
     published = (group.get("publishedOn") or "")[:10]
     card_set.release_date = published.replace("-", "/") or None
     card_set.total = len(singles)
 
     jobs: list[tuple[CatalogCard, str, Path]] = []
+    # A special reprint set can contain cards from several original sets,
+    # including two different cards with the same printed N/TOTAL. Such a
+    # pair cannot share our usual number-derived id; retain each TCGplayer
+    # product id instead. This also fixes the old behaviour where the later
+    # product silently overwrote the earlier card in the same cache run.
+    number_counts: dict[str, int] = {}
+    for product in singles:
+        key = (_card_number(product) or "").upper()
+        number_counts[key] = number_counts.get(key, 0) + 1
     # Rows added in this call aren't visible to session.get until a flush,
     # so a number TCGplayer lists twice in one group is tracked here.
     added: dict[str, CatalogCard] = {}
@@ -205,7 +222,7 @@ def cache_group(
         plain = is_plain_print(name)
         code = _CODE_RE.match(number)
         card_id = f"tcgp-{product['productId']}"
-        if plain:
+        if plain and number_counts[number.upper()] == 1:
             slug = _slug(game.key, code.group(1), code.group(2)) if code else _slug(game.key, card_set.code or "", number)
             claimed = added.get(slug) or session.get(CatalogCard, slug)
             if claimed is not None and claimed.set_id != set_id:

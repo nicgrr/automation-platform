@@ -1,18 +1,29 @@
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from .adapters.ebay import EbayApiError, EbaySandboxReadAdapter, normalize_inventory, normalize_market
 from .analytics import router as analytics_router
 from .audit import record_event
-from .auth import SESSION_MAX_AGE_SECONDS, create_session, require_dashboard_user, verify_password
+from .auth import (
+    SESSION_MAX_AGE_SECONDS,
+    clear_login_failures,
+    create_session,
+    csrf_token_for,
+    login_rate_limited,
+    record_login_failure,
+    require_dashboard_user,
+    verify_password,
+)
 from .business_records import router as business_records_router
 from .accessories import router as accessories_router
 from .buying import router as buying_router
@@ -33,6 +44,8 @@ from .inventory_audit_review import router as inventory_audit_router
 from .inventory_review import router as inventory_router
 from .listings_review import router as listings_router
 from .market_search import router as market_search_router
+from .market_watch import router as market_watch_router
+from .market_watch_service import allowed_country_codes
 from .models import Approval, EbayCredential, EbayListing, JobRun
 from .price_history import router as price_history_router
 from .price_review import router as pricing_router
@@ -49,8 +62,11 @@ from .settings_page import router as settings_page_router
 from .shop_admin import router as shop_admin_router
 from .shop_listings_admin import router as shop_listings_router
 from .ebay_publish import router as ebay_publish_router
+from .ebay_sales import router as ebay_sales_router
 from .shop_orders import router as shop_orders_router
 from .personal_collection import router as personal_collection_router
+from .retailer_goals import router as retailer_goals_router
+from .navigation_hubs import router as navigation_hubs_router
 from .ui import brand_header, page
 from .whatnot import router as whatnot_router
 
@@ -60,12 +76,36 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="EzBay Private Control Plane", version="0.2.0", lifespan=lifespan)
+app = FastAPI(
+    title="EzBay Private Control Plane",
+    version="0.2.0",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 # PWA manifest + icons (Module 18) -- unauthenticated on purpose, matching
 # any app icon/manifest: no inventory or business data lives under here,
 # just the install-to-home-screen assets.
-app.mount("/static", StaticFiles(directory="static"), name="static")
+_STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 app.state.settings = get_settings()
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "icons" / "icon-192.png", media_type="image/png")
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+@app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+def apple_touch_icon() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "icons" / "apple-touch-icon.png", media_type="image/png")
 
 
 @app.middleware("http")
@@ -84,8 +124,11 @@ async def renew_session_middleware(request: Request, call_next):
     username = getattr(request.state, "renew_session_for", None)
     if username:
         settings = request.app.state.settings
-        response.set_cookie("rbay_session", create_session(username, settings.session_signing_key),
+        issued = int(time.time())
+        response.set_cookie("rbay_session", create_session(username, settings.session_signing_key, now=issued),
                             httponly=True, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
+        response.set_cookie("rbay_csrf", csrf_token_for(username, issued, settings.session_signing_key),
+                            httponly=False, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
     return response
 app.include_router(cards_router)
 app.include_router(pricing_router)
@@ -116,12 +159,16 @@ app.include_router(nav_counts_router)
 app.include_router(data_export_router)
 app.include_router(quick_price_router)
 app.include_router(market_search_router)
+app.include_router(market_watch_router)
 app.include_router(deal_check_router)
 app.include_router(shop_admin_router)
 app.include_router(shop_listings_router)
 app.include_router(ebay_publish_router)
 app.include_router(shop_orders_router)
+app.include_router(ebay_sales_router)
 app.include_router(personal_collection_router)
+app.include_router(retailer_goals_router)
+app.include_router(navigation_hubs_router)
 
 
 def correlation_id() -> str:
@@ -150,12 +197,27 @@ def login_page() -> str:
 @app.post("/login")
 def login(request: Request, username: str = Form(), password: str = Form(), session: Session = Depends(get_session)):
     settings = request.app.state.settings
+    client_key = request.client.host if request.client else "unknown"
+    if login_rate_limited(client_key):
+        record_event(session, actor_type="user", actor_id=username[:128], action="dashboard.login",
+                    resource_type="session", resource_id=None, outcome="rate_limited",
+                    correlation_id=correlation_id(), details={"client": client_key})
+        raise HTTPException(status_code=429, detail="too many attempts -- wait a few minutes and try again")
     ok = bool(settings.dashboard_username and settings.dashboard_password_hash and settings.session_signing_key and username == settings.dashboard_username and verify_password(password, settings.dashboard_password_hash))
     record_event(session, actor_type="user", actor_id=username[:128], action="dashboard.login", resource_type="session", resource_id=None, outcome="success" if ok else "denied", correlation_id=correlation_id(), details={})
     if not ok:
+        record_login_failure(client_key)
         raise HTTPException(status_code=401, detail="invalid credentials")
+    clear_login_failures(client_key)
+    issued = int(time.time())
     response = RedirectResponse("/dashboard", status_code=303)
-    response.set_cookie("rbay_session", create_session(username, settings.session_signing_key), httponly=True, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
+    response.set_cookie("rbay_session", create_session(username, settings.session_signing_key, now=issued),
+                        httponly=True, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
+    # Deliberately NOT httponly -- see auth.csrf_token_for's docstring:
+    # the shared client-side JS (ui.py's CSRF_SCRIPT) needs to read this
+    # one to attach it to every form post and fetch() POST automatically.
+    response.set_cookie("rbay_csrf", csrf_token_for(username, issued, settings.session_signing_key),
+                        httponly=False, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
     return response
 
 
@@ -240,15 +302,29 @@ async def ebay_seller(request: Request, user: str = Depends(require_dashboard_us
 
 
 @app.get("/api/ebay/market-search")
-async def ebay_market_search(request: Request, q: str = Query(min_length=1, max_length=200), user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+async def ebay_market_search(
+    request: Request,
+    q: str = Query(min_length=1, max_length=200),
+    country: str = Query("AU", min_length=2, max_length=2),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
     settings = request.app.state.settings
+    country = country.upper()
+    if country not in allowed_country_codes(settings.market_allowed_countries):
+        raise HTTPException(status_code=400, detail="Seller location must be Australia or Japan")
     _, oauth = ebay_services(settings)
     try:
         token_payload = await oauth.application_token()
-        payload = await EbaySandboxReadAdapter(token_payload["access_token"], environment=settings.ebay_env).search_market(q)
-        items = normalize_market(payload)
-        record_event(session, actor_type="user", actor_id=user, action="ebay.market_search.read", resource_type="market_observation", resource_id=None, outcome="success", correlation_id=correlation_id(), details={"query": q, "count": len(items)})
-        return {"environment": settings.ebay_env.upper(), "count": len(items), "items": items}
+        payload = await EbaySandboxReadAdapter(
+            token_payload["access_token"], environment=settings.ebay_env,
+        ).search_market(q, marketplace="EBAY_AU", item_location_country=country)
+        items = [
+            item for item in normalize_market(payload)
+            if (item.get("marketplace") or "").upper() == country
+        ]
+        record_event(session, actor_type="user", actor_id=user, action="ebay.market_search.read", resource_type="market_observation", resource_id=None, outcome="success", correlation_id=correlation_id(), details={"query": q, "country": country, "count": len(items)})
+        return {"environment": settings.ebay_env.upper(), "country": country, "count": len(items), "items": items}
     except (OAuthError, EbayApiError, KeyError):
         record_event(session, actor_type="user", actor_id=user, action="ebay.market_search.read", resource_type="market_observation", resource_id=None, outcome="failed", correlation_id=correlation_id(), details={"error": "ebay_api_failure"})
         raise HTTPException(status_code=502, detail=f"eBay {settings.ebay_env.title()} market search failed")

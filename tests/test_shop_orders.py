@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
-from automation_control.models import ShopOrder, ShopOrderItem, ShopOrderStatus
+from automation_control.models import (
+    CardSet, CardVariant, CatalogItem, CatalogItemType, InventoryItem, ShopListing, ShopListingStatus,
+    ShopOrder, ShopOrderItem, ShopOrderStatus, StorageLocation, TcgCard,
+)
 
 
 @pytest.fixture
@@ -136,3 +139,146 @@ def test_shipped_order_shows_its_tracking_number(client, session):
     session.commit()
     body = client.get("/shop-orders?status=all").text
     assert "AB999AU" in body
+
+
+# --- order detail: click into any order regardless of status -----------
+
+def test_the_list_links_each_order_to_its_own_detail_page(client, session):
+    order = make_order(session)
+    body = client.get("/shop-orders?status=all").text
+    assert f"href='/shop-orders/{order.id}'" in body
+
+
+def test_order_detail_shows_cards_and_address(client, session):
+    order = make_order(session)
+    body = client.get(f"/shop-orders/{order.id}").text
+    assert "Charizard #4" in body
+    assert "A Buyer" in body
+    assert "1 Test St" in body
+    assert "buyer@example.test" in body
+    assert "$29.95" in body
+
+
+def test_order_detail_offers_mark_packed_when_paid(client, session):
+    order = make_order(session, status=ShopOrderStatus.PAID)
+    body = client.get(f"/shop-orders/{order.id}").text
+    assert f"/shop-orders/{order.id}/pack" in body
+
+
+def test_order_detail_offers_confirm_shipped_when_packed(client, session):
+    order = make_order(session, status=ShopOrderStatus.PACKED)
+    body = client.get(f"/shop-orders/{order.id}").text
+    assert f"/shop-orders/{order.id}/ship" in body
+    assert "Confirm shipped" in body
+
+
+def test_order_detail_shows_tracking_once_shipped_with_no_further_action(client, session):
+    order = make_order(session, status=ShopOrderStatus.SHIPPED)
+    order.tracking_number = "AB999AU"
+    session.commit()
+    body = client.get(f"/shop-orders/{order.id}").text
+    assert "AB999AU" in body
+    assert f"/shop-orders/{order.id}/ship" not in body
+
+
+def test_order_detail_confirming_shipped_from_the_detail_page_works(client, session):
+    order = make_order(session, status=ShopOrderStatus.PACKED)
+    resp = client.post(f"/shop-orders/{order.id}/ship", data={"tracking_number": "XYZ1"}, follow_redirects=False)
+    assert resp.status_code == 303
+    session.refresh(order)
+    assert order.status == ShopOrderStatus.SHIPPED
+
+
+def test_order_detail_shows_notes_when_present(client, session):
+    order = make_order(session)
+    order.notes = "Gift-wrap requested"
+    session.commit()
+    body = client.get(f"/shop-orders/{order.id}").text
+    assert "Gift-wrap requested" in body
+
+
+def test_order_detail_404s_for_an_unknown_order(client):
+    assert client.get("/shop-orders/does-not-exist").status_code == 404
+
+
+# --- pack assistant: locating the physical card behind a line item -----
+
+def make_order_with_real_card(session, *, status=ShopOrderStatus.PAID, location=None):
+    """A line item with the full listing -> inventory -> catalogue chain,
+    the shape the pack assistant needs to show a photo and set details."""
+    session.add(CardSet(id="sv3", name="Obsidian Flames", game="pokemon"))
+    session.add(CatalogItem(id="card-1", name="Charizard ex", item_type=CatalogItemType.TCG_CARD))
+    session.add(TcgCard(catalog_item_id="card-1", game="pokemon", set_id="sv3", number="125", rarity="Rare Ultra"))
+    loc_id = None
+    if location:
+        loc = StorageLocation(name=location)
+        session.add(loc)
+        session.flush()
+        loc_id = loc.id
+    session.add(InventoryItem(id="inv-1", catalog_item_id="card-1", variant=CardVariant.HOLO,
+                              condition="Near Mint", quantity=1, storage_location_id=loc_id))
+    session.add(ShopListing(id="listing-1", catalog_item_id="card-1", inventory_item_id="inv-1",
+                            title="Charizard ex", price=Decimal("20.00"), status=ShopListingStatus.ACTIVE))
+    order = ShopOrder(
+        reference="NLV-CARD0001", email="buyer@example.test", ship_to_name="A Buyer",
+        ship_to_address="1 Test St", ship_to_country="Australia",
+        items_total=Decimal("20.00"), shipping_total=Decimal("9.95"),
+        grand_total=Decimal("29.95"), currency="AUD", status=status,
+    )
+    session.add(order)
+    session.flush()
+    session.add(ShopOrderItem(order_id=order.id, listing_id="listing-1", title="Charizard ex",
+                              unit_price=Decimal("20.00"), quantity=1))
+    session.commit()
+    return order
+
+
+def test_pack_assistant_link_shown_for_a_paid_order(client, session):
+    order = make_order(session, status=ShopOrderStatus.PAID)
+    body = client.get("/shop-orders").text
+    assert f"/shop-orders/{order.id}/pack-sheet" in body
+
+
+def test_pack_sheet_shows_set_and_card_details(client, session):
+    order = make_order_with_real_card(session)
+    body = client.get(f"/shop-orders/{order.id}/pack-sheet").text
+    assert "Obsidian Flames" in body
+    assert "#125" in body
+    assert "Rare Ultra" in body
+
+
+def test_pack_sheet_shows_the_stored_location(client, session):
+    order = make_order_with_real_card(session, location="Binder A")
+    body = client.get(f"/shop-orders/{order.id}/pack-sheet").text
+    assert "Binder A" in body
+
+
+def test_pack_sheet_flags_an_unlocated_card(client, session):
+    order = make_order_with_real_card(session)
+    body = client.get(f"/shop-orders/{order.id}/pack-sheet").text
+    assert "Not located yet" in body
+
+
+def test_pack_sheet_handles_a_line_with_no_physical_item(client, session):
+    """A bulk-lot line (listing_id=None) has nothing to individually
+    locate -- the page should say so, not error."""
+    order = make_order(session, status=ShopOrderStatus.PAID)
+    resp = client.get(f"/shop-orders/{order.id}/pack-sheet")
+    assert resp.status_code == 200
+    assert "nothing here to individually locate" in resp.text.lower()
+
+
+def test_pack_sheet_404s_for_an_unknown_order(client):
+    assert client.get("/shop-orders/does-not-exist/pack-sheet").status_code == 404
+
+
+def test_pack_sheet_locates_form_posts_to_the_shared_location_route(client, session):
+    """The actual set/get-or-create write lives centrally at
+    /inventory/set-location (see test_inventory_review.py) so both this
+    page and ebay_sales.py's pack assistant share one implementation --
+    this just pins that the pack sheet's form points there with a back
+    link that returns to this same order."""
+    order = make_order_with_real_card(session)
+    body = client.get(f"/shop-orders/{order.id}/pack-sheet").text
+    assert "action='/inventory/set-location'" in body
+    assert f"/shop-orders/{order.id}/pack-sheet" in body

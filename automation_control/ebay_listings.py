@@ -31,9 +31,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from html import escape
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .adapters.ebay import EbayApiError
@@ -42,7 +42,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .ebay_oauth import OAuthError, ebay_services, valid_user_access_token
-from .models import CatalogCard, CatalogItem, EbayListing, InventoryItem
+from .models import CardSet, CatalogCard, CatalogItem, EbayListing, InventoryItem
 from .ui import brand_header, page
 
 router = APIRouter()
@@ -60,25 +60,73 @@ def _correlation_id() -> str:
 
 
 def _upsert(session: Session, listings: list[ActiveListing]) -> int:
+    """Write every listing this fetch actually saw, then reconcile by
+    absence: GetMyeBaySelling's ActiveList is comprehensive (per this
+    module's own docstring, "what's live here means the same thing it
+    does on eBay's own Seller Hub page, regardless of how a listing got
+    there"), so anything cached Active that this fetch did NOT return has
+    ended -- ended early, sold through and closed, whatever the reason.
+
+    Real gap this closes (2026-09-27): a row that fell off eBay's Active
+    list just kept its last-known "Active" status forever, since nothing
+    ever wrote to it again once eBay stopped returning it. That's not a
+    freshness problem the existing "how stale is this" messaging could
+    ever surface -- the row's observed_at looked exactly as fresh as
+    every genuinely-still-active one next to it, both before this fetch
+    and after, right up until reconciliation gave it a real, different
+    status. Concretely: 7 listings the seller manually ended on eBay
+    stayed "Active" in this cache through a real refresh, and kept
+    blocking re-export for good (_active_variation_parents in
+    ebay_bulk_export.py treats "Active" as gospel) until this existed.
+
+    Guarded on a non-empty `listings`: a zero-length ActiveList is far
+    more likely a transient fetch problem than "every listing ended
+    simultaneously" on an account already confirmed to have 100+ live --
+    reconciling against a response that might itself be wrong would be
+    worse than the staleness this fixes. A real, permanent shutdown to
+    zero active listings needs one confirmed-nonzero fetch's worth of
+    patience, which is an acceptable cost for not risking the reverse.
+    """
     now = datetime.now(UTC)
+    seen_ids = {item.ebay_item_id for item in listings}
     for item in listings:
         price_minor = int(item.price * 100) if item.price is not None else 0
+        existing = session.scalar(select(EbayListing).where(EbayListing.ebay_listing_id == item.ebay_item_id))
+        # GetMyeBaySelling is intentionally a compact availability refresh.
+        # Preserve richer, separately imported GetItem details (bundle
+        # contents, photos and seller references) instead of erasing them
+        # every time the active-listing timer runs.
+        snapshot = {
+            **((existing.raw_snapshot or {}) if existing else {}),
+            "source": SOURCE,
+            "quantity_sold": item.quantity_sold,
+            "listing_type": item.listing_type,
+            "view_item_url": item.view_item_url,
+            "start_time": item.start_time.isoformat() if item.start_time else None,
+        }
         values = dict(
             title=item.title, currency=item.currency or "AUD", current_price_minor=price_minor,
             quantity=item.quantity, listing_status="Active", marketplace=None,
-            raw_snapshot={
-                "source": SOURCE, "quantity_sold": item.quantity_sold,
-                "listing_type": item.listing_type, "view_item_url": item.view_item_url,
-                "start_time": item.start_time.isoformat() if item.start_time else None,
-            },
+            raw_snapshot=snapshot,
             observed_at=now,
         )
-        existing = session.scalar(select(EbayListing).where(EbayListing.ebay_listing_id == item.ebay_item_id))
         if existing:
             for key, value in values.items():
                 setattr(existing, key, value)
         else:
             session.add(EbayListing(ebay_listing_id=item.ebay_item_id, **values))
+
+    if listings:
+        stale = session.scalars(
+            select(EbayListing).where(
+                EbayListing.listing_status == "Active",
+                EbayListing.ebay_listing_id.not_in(seen_ids),
+            )
+        ).all()
+        for row in stale:
+            row.listing_status = "Ended"
+            row.observed_at = now
+
     session.commit()
     return len(listings)
 
@@ -88,27 +136,125 @@ def _cached_rows(session: Session) -> list[EbayListing]:
     return [r for r in rows if (r.raw_snapshot or {}).get("source") == SOURCE]
 
 
+def _photo_url(row: EbayListing) -> str | None:
+    urls = (row.raw_snapshot or {}).get("image_urls") or []
+    return urls[0] if urls else None
+
+
 def _card_html(row: EbayListing) -> str:
-    """One listing as a stacked card rather than a table row -- a wide
-    Item/Price/Qty/Sold/Type table forces horizontal scrolling on a phone,
-    which is where this page actually gets used."""
+    """One listing as a photo tile, clickable through to its own detail
+    page -- a wide Item/Price/Qty/Sold/Type table forces horizontal
+    scrolling on a phone, which is where this page actually gets used,
+    and gave no way to see more than a title without leaving the app."""
     snapshot = row.raw_snapshot or {}
     price = Decimal(row.current_price_minor) / 100
-    url = snapshot.get("view_item_url")
-    title = f"<a href='{escape(url)}' target='_blank' rel='noopener'>{escape(row.title)}</a>" if url else escape(row.title)
+    sold = snapshot.get("quantity_sold") or 0
+    qty = row.quantity if row.quantity is not None else "?"
+    contents = snapshot.get("bundle_contents") or []
+    photo_url = _photo_url(row)
+    photo = (
+        f"<img class='ebay-tile-photo' src='{escape(photo_url)}' alt='' loading='lazy'>" if photo_url
+        else "<div class='ebay-tile-photo noart'>No photo cached</div>"
+    )
+    bundle_flag = f"<span class='ebay-tile-flag'>{len(contents)} cards</span>" if contents else ""
+
+    return (
+        f"<a class='ebay-tile' href='/ebay-listings/{escape(row.ebay_listing_id)}'>"
+        f"{photo}{bundle_flag}"
+        "<div class='ebay-tile-body'>"
+        f"<div class='ebay-tile-title'>{escape(row.title)}</div>"
+        "<div class='ebay-tile-stats'>"
+        f"<b>{row.currency} ${price:,.2f}</b>"
+        f"<span>{qty} left · {sold} sold</span>"
+        "</div></div></a>"
+    )
+
+
+def _detail_html(row: EbayListing) -> str:
+    """Everything cached about one listing -- the full photo set (not
+    just the tile's first image), bundle contents if it's a multi-card
+    listing, and a link out to the real thing on eBay. Read-only, same as
+    the rest of this page: it mirrors what eBay reports, it can't change
+    it -- editing a live listing has to happen on eBay itself (or through
+    ebay_publish.py's separate, one-directional create-new-listing flow;
+    there's no revise-an-existing-listing write path in this app yet)."""
+    snapshot = row.raw_snapshot or {}
+    price = Decimal(row.current_price_minor) / 100
     sold = snapshot.get("quantity_sold") or 0
     qty = row.quantity if row.quantity is not None else "?"
     listing_type = snapshot.get("listing_type") or ""
+    view_url = snapshot.get("view_item_url")
+    photos = snapshot.get("image_urls") or []
+    contents = snapshot.get("bundle_contents") or []
+    overlap_review = snapshot.get("inventory_overlap_review") or {}
+    age = _listing_age_days(row)
+
+    gallery = (
+        "<div class='ebay-detail-gallery'>"
+        + "".join(f"<img src='{escape(u)}' alt='' loading='lazy'>" for u in photos)
+        + "</div>"
+    ) if photos else "<div class='ebay-detail-gallery empty'>No photos cached for this listing yet.</div>"
+
+    description = snapshot.get("description")
+    # Sandboxed with no permissions at all (no scripts, no same-origin,
+    # no forms): eBay descriptions are raw seller-authored HTML, and this
+    # is the one place on the page rendering someone else's markup rather
+    # than this app's own -- an iframe srcdoc keeps it visually formatted
+    # without ever letting it run script or touch the parent page.
+    description_html = (
+        "<div class='panel'><h3>Description</h3>"
+        f"<iframe class='ebay-description-frame' sandbox=\"\" srcdoc=\"{escape(description)}\"></iframe></div>"
+    ) if description else (
+        "<div class='panel'><h3>Description</h3><p class='muted'>No description cached for this listing yet.</p></div>"
+    )
+
+    bundle_html = ""
+    if contents:
+        lines = "".join(
+            "<li>"
+            f"<strong>{escape(card.get('name') or 'Unknown card')}</strong>"
+            f"<span>{escape(card.get('set') or 'Unknown set')} · "
+            f"#{escape(card.get('number') or '?')} · {escape(card.get('rarity') or 'Unknown rarity')}</span>"
+            "</li>"
+            for card in contents
+        )
+        reference = snapshot.get("seller_reference")
+        confirmed = overlap_review.get("status") == "confirmed_distinct"
+        bundle_html = (
+            "<div class='panel'><h3>Bundle contents</h3>"
+            f"<p class='muted'>{len(contents)} exact card{'s' if len(contents) != 1 else ''} imported from eBay"
+            f"{' · ref ' + escape(reference) if reference else ''}</p>"
+            f"<ul class='ebay-bundle-list'>{lines}</ul>"
+            + ("<p class='bundle-confirmed'>✓ Confirmed as separate physical copies</p>" if confirmed else "")
+            + "</div>"
+        )
+
+    stats = (
+        "<div class='stat-grid'>"
+        f"<div class='stat-card'><div class='label'>Price</div><div class='value'>{row.currency} ${price:,.2f}</div></div>"
+        f"<div class='stat-card'><div class='label'>Quantity left</div><div class='value'>{qty}</div></div>"
+        f"<div class='stat-card'><div class='label'>Units sold</div><div class='value'>{sold}</div></div>"
+        f"<div class='stat-card'><div class='label'>Listed</div><div class='value'>{age if age is not None else '?'} days ago</div></div>"
+        "</div>"
+    )
+
+    view_link = (
+        f"<a class='btn' href='{escape(view_url)}' target='_blank' rel='noopener'>View live on eBay ↗</a>"
+        if view_url else ""
+    )
+
     return (
-        "<div class='ebay-card'>"
-        f"<div class='ebay-card-title'>{title}</div>"
-        f"<div class='ebay-card-id'>{escape(row.ebay_listing_id)}"
-        f"{' &middot; ' + escape(listing_type) if listing_type else ''}</div>"
-        "<div class='ebay-card-stats'>"
-        f"<span class='ebay-stat'><b>{row.currency} ${price:,.2f}</b></span>"
-        f"<span class='ebay-stat'>{qty} left</span>"
-        f"<span class='ebay-stat'>{sold} sold</span>"
-        "</div></div>"
+        "<a class='back-link' href='/ebay-listings'>&larr; Back to eBay listings</a>"
+        f"<h1 class='page-title'>{escape(row.title)}</h1>"
+        f"<p class='subtitle'>{escape(row.ebay_listing_id)}"
+        f"{' &middot; ' + escape(listing_type) if listing_type else ''}</p>"
+        + stats
+        + gallery
+        + description_html
+        + bundle_html
+        + "<div class='panel'><p class='muted'>This is a read-only mirror of what eBay reports -- "
+          "there's no way to edit a live listing from here yet. Use the link below to change it on eBay itself.</p>"
+        + view_link + "</div>"
     )
 
 
@@ -203,6 +349,46 @@ def _owned_card_names(session: Session) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _identifier(value: str) -> str:
+    """Loose display-text normalisation for imported set/card identifiers."""
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def _exact_bundle_inventory_names(session: Session, row: EbayListing) -> list[str]:
+    """Exact set/name/number overlaps for a bundle imported from GetItem.
+
+    Unlike the legacy title heuristic, one exact match is meaningful.  The
+    printed denominator is absent from CatalogCard.number, so compare only
+    the numerator from eBay's display value (096/088 -> 096).
+    """
+    matches: list[str] = []
+    for entry in (row.raw_snapshot or {}).get("bundle_contents") or []:
+        name = (entry.get("name") or "").strip()
+        number = (entry.get("number") or "").split("/", 1)[0].strip()
+        set_name = (entry.get("set") or "").strip()
+        if not name or not number or not set_name:
+            continue
+        candidates = session.execute(
+            select(CatalogCard.id, CatalogCard.number, CardSet.name)
+            .join(CardSet, CardSet.id == CatalogCard.set_id)
+            .where(func.lower(CatalogCard.name) == name.casefold())
+        ).all()
+        wanted_number = _identifier(number).lstrip("0") or "0"
+        wanted_set = _identifier(set_name).rstrip("s")
+        card_ids = [
+            card_id for card_id, candidate_number, candidate_set in candidates
+            if (_identifier(candidate_number).lstrip("0") or "0") == wanted_number
+            and _identifier(candidate_set).rstrip("s") == wanted_set
+        ]
+        if card_ids and session.scalar(
+            select(InventoryItem.id).where(
+                InventoryItem.card_id.in_(card_ids), InventoryItem.quantity > 0,
+            ).limit(1)
+        ):
+            matches.append(f"{name} #{number}")
+    return matches
+
+
 def _bundle_overlaps(session: Session, rows: list[EbayListing]) -> list[tuple[EbayListing, list[str]]]:
     """Listings whose title names *two or more* cards also sitting in local
     inventory -- e.g. a bundle built from cards that are (or look like) the
@@ -224,6 +410,14 @@ def _bundle_overlaps(session: Session, rows: list[EbayListing]) -> list[tuple[Eb
             tokens.setdefault(word.lower(), name)
     flagged = []
     for row in rows:
+        review = (row.raw_snapshot or {}).get("inventory_overlap_review") or {}
+        if review.get("status") == "confirmed_distinct":
+            continue
+        if (row.raw_snapshot or {}).get("bundle_contents"):
+            exact_matches = _exact_bundle_inventory_names(session, row)
+            if exact_matches:
+                flagged.append((row, exact_matches))
+            continue
         title_lower = row.title.lower()
         matches = [name for token, name in tokens.items() if re.search(rf"\b{re.escape(token)}\b", title_lower)]
         if len(matches) >= 2:
@@ -266,10 +460,16 @@ def ebay_listings_page(request: Request, refreshed: str = "", error: str = "",
     elif refreshed:
         note = f"<p class='linkfill-note ok'>Refreshed from eBay just now.</p>"
 
+    # Stats and recommendations below need every row (aggregate totals,
+    # cross-listing overlap checks) -- only the individual tiles rendered
+    # here are capped, matching shop_listings_admin.py's own pattern.
+    shown = rows[:200]
     cards = (
-        f"<div class='ebay-grid'>{''.join(_card_html(r) for r in rows)}</div>"
+        f"<div class='ebay-grid'>{''.join(_card_html(r) for r in shown)}</div>"
         if rows else "<p class='muted'>Nothing cached yet &mdash; click Refresh to check eBay.</p>"
     )
+    if len(rows) > len(shown):
+        cards += f"<p class='muted'>{len(shown)} of {len(rows)} shown, capped at 200 rows.</p>"
 
     freshness = (
         f"<p class='subtitle'>{len(rows)} active listing{'s' if len(rows) != 1 else ''} "
@@ -292,6 +492,17 @@ def ebay_listings_page(request: Request, refreshed: str = "", error: str = "",
         + _STYLE
     )
     return HTMLResponse(page("EzBay — eBay live listings", body))
+
+
+@router.get("/ebay-listings/{ebay_listing_id}", response_class=HTMLResponse)
+def ebay_listing_detail_page(
+    ebay_listing_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+) -> HTMLResponse:
+    row = session.scalar(select(EbayListing).where(EbayListing.ebay_listing_id == ebay_listing_id))
+    if row is None or (row.raw_snapshot or {}).get("source") != SOURCE:
+        raise HTTPException(status_code=404, detail="listing not found")
+    body = _detail_html(row) + _STYLE
+    return HTMLResponse(page(f"EzBay — {row.title}", body))
 
 
 async def refresh_from_ebay(session: Session, settings, user: str) -> int:
@@ -331,23 +542,36 @@ async def ebay_listings_refresh(request: Request, user: str = Depends(require_da
 
 
 _STYLE = """<style>
-.ebay-grid{display:flex;flex-direction:column;gap:10px}
-.ebay-card{background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:12px;
-  padding:12px 14px;min-width:0}
-.ebay-card-title{font-size:14.5px;font-weight:600;line-height:1.35;word-break:break-word}
-.ebay-card-title a{color:inherit;text-decoration:none}
-.ebay-card-title a:hover{color:var(--accent)}
-.ebay-card-id{font-size:11.5px;color:var(--text-dim);margin-top:3px}
-.ebay-card-stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:13px;color:var(--text-dim)}
-.ebay-stat b{color:var(--text);font-variant-numeric:tabular-nums}
+.ebay-grid{display:grid;grid-template-columns:repeat(2, 1fr);gap:12px}
+.ebay-tile{display:flex;flex-direction:column;background:var(--surface-sunken);border:1px solid var(--panel-border);
+  border-radius:12px;overflow:hidden;min-width:0;color:inherit;text-decoration:none;position:relative;
+  transition:border-color .15s,transform .15s}
+.ebay-tile:hover{border-color:var(--accent);text-decoration:none;transform:translateY(-2px)}
+.ebay-tile-photo{width:100%;aspect-ratio:5/7;object-fit:cover;background:var(--panel);display:block}
+.ebay-tile-photo.noart{display:flex;align-items:center;justify-content:center;color:var(--text-dim);
+  font-size:12px;text-align:center;padding:8px}
+.ebay-tile-flag{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.65);color:#fff;font-size:11px;
+  font-weight:650;padding:2px 8px;border-radius:999px}
+.ebay-tile-body{padding:10px 12px 12px}
+.ebay-tile-title{font-size:13.5px;font-weight:600;line-height:1.35;word-break:break-word;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ebay-tile-stats{display:flex;flex-direction:column;gap:2px;margin-top:8px;font-size:12.5px;color:var(--text-dim)}
+.ebay-tile-stats b{color:var(--text);font-variant-numeric:tabular-nums;font-size:14px}
+
+.ebay-detail-gallery{display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:10px;margin:20px 0}
+.ebay-detail-gallery img{width:100%;aspect-ratio:1/1;object-fit:contain;background:var(--surface-sunken);
+  border:1px solid var(--panel-border);border-radius:10px}
+.ebay-detail-gallery.empty{color:var(--text-dim);font-size:13.5px;padding:20px 0}
+.ebay-description-frame{width:100%;min-height:200px;border:1px solid var(--panel-border);border-radius:10px;
+  background:#fff}
+.ebay-bundle-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.ebay-bundle-list li{display:flex;flex-direction:column;font-size:13px}
+.ebay-bundle-list li span{color:var(--text-dim);font-size:12px}
+.bundle-confirmed{margin:9px 0 0;color:var(--success);font-size:12px;font-weight:650}
 
 .rec-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
 .rec-list li{border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.4}
 .rec-list li.warn{background:rgba(212,165,39,.10);border:1px solid rgba(212,165,39,.35)}
 .rec-list li.info{background:var(--surface-sunken);border:1px solid var(--panel-border)}
 .rec-detail{color:var(--text-dim);font-size:12.5px}
-
-@media (max-width:560px){
-  .ebay-card-stats{gap:10px}
-}
 </style>"""

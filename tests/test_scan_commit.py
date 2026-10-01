@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import numpy as np
@@ -140,6 +141,20 @@ def test_commit_stores_image_under_predictable_name(session, tmp_path):
     item = session.get(InventoryItem, result.item_id)
     assert item.scan_image_path.endswith("STS-31-normal-near-mint.jpg")  # set, number, variant, condition
     assert (tmp_path / "media" / "cards" / "STS-31-normal-near-mint.jpg").exists()
+
+
+def test_commit_makes_manual_scan_readable_by_the_shared_web_group(session, tmp_path):
+    """A manual recovery runs under the operator's restrictive umask while
+    the web service runs as another user in the shared group. The resulting
+    inventory photo must not be mode 600 or the UI renders a broken image."""
+    previous_umask = os.umask(0o077)
+    try:
+        result = commit_card(session, _confident(), _scan_image(tmp_path), tmp_path / "media")
+    finally:
+        os.umask(previous_umask)
+
+    image_path = Path(session.get(InventoryItem, result.item_id).scan_image_path)
+    assert image_path.stat().st_mode & 0o060 == 0o060
 
 
 def test_different_conditions_do_not_share_an_image_file(session, tmp_path):

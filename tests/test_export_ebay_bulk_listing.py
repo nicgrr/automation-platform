@@ -1,17 +1,45 @@
+import csv
+import io
+from dataclasses import dataclass
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from automation_control.adapters.r2 import R2UploadError
 from automation_control.database import Base
 from automation_control.models import (
-    BulkLot, CardSet, CardVariant, CatalogItem, CatalogItemType, InventoryItem, ShopListing, ShopListingStatus, TcgCard,
+    BulkLot, CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem, ShopListing,
+    ShopListingStatus, TcgCard,
 )
 from scripts.export_ebay_bulk_listing import (
-    build_lot_rows, build_set_grouped_rows, build_single_rows, build_variation_rows, lot_shipping_policy,
-    single_image_url,
+    EBAY_MIN_FIXED_PRICE, FIELDNAMES, _ebay_safe_image_url, _enforce_ebay_min_price, build_lot_rows,
+    build_set_grouped_rows, build_single_rows, build_variation_rows, lot_shipping_policy, r2_is_configured,
+    single_image_url, single_set_logo_url,
 )
+
+
+@dataclass
+class FakeR2Settings:
+    r2_endpoint_url: str = "https://r2.example.com"
+    r2_access_key_id: str = "key"
+    r2_secret_access_key: str = "secret"
+    r2_bucket_name: str = "bucket"
+
+
+def _fake_pipeline_config():
+    from automation_control.listing_pipeline.config import EbayFieldsConfig, ImagesConfig, PipelineConfig, PricingConfig, TitleConfig
+
+    return PipelineConfig(
+        ebay=EbayFieldsConfig(category_id="1", condition_id="4000", item_location="x",
+                              shipping_profile_name="x", return_profile_name="x", payment_profile_name="x",
+                              custom_label_prefix="NIC"),
+        images=ImagesConfig(base_url="https://pub.example.com", filename_pattern="{index}.jpg"),
+        pricing=PricingConfig(auto_accept_pct="0.9", floor_price_pct=Decimal("0.70")),
+        title=TitleConfig(term_order=["character"]),
+    )
 
 
 @pytest.fixture
@@ -108,6 +136,319 @@ def test_a_lot_with_a_local_image_path_is_skipped_not_broken(session):
     assert "No Photo Lot" in skipped[0]
 
 
+# --- a lot with no image_url of its own falls back to R2, via one of its --
+# own member cards' scanned photos (real gap: sets built entirely by hand,
+# with no tcgplayer/cardotaku-sourced image anywhere in the set at all) ----
+
+def test_a_lot_with_no_image_falls_back_to_a_member_cards_scan_via_r2(session):
+    session.add(CardSet(id="dbz-misc", name="Dragon Ball Z (Uncoded)"))
+    session.add(CatalogCard(id="dbz-misc-1", set_id="dbz-misc", number="1", name="Card One",
+                            local_image_path="/fake/dbz-misc-1.jpg"))
+    session.add(BulkLot(title="Dragon Ball Z lot", set_id="dbz-misc", card_count=12,
+                        price=Decimal("8"), image_url=None, status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    with patch("scripts.export_ebay_bulk_listing.get_settings", return_value=FakeR2Settings()), \
+         patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.Path.exists", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.load_pipeline_config", return_value=_fake_pipeline_config()), \
+         patch("scripts.export_ebay_bulk_listing.ensure_uploaded", return_value="https://pub.example.com/lot-cover/x.jpg") as mock_upload:
+        rows, skipped = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
+                                       letter_policy="Letter", parcel_policy="Parcel")
+
+    assert skipped == []
+    assert rows[0]["image_url"] == "https://pub.example.com/lot-cover/x.jpg"
+    assert mock_upload.call_args.args[1].startswith("lot-cover/")
+
+
+def test_a_lot_with_its_own_real_image_never_touches_r2(session):
+    session.add(BulkLot(title="Has A Logo", set_id="sv3", card_count=12, price=Decimal("8"),
+                        image_url="https://example.test/logo.png", status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    with patch("scripts.export_ebay_bulk_listing.ensure_uploaded") as mock_upload:
+        rows, _ = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
+                                 letter_policy="Letter", parcel_policy="Parcel")
+
+    assert rows[0]["image_url"] == "https://example.test/logo.png"
+    mock_upload.assert_not_called()
+
+
+def test_a_lot_whose_set_has_no_member_card_scan_either_is_still_skipped(session):
+    session.add(CardSet(id="dbz-misc", name="Dragon Ball Z (Uncoded)"))
+    session.add(CatalogCard(id="dbz-misc-1", set_id="dbz-misc", number="1", name="Card One", local_image_path=None))
+    session.add(BulkLot(title="No Photo Anywhere", set_id="dbz-misc", card_count=12,
+                        price=Decimal("8"), image_url=None, status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    with patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.ensure_uploaded") as mock_upload:
+        rows, skipped = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
+                                       letter_policy="Letter", parcel_policy="Parcel")
+
+    assert rows == []
+    assert "No Photo Anywhere" in skipped[0]
+    mock_upload.assert_not_called()
+
+
+def test_a_lot_cover_upload_failure_skips_the_lot_rather_than_raising(session):
+    session.add(CardSet(id="dbz-misc", name="Dragon Ball Z (Uncoded)"))
+    session.add(CatalogCard(id="dbz-misc-1", set_id="dbz-misc", number="1", name="Card One",
+                            local_image_path="/fake/dbz-misc-1.jpg"))
+    session.add(BulkLot(title="Dragon Ball Z lot", set_id="dbz-misc", card_count=12,
+                        price=Decimal("8"), image_url=None, status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    with patch("scripts.export_ebay_bulk_listing.get_settings", return_value=FakeR2Settings()), \
+         patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.Path.exists", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.load_pipeline_config", return_value=_fake_pipeline_config()), \
+         patch("scripts.export_ebay_bulk_listing.ensure_uploaded", side_effect=R2UploadError("boom")):
+        rows, skipped = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
+                                       letter_policy="Letter", parcel_policy="Parcel")
+
+    assert rows == []
+    assert "Dragon Ball Z lot" in skipped[0]
+
+
+def test_a_lot_cover_permission_error_skips_the_lot_rather_than_crashing_the_page(session):
+    """Same real incident as single_image_url's own permission-error
+    test: build_lot_rows must survive a PermissionError from .exists()
+    on one lot's cover-photo candidate rather than take down the whole
+    /ebay-export page for every other lot too."""
+    session.add(CardSet(id="dbz-misc", name="Dragon Ball Z (Uncoded)"))
+    session.add(CatalogCard(id="dbz-misc-1", set_id="dbz-misc", number="1", name="Card One",
+                            local_image_path="/fake/dbz-misc-1.jpg"))
+    session.add(BulkLot(title="Dragon Ball Z lot", set_id="dbz-misc", card_count=12,
+                        price=Decimal("8"), image_url=None, status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    with patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.Path.exists", side_effect=PermissionError(13, "Permission denied")):
+        rows, skipped = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
+                                       letter_policy="Letter", parcel_policy="Parcel")
+
+    assert rows == []
+    assert "Dragon Ball Z lot" in skipped[0]
+
+
+# --- File Exchange rejects .webp/.avif/.heic/.tiff/.svg by extension,
+# regardless of what the URL actually serves -- confirmed 2026-09-25 when
+# a real Dragon Ball listing failed (ErrorCode 37, "PictureURL is invalid
+# or missing") on 4 .webp-named URLs that each served a perfectly good,
+# correctly sized PNG. ------------------------------------------------
+
+def test_ebay_safe_image_url_accepts_ordinary_formats():
+    for ext in ("jpg", "jpeg", "png", "gif", "bmp"):
+        url = f"https://example.test/card.{ext}"
+        assert _ebay_safe_image_url(url) == url
+
+
+def test_ebay_safe_image_url_rejects_webp_even_though_its_a_real_web_url():
+    assert _ebay_safe_image_url("https://cdn.example.test/card.webp") is None
+
+
+def test_ebay_safe_image_url_rejects_other_formats_file_exchange_does_not_accept():
+    for ext in ("avif", "heic", "tif", "tiff", "svg"):
+        assert _ebay_safe_image_url(f"https://example.test/card.{ext}") is None
+
+
+def test_ebay_safe_image_url_ignores_a_query_string_when_checking_the_extension():
+    # The real failing URLs looked exactly like this: a CDN cache-busting
+    # ?v=... after the extension.
+    assert _ebay_safe_image_url("https://cdn.example.test/card.webp?v=123") is None
+    assert _ebay_safe_image_url("https://cdn.example.test/card.png?v=123") == "https://cdn.example.test/card.png?v=123"
+
+
+def test_ebay_safe_image_url_still_rejects_a_local_cache_path():
+    assert _ebay_safe_image_url("scan_ingest_data/cache/xy1/4.png") is None
+
+
+def test_ebay_safe_image_url_rejects_none():
+    assert _ebay_safe_image_url(None) is None
+
+
+def test_ebay_safe_image_url_accepts_an_extensionless_url():
+    """Real regression (2026-09-26): an allowlist of known-good extensions
+    also rejected every images.scrydex.com URL (Mega Evolution-era Pokemon
+    cards' image host), which serves real JPGs at extensionless paths
+    like ".../me5-62/small" -- 661 real cached images, all silently
+    excluded from every eBay export. A denylist of the confirmed-bad
+    extensions lets these through instead: "no extension" isn't the same
+    claim as "confirmed webp/avif/heic/tiff/svg"."""
+    url = "https://images.scrydex.com/pokemon/me5-62/small"
+    assert _ebay_safe_image_url(url) == url
+
+
+def test_single_image_url_falls_through_a_webp_listing_image_to_a_safe_catalog_image(session):
+    """The bug this closes: a webp URL used to be returned immediately as
+    "the" image, with no attempt at the fallback chain that might have a
+    safe one. Now it's treated exactly like no URL at all."""
+    item = _item(session, image_url="https://example.test/item.jpg")
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url="https://cdn.example.test/listing.webp")
+    assert single_image_url(session, listing, item) == "https://example.test/item.jpg"
+
+
+def test_single_image_url_returns_none_when_every_candidate_is_unsafe(session):
+    item = _item(session, image_url="https://cdn.example.test/item.webp")
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url="https://cdn.example.test/listing.webp")
+    assert single_image_url(session, listing, item) is None
+
+
+# --- last resort: the seller's own scanned photo, via R2 -----------------
+#
+# Reached only once every stock-photo source above comes up empty. Every
+# test here mocks get_settings/r2_is_configured/ensure_uploaded rather than
+# touching real R2 -- these are unit tests for the fallback wiring, not an
+# integration test of the adapter itself (see test_adapters_r2.py for that).
+
+def _unpriced_item(session):
+    """A catalog item with no usable stock photo anywhere -- exactly the
+    shape that used to leave a listing skipped outright."""
+    return _item(session, image_url=None)
+
+
+def test_single_image_url_falls_back_to_r2_when_nothing_else_is_usable(session):
+    item = _unpriced_item(session)
+    session.add(InventoryItem(id="inv-1", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+                              scan_image_path="/fake/scan.jpg"))
+    session.commit()
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url=None, inventory_item_id="inv-1")
+
+    with patch("scripts.export_ebay_bulk_listing.get_settings", return_value=FakeR2Settings()), \
+         patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.Path.exists", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.load_pipeline_config", return_value=_fake_pipeline_config()), \
+         patch("scripts.export_ebay_bulk_listing.ensure_uploaded", return_value="https://pub.example.com/scan/inv-1.jpg") as mock_upload:
+        assert single_image_url(session, listing, item) == "https://pub.example.com/scan/inv-1.jpg"
+
+    mock_upload.assert_called_once()
+    assert mock_upload.call_args.args[1] == "scan/inv-1.jpg"
+
+
+def test_single_image_url_never_touches_r2_when_a_stock_photo_already_works(session):
+    """The whole fallback chain above this one exists precisely so R2 is
+    the rare case, not the default -- a real stock photo must win without
+    an upload attempt."""
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(InventoryItem(id="inv-2", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+                              scan_image_path="/fake/scan.jpg"))
+    session.commit()
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url=None, inventory_item_id="inv-2")
+
+    with patch("scripts.export_ebay_bulk_listing.ensure_uploaded") as mock_upload:
+        assert single_image_url(session, listing, item) == "https://example.test/item.jpg"
+
+    mock_upload.assert_not_called()
+
+
+def test_single_image_url_skips_r2_entirely_when_it_is_not_configured(session):
+    item = _unpriced_item(session)
+    session.add(InventoryItem(id="inv-3", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+                              scan_image_path="/fake/scan.jpg"))
+    session.commit()
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url=None, inventory_item_id="inv-3")
+
+    with patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=False), \
+         patch("scripts.export_ebay_bulk_listing.ensure_uploaded") as mock_upload:
+        assert single_image_url(session, listing, item) is None
+
+    mock_upload.assert_not_called()
+
+
+def test_single_image_url_skips_r2_when_there_is_no_scan_photo_on_file(session):
+    item = _unpriced_item(session)
+    session.add(InventoryItem(id="inv-4", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+                              scan_image_path=None))
+    session.commit()
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url=None, inventory_item_id="inv-4")
+
+    with patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.ensure_uploaded") as mock_upload:
+        assert single_image_url(session, listing, item) is None
+
+    mock_upload.assert_not_called()
+
+
+def test_single_image_url_returns_none_rather_than_raising_when_the_upload_fails(session):
+    """A build must not die partway through over one bad photo -- the row
+    just ends up skipped with the usual reason, same as any other missing
+    image."""
+    item = _unpriced_item(session)
+    session.add(InventoryItem(id="inv-5", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+                              scan_image_path="/fake/scan.jpg"))
+    session.commit()
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url=None, inventory_item_id="inv-5")
+
+    with patch("scripts.export_ebay_bulk_listing.get_settings", return_value=FakeR2Settings()), \
+         patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.Path.exists", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.load_pipeline_config", return_value=_fake_pipeline_config()), \
+         patch("scripts.export_ebay_bulk_listing.ensure_uploaded", side_effect=R2UploadError("boom")):
+        assert single_image_url(session, listing, item) is None
+
+
+def test_single_image_url_returns_none_rather_than_raising_on_a_permission_error(session):
+    """Real production incident (2026-09-26): a scan's directory had no
+    group-read/execute permission for the account ezbay.service runs as.
+    Path.exists() itself raised PermissionError, which sat *outside* the
+    old try/except R2UploadError block -- crashing the entire
+    /ebay-export page (every listing, not just this one) rather than
+    just skipping this one photo. PermissionError is a subclass of
+    OSError, which the fix now catches around the .exists() call too."""
+    item = _unpriced_item(session)
+    session.add(InventoryItem(id="inv-6", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+                              scan_image_path="/fake/scan.jpg"))
+    session.commit()
+    listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
+                          image_url=None, inventory_item_id="inv-6")
+
+    with patch("scripts.export_ebay_bulk_listing.r2_is_configured", return_value=True), \
+         patch("scripts.export_ebay_bulk_listing.Path.exists", side_effect=PermissionError(13, "Permission denied")):
+        assert single_image_url(session, listing, item) is None
+
+
+def test_build_single_rows_skips_a_listing_whose_only_image_is_webp(session):
+    """Same skip path and same message as no image at all -- a listing
+    File Exchange will reject anyway must never reach the CSV."""
+    item = _item(session, image_url="https://cdn.example.test/item.webp")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="xy11", number="1"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Webp Card", price=Decimal("5"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, skipped = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert rows == []
+    assert "Webp Card" in skipped[0]
+    assert "no publicly-hosted image on file" in skipped[0]
+
+
+def test_single_set_logo_url_rejects_a_webp_logo(session):
+    session.add(CardSet(id="xy11", name="Steam Siege", logo_url="https://example.test/xy11-logo.webp"))
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="xy11", number="54"))
+    session.commit()
+
+    assert single_set_logo_url(session, item) == ""
+
+
+def test_a_lot_with_a_webp_image_is_skipped_not_shipped_broken(session):
+    session.add(BulkLot(title="Webp Lot", card_count=10, price=Decimal("8"),
+                        image_url="https://cdn.example.test/lot.webp", status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, skipped = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
+                                   letter_policy="Letter", parcel_policy="Parcel")
+    assert rows == []
+    assert "Webp Lot" in skipped[0]
+
+
 # --- row building skips what it can't safely export ---------------------
 
 def test_build_single_rows_skips_listings_with_no_usable_image(session):
@@ -148,6 +489,120 @@ def test_build_single_rows_excludes_an_item_with_no_tcgcard_row_at_all(session):
     rows, skipped = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
     assert rows == []
     assert "not a TCG card" in skipped[0]
+
+
+# --- every row a builder can produce must actually write to the CSV -----
+# Real production bug (2026-09-26): build_single_rows/build_lot_rows both
+# add a "game" key to every row (needed downstream by
+# convert_to_ebay_template.py's GAME_ITEM_SPECIFICS), but FIELDNAMES was
+# never updated to include it -- csv.DictWriter.writerows raised
+# ValueError on every single real export, "Nic" reported this live as
+# "still having issues with uploading the results." A dict with an extra
+# key is the one shape a hand-maintained skip/exclude test would never
+# catch, since nothing here was ever skipped -- only main()'s actual
+# csv.writer call.
+
+def _assert_csv_writable(rows: list[dict]) -> None:
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=FIELDNAMES)
+    writer.writeheader()
+    writer.writerows(rows)  # raises ValueError if any row has a key FIELDNAMES doesn't
+
+
+def test_build_single_rows_output_is_csv_writable(session):
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="dragon_ball_super"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert rows  # a row with no rows at all would pass writerows trivially and prove nothing
+    _assert_csv_writable(rows)
+
+
+def test_build_lot_rows_output_is_csv_writable(session):
+    session.add(BulkLot(title="Test Lot", card_count=10, price=Decimal("8"), game="pokemon",
+                        image_url="https://example.test/logo.png", status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_lot_rows(session, status=ShopListingStatus.ACTIVE, lot_max_cards=20,
+                             letter_policy="Letter", parcel_policy="Parcel")
+    assert rows
+    _assert_csv_writable(rows)
+
+
+def test_build_variation_rows_output_is_csv_writable(session):
+    session.add(CardSet(id="xy11", name="Steam Siege"))
+    session.add(BulkLot(set_id="xy11", title="Steam Siege lot", card_count=10, price=Decimal("8"),
+                        image_url="https://example.test/logo.png", status=ShopListingStatus.ACTIVE))
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="xy11"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Cheap Card", price=Decimal("1"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    rows, _ = build_variation_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    assert rows
+    _assert_csv_writable(rows)
+
+
+def test_build_set_grouped_rows_output_is_csv_writable(session):
+    session.add(CardSet(id="xy11", name="Steam Siege"))
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="pokemon", set_id="xy11"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"), status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    singles, variation_groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    all_rows = singles + [row for rows in variation_groups.values() for row in rows]
+    assert all_rows
+    _assert_csv_writable(all_rows)
+
+
+# --- eBay's absolute $1 FixedPrice minimum -------------------------------
+# Real rejection (2026-09-26, ErrorCode 73): "The price in the listing is
+# either invalid or below the minimum price of 1.0." Two real cards, both
+# genuinely priced from real market data, landed at $0.26 and $0.54 AUD --
+# under list_for_sale.py's own profit floor via its documented 2x-market
+# cap tension, not a bug in that script, just a case its floor doesn't
+# reach. This is a separate, absolute platform constraint.
+
+def test_enforce_ebay_min_price_raises_a_row_below_the_minimum():
+    rows = [{"price": "0.26"}]
+    raised = _enforce_ebay_min_price(rows)
+    assert raised == 1
+    assert rows[0]["price"] == f"{EBAY_MIN_FIXED_PRICE:.2f}"
+
+
+def test_enforce_ebay_min_price_leaves_a_row_at_or_above_the_minimum_alone():
+    rows = [{"price": "1.00"}, {"price": "5.00"}]
+    raised = _enforce_ebay_min_price(rows)
+    assert raised == 0
+    assert [r["price"] for r in rows] == ["1.00", "5.00"]
+
+
+def test_enforce_ebay_min_price_reports_the_count_raised():
+    rows = [{"price": "0.10"}, {"price": "0.20"}, {"price": "5.00"}]
+    assert _enforce_ebay_min_price(rows) == 2
+
+
+def test_a_variation_child_priced_under_a_dollar_is_raised_to_the_minimum(session):
+    """The real failure mode: a set-grouped variation listing whose child
+    card is genuinely worth well under $1 after its own real pricing."""
+    session.add(CardSet(id="fb08", name="Saiyan's Pride"))
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="dragon_ball_fusion_world", set_id="fb08"))
+    session.add(ShopListing(catalog_item_id=item.id, title="Cheap Card", price=Decimal("0.26"),
+                            status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+    all_rows = singles + [row for rows in groups.values() for row in rows]
+    for r in all_rows:
+        assert Decimal(r["price"]) < EBAY_MIN_FIXED_PRICE  # not yet enforced -- that's main()'s/the route's own job
+
+    _enforce_ebay_min_price(all_rows)
+    for r in all_rows:
+        assert Decimal(r["price"]) >= EBAY_MIN_FIXED_PRICE
 
 
 def test_build_single_rows_only_exports_the_requested_status(session):
@@ -357,14 +812,17 @@ def test_single_set_logo_url_comes_from_the_cards_set(session):
 # 2026-09-22 ("every set becomes one listing"), independent of build_variation_rows
 # above (still cheap-commons-in-an-active-lot only, for whatever else uses it) --
 
-def _card(session, item_id: str, *, set_id: str, number: str, title: str, price: str, game: str = "pokemon", rarity: str | None = "Common"):
+def _card(session, item_id: str, *, set_id: str, number: str, title: str, price: str, game: str = "pokemon",
+         rarity: str | None = "Common", language: str = "English"):
     # rarity defaults to "Common" -- the eBay-fee-markup tests below rely
     # on that default meaning "not marked up" for a plain Pokemon card;
     # the discount/no-discount tests above this section don't care about
     # rarity at all, so the default keeps them unaffected by the markup
-    # feature added after they were written.
+    # feature added after they were written. language likewise defaults to
+    # the ordinary case (matching TcgCard.language's own column default)
+    # so every existing call site is unaffected by the field's addition.
     session.add(CatalogItem(id=item_id, name=title, item_type=CatalogItemType.TCG_CARD, image_url="https://example.test/item.jpg"))
-    session.add(TcgCard(catalog_item_id=item_id, game=game, set_id=set_id, number=number, rarity=rarity))
+    session.add(TcgCard(catalog_item_id=item_id, game=game, set_id=set_id, number=number, rarity=rarity, language=language))
     session.add(ShopListing(catalog_item_id=item_id, title=title, price=Decimal(price), status=ShopListingStatus.ACTIVE))
 
 
@@ -479,3 +937,69 @@ def test_set_grouped_rows_includes_a_non_pokemon_set(session):
     _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
     rows = groups["Dragon Ball Super Divers SDV11"]
     assert {r["game"] for r in rows} == {"dragon_ball_super_divers"}
+
+
+# --- language: real incident 2026-09-27 -- a set holding both English and
+# Japanese prints of the same card numbers was one listing, silently
+# showing the Japanese copy under the English stock photo. A set is now
+# split by language before it's split into a group at all. ---------------
+
+def test_set_grouped_rows_splits_a_set_that_mixes_languages(session):
+    session.add(CardSet(id="fb10", name="Cross Force"))
+    _card(session, "c1", set_id="fb10", number="1", title="Card One", price="5", game="dragon_ball_fusion_world", language="English")
+    _card(session, "c2", set_id="fb10", number="2", title="Card Two", price="5", game="dragon_ball_fusion_world", language="English")
+    _card(session, "c3", set_id="fb10", number="3", title="Card Three (JP)", price="5", game="dragon_ball_fusion_world", language="Japanese")
+    _card(session, "c4", set_id="fb10", number="4", title="Card Four (JP)", price="5", game="dragon_ball_fusion_world", language="Japanese")
+    session.commit()
+
+    _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
+    assert set(groups) == {"Cross Force", "Cross Force (Japanese)"}
+    assert {r["title"] for r in groups["Cross Force"]} == {"Card One", "Card Two"}
+    assert {r["title"] for r in groups["Cross Force (Japanese)"]} == {"Card Three (JP)", "Card Four (JP)"}
+
+
+def test_set_grouped_rows_bare_english_key_carries_no_suffix(session):
+    """The overwhelming majority of this catalogue: a set that's only ever
+    English must produce the exact same group key it always has, or every
+    existing sku/title downstream (and every test asserting on one) would
+    break for no reason."""
+    session.add(CardSet(id="sv9", name="Journey Together"))
+    _card(session, "c1", set_id="sv9", number="1", title="Card One", price="5")
+    _card(session, "c2", set_id="sv9", number="2", title="Card Two", price="5")
+    session.commit()
+
+    _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
+    assert set(groups) == {"Journey Together"}
+
+
+def test_set_grouped_rows_a_lone_japanese_card_falls_out_as_a_single(session):
+    """One Japanese card alone in an otherwise-English set doesn't reach
+    min_set_size on its own -- it becomes a single, not a mislabeled
+    addition to the English group."""
+    session.add(CardSet(id="fb03", name="Ultra Limit"))
+    _card(session, "c1", set_id="fb03", number="1", title="Card One", price="5", game="dragon_ball_fusion_world", language="English")
+    _card(session, "c2", set_id="fb03", number="2", title="Card Two", price="5", game="dragon_ball_fusion_world", language="English")
+    _card(session, "c3", set_id="fb03", number="3", title="Jiren (JP)", price="5", game="dragon_ball_fusion_world", language="Japanese")
+    session.commit()
+
+    singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
+    assert set(groups) == {"Ultra Limit"}
+    assert {r["title"] for r in singles} == {"Jiren (JP)"}
+
+
+def test_single_language_reads_the_cards_own_language(session):
+    from scripts.export_ebay_bulk_listing import single_language
+    from automation_control.models import CatalogItem, TcgCard
+
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(catalog_item_id=item.id, game="dragon_ball_fusion_world", language="Japanese"))
+    session.commit()
+    assert single_language(session, item) == "Japanese"
+
+
+def test_single_language_defaults_to_english_with_no_tcg_card(session):
+    from scripts.export_ebay_bulk_listing import single_language
+
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.commit()
+    assert single_language(session, item) == "English"

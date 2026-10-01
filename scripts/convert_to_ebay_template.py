@@ -6,8 +6,13 @@ Get template.
 That file is a real oddity worth knowing before you touch it by hand:
 it's \\r-delimited (old Mac-style line endings), not \\n, so `wc -l` and a
 plain text editor both misread it as one giant line. Row 1 is an "Info"
-marker, row 2 is the actual 133-column header (starting with the
-"*Action(...)" column), row 3 onward is data.
+marker, row 2 is the actual column header (starting with the
+"*Action(...)" column), row 3 onward is data. Seller Hub's own download
+was 133 columns; C:Game/C:Finish were appended by hand 2026-09-27 after
+confirming this category's real item-specifics editor recognises both
+(the download just doesn't pre-populate every valid aspect as its own
+column) -- eBay's File Exchange matches columns by header name, not
+position, so appending rather than inserting is safe.
 
 Filled in confidently from our own catalogue: title, description, price,
 quantity, photo, both shipping policies (by the same letter/parcel tier
@@ -113,9 +118,62 @@ GAME_ITEM_SPECIFICS: dict[str, tuple[str, str]] = {
     "one_piece": ("One Piece", "Bandai"),
     "dragon_ball_fusion_world": ("Dragon Ball", "Bandai"),
     "dragon_ball_super": ("Dragon Ball", "Bandai"),
-    "dragon_ball_z": ("Dragon Ball", "Bandai"),
+    # NOT Bandai -- confirmed 2026-09-28 auditing every Dragon Ball game key
+    # after fixing the Artbox mislabeling below: dragon_ball_z is this
+    # catalogue's key for the Score/Panini-published Dragon Ball Z CCG
+    # (dbz-1712 "Panini: Set 1", dbz-1709 "Panini: Evolution", etc. -- 1806
+    # real cards, every one of their own CardSet names already saying
+    # Panini). Bandai never published this particular game; it's a
+    # different company's licensed product entirely. 0 of these are
+    # currently listed (all still catalogue-only), but the wrong value
+    # was live in this dict regardless -- fixed before the first one ever
+    # gets priced, not after.
+    "dragon_ball_z": ("Dragon Ball", "Panini"),
     "dragon_ball_super_divers": ("Dragon Ball", "Bandai"),
     "super_dragon_ball_heroes": ("Dragon Ball", "Bandai"),
+    "dragon_ball_carddass": ("Dragon Ball", "Bandai"),
+    # NOT Bandai either -- this catalogue's only dragon_ball_art_card set
+    # is dbha10-unofficial, whose own name says "(Unofficial)" (confirmed
+    # 2026-09-28: a fan-made product, not a real Bandai release). Claiming
+    # Bandai as manufacturer would misrepresent an unlicensed item as the
+    # genuine article -- "Unbranded" is eBay's own standard convention for
+    # exactly this (no real manufacturer to name), not a guess at one.
+    # 1 real active listing carries this today.
+    "dragon_ball_art_card": ("Dragon Ball", "Unbranded"),
+    # A real, distinct brand, not Bandai: these 12 cards are 1996 Artbox
+    # Entertainment trading cards (confirmed by each card's own name, e.g.
+    # "Piccolo (Artbox '96)" -- see scripts/catalog_sheet_400694.py, the
+    # hand-cataloguing script that first identified them). Split out of
+    # the shared "dragon_ball_z" key 2026-09-27 after the set they lived
+    # in was found mislabeled "Dragon Ball Z (Uncoded/Panini)" in the
+    # /ebay-export UI -- Panini was itself just a placeholder guess, and
+    # sharing "dragon_ball_z" with the real Panini-published Score/Panini
+    # DBZ CCG sets (1806 other cards, see dbz-1712/dbz-1709/etc.) would
+    # have carried Manufacturer=Bandai onto these regardless of which
+    # placeholder name won -- neither Panini nor Bandai actually made them.
+    "dragon_ball_artbox": ("Dragon Ball", "Artbox"),
+}
+
+# eBay's own "Game" item specific -- required by this category's own
+# item-specifics editor (confirmed 2026-09-27 against a live listing:
+# "Required -- Game" showing blank), but nothing in this pipeline ever
+# populated it -- GAME_ITEM_SPECIFICS above only ever fed Franchise/
+# Manufacturer, no call site read row["game"] for the Game picklist itself.
+# Values here are this app's best real-world answer, not upload-verified
+# the way Pokemon's Franchise/Manufacturer pair is -- same caution as
+# GAME_ITEM_SPECIFICS above, verify with one test listing per game before
+# a big batch. Dragon Ball Carddass/art cards are deliberately omitted:
+# neither is really "a game" in the sense this picklist means, so a
+# guessed value risks being wrong rather than merely unconfirmed.
+GAME_DISPLAY_NAMES: dict[str, str] = {
+    "pokemon": "Pokémon TCG",
+    "pokemon_japan": "Pokémon TCG",
+    "one_piece": "One Piece Card Game",
+    "dragon_ball_fusion_world": "Dragon Ball Fusion World",
+    "dragon_ball_super": "Dragon Ball Super Card Game",
+    "dragon_ball_z": "Dragon Ball Z Card Game",
+    "dragon_ball_super_divers": "Dragon Ball Super Divers",
+    "super_dragon_ball_heroes": "Super Dragon Ball Heroes",
 }
 
 # Verified against eBay's own category URLs (multiple independent listing
@@ -131,9 +189,17 @@ LOT_CATEGORY_ID = "183455"
 # this inventory is). Confirmed correct for singles by a real upload:
 # 4000 was accepted for category 183454, and the only real failure there
 # was the missing CD:40001 descriptor below -- but 4000 was explicitly
-# *rejected* for 183455 (Mixed Card Lots), so lots need a different,
-# still-unverified value (see --lot-condition-id).
+# *rejected* for 183455 (Mixed Card Lots), so lots need a different value
+# -- see DEFAULT_LOT_CONDITION_ID below, no longer a placeholder.
 DEFAULT_CONDITION_ID = "4000"
+
+# Confirmed 2026-09-28 by asking eBay directly rather than guessing or
+# listing a test item by hand: GetItem (via adapters/ebay_trading.py's
+# get_item_condition, built for exactly this) against 3 real, active,
+# category-183455 lot listings already on this account --
+# 267785473775/267785473779/267785476854 -- all three came back
+# ConditionID=3000 ("Used"), consistent across every one of them.
+DEFAULT_LOT_CONDITION_ID = "3000"
 
 # eBay's Condition Descriptor for ungraded CCG singles (ID 40001) is a
 # required sub-field of ConditionID 4000, confirmed by a real failed
@@ -145,12 +211,66 @@ DEFAULT_CONDITION_ID = "4000"
 # a full text->ID mapping table for conditions nothing here currently has.
 CARD_CONDITION_DESCRIPTOR_NEAR_MINT = "400010"
 
+# Confirmed by two real, distinct upload failures (2026-09-26): eBay
+# rejects "Card Name" (C:Card Name, error 21919308) and the variation
+# trait MPN (error 21919318) alike past 65 characters -- "Majin Buu :
+# Evil - FB04-091 (Dragon Ball Z Dokkan Battle Alternate Art)" (Card
+# Name, 73 chars) and "EX25-39 - Kale & Caulifla, Becoming the Strongest
+# in the Multiverse (N)" (MPN, 73 chars) both bounced with the exact same
+# "no more than 65 characters" message. Neither field was ever truncated
+# anywhere in this pipeline, unlike *Title (already capped at 80).
+EBAY_ITEM_SPECIFIC_MAX_LEN = 65
+
+def _truncate(value: str, max_len: int) -> str:
+    return value[:max_len].rstrip() if len(value) > max_len else value
+
+
+def _build_description(row: dict, *, is_lot: bool, name: str, number: str, game_name: str | None) -> str:
+    """*Description's actual body text -- what a buyer reads, not an item
+    specific they have to open a dropdown to see. Until 2026-09-27 this
+    was just `listing.description or listing.title` (row["description"]),
+    which for the overwhelming majority of listings meant a description
+    that was the literal title again: no set, no condition statement, no
+    language, nothing this app already knows and had computed for the
+    item specifics sitting right next to it.
+
+    Built from the same structured fields the item specifics already use
+    (set_name, rarity, variant, language, weight_grams) rather than
+    inventing new copy to maintain in two places -- and deliberately
+    plain and factual, not sales copy: a real business description this
+    codebase has no basis to write persuasively on its own behalf.
+    """
+    language = row.get("language") or "English"
+    if is_lot:
+        lines = [row["title"]]
+        set_name = row.get("set_name")
+        if set_name:
+            lines.append(f"A random assortment of cards from {set_name}, pulled from our own scanned inventory.")
+        if language != "English":
+            lines.append(f"Language: {language}.")
+        lines.append("Condition: Near Mint or Better throughout. Ships promptly, cards protected in sleeves.")
+        return " ".join(lines)
+
+    lines = [f"{name} #{number}".strip() if number else name]
+    detail_bits = [b for b in (row.get("set_name"), game_name) if b]
+    if detail_bits:
+        lines.append(" -- ".join(detail_bits) + ".")
+    spec_bits = [b for b in (row.get("rarity"), row.get("variant")) if b]
+    if spec_bits:
+        lines.append(" / ".join(spec_bits) + ".")
+    if language != "English":
+        lines.append(f"Language: {language}.")
+    lines.append("Condition: Near Mint or Better. Carefully inspected and photographed from our own collection.")
+    lines.append("Ships promptly with protective sleeve and toploader.")
+    return " ".join(lines)
+
 
 def convert_row(row: dict, args) -> dict:
     is_lot = "bulk lot" in row["title"].lower()
     title = sanitize_title(row["title"])
     name, _, number = title.partition(" #")
     franchise, manufacturer = GAME_ITEM_SPECIFICS.get(row.get("game") or "pokemon", (FRANCHISE, MANUFACTURER))
+    game_name = GAME_DISPLAY_NAMES.get(row.get("game") or "pokemon")
 
     out = {
         "*Action(SiteID=Australia|Country=AU|Currency=AUD|Version=1193|CC=UTF-8)": "Add",
@@ -162,7 +282,7 @@ def convert_row(row: dict, args) -> dict:
         "*C:Franchise": franchise,
         "*C:Manufacturer": manufacturer,
         "PicURL": row["image_url"],
-        "*Description": sanitize_title(row["description"]),
+        "*Description": sanitize_title(_build_description(row, is_lot=is_lot, name=name, number=number, game_name=game_name)),
         "*Format": "FixedPrice",
         "*Duration": "GTC",
         "*StartPrice": row["price"],
@@ -175,7 +295,19 @@ def convert_row(row: dict, args) -> dict:
         "PaymentProfileName": args.payment_policy,
         "C:Item Weight": f"{row['weight_grams']} g",
         "*C:Set": row["set_name"],
+        # Real, category-recognised aspect (C:Language, confirmed against
+        # the downloaded template -- "Japanese" is one of its own listed
+        # recommended values), not a bespoke field: this is what makes the
+        # language a buyer can actually see on the listing, rather than
+        # something only this app's own database knows. Added 2026-09-27
+        # after a real sale of a Japanese-printed Dragon Ball card pictured
+        # and catalogued as the English release -- see
+        # export_ebay_bulk_listing.py's single_language for where the
+        # value itself comes from.
+        "C:Language": row.get("language") or "English",
     }
+    if game_name:
+        out["C:Game"] = game_name
     if is_lot:
         match = _LOT_CARD_COUNT_RE.search(row["title"])
         if match:
@@ -183,12 +315,26 @@ def convert_row(row: dict, args) -> dict:
         # Not populated: 183455's own condition-descriptor scheme (if it
         # has one at all) is unverified, unlike the singles' 4000/40001
         # pair below -- confirmed only once already, no need to guess twice.
+        # C:Finish is also left blank here, deliberately: a lot mixes many
+        # cards' printings under one sku, so a single Finish value would
+        # misrepresent whichever ones aren't foil (or aren't all the same
+        # foil), unlike a single-card row where the printing is the row.
     else:
-        out["C:Card Name"] = name.strip()
+        out["C:Card Name"] = _truncate(name.strip(), EBAY_ITEM_SPECIFIC_MAX_LEN)
         if number:
             out["C:Card Number"] = number.strip()
         if row.get("rarity"):
             out["C:Rarity"] = sanitize_title(row["rarity"])
+        if row.get("variant"):
+            # Real per-card data (export_ebay_bulk_listing.py's
+            # single_variant/InventoryItem.variant), not a bespoke guess --
+            # same reasoning as C:Language above: a buyer should be able to
+            # see Normal/Holo/Reverse Holo as a real, searchable item
+            # specific rather than something only buried in the title.
+            # Unverified against a real upload (like every non-Pokemon
+            # GAME_ITEM_SPECIFICS entry above) -- confirm the exact
+            # picklist values with one test listing before a big batch.
+            out["C:Finish"] = row["variant"]
         out["CD:Card Condition - (ID: 40001)"] = CARD_CONDITION_DESCRIPTOR_NEAR_MINT
     return out
 
@@ -237,11 +383,41 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     returned skip reasons are what a caller reports so it isn't silently
     dropped.
 
-    The parent's own picture is the set's logo (cards[0]["set_logo_url"],
-    exported by export_ebay_bulk_listing.py), not one card's photo -- a
-    buyer picking a card from a whole set should see the set they're
-    browsing, not whichever card happened to sort first. Falls back to
-    that first card's photo only if the set has no logo on file.
+    That dedup key falls back to the card's own name, not "n/a", when
+    C:Card Number is the literal placeholder "n/a" -- a real, distinct
+    physical card can genuinely have no printed number at all (1996
+    Artbox Dragon Ball Z cards, confirmed 2026-09-27), and every one of
+    them partitions to the same "#n/a" title suffix. Keying on the bare
+    number as usual would make this function think all of them are
+    reprints of one single "n/a" card and silently drop every one but the
+    first -- confirmed live: 11 of a real 12-card set were dropped this
+    way before this fallback existed. Name is what actually distinguishes
+    these specific cards when there's no real numbering scheme to key
+    off; a genuine same-name-same-printing duplicate is still caught.
+
+    Each child's PicURL is "<its own MPN value>=<its own photo url>", not
+    a bare URL -- confirmed 2026-09-27 against eBay's own File Exchange
+    Advanced Template Instructions (v3.5.2, PicURL/"Using relationship
+    fields for variations", pp.24-25): a variation row's PicURL must be
+    keyed by the exact trait value used in that same row's own
+    RelationshipDetails ("Black=URL1|URL2|URL3" for a Colour=Black
+    variation; pipe-separate multiple photos for one value), and "PicURL
+    values for variations of a given item must use a single trait name"
+    -- satisfied here since MPN is the only trait this listing ever uses,
+    and every child's MPN value is already unique (see the dedup guard
+    above), so no two children ever need to share one photo entry. This
+    replaces an earlier, wrong 2026-09-27 fix that instead pooled every
+    child's photo onto the *parent's* PicURL as a flat comma-joined list
+    -- there is no such pool mechanism; each variation's picture lives on
+    its own row, keyed to its own value. That wrong fix was never
+    upload-tested before this correction, only reasoned from a community
+    forum summary that turned out to describe a different (Trading API)
+    mechanism.
+
+    The parent (item) row's own PicURL is unrelated to any of this: it's
+    the ordinary single "typical example" photo shown before a buyer
+    picks a variation -- the set logo, or the first card's photo if the
+    set has none, same as before this whole investigation.
     """
     VARIATION_TRAIT = "MPN"
     # Matches the reference listing's own tags exactly (N/RH); a printing
@@ -262,7 +438,8 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
         if not number:
             skipped.append(f"{card['title']} ({card['sku']}) -- no readable card number, can't be a variation")
             continue
-        key = (number, variant)
+        dedup_number = child.get("C:Card Name", "") if number.casefold() == "n/a" else number
+        key = (dedup_number, variant)
         if key in seen:
             skipped.append(f"{card['title']} ({card['sku']}) -- another {variant or 'copy'} of card number {number} "
                             f"in {set_name} already uses this exact value (a reprint/alt-art sharing its base "
@@ -276,13 +453,37 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
         # Holo of the same card apart in the picker. ; and | are eBay's
         # own separators in this field, so real card text can't collide
         # with them.
-        value = f"{padded} - {child.get('C:Card Name', '')}".strip()
-        if variant:
-            value = f"{value} ({VARIANT_TAGS.get(variant, variant)})"
-        value = value.replace(";", ",").replace("|", "-")
+        suffix = f" ({VARIANT_TAGS.get(variant, variant)})" if variant else ""
+        base = f"{padded} - {child.get('C:Card Name', '')}".strip()
+        base = base.replace(";", ",").replace("|", "-")
+        # eBay error 21920469 treats the JavaScript function token ``eval``
+        # as active content even when it merely occurs inside an innocent
+        # card name.  A real upload rejected both "Energy Retrieval" values
+        # for that reason. Keep that common card name buyer-friendly, then
+        # break the same token safely should it occur in another name.
+        base = re.sub(r"\bretrieval\b", "Retr.", base, flags=re.IGNORECASE)
+        base = re.sub(r"eval", "e-val", base, flags=re.IGNORECASE)
+        # Truncate the name portion only, reserving room for the variant
+        # suffix -- truncating the combined value risked cutting the
+        # suffix itself off, which would make two different printings of
+        # an overly-long card name collide on an identical value (eBay's
+        # "Duplicate VariationSpecifics trait value" rejection, a
+        # different real failure this same function already guards
+        # against for the ordinary case via `seen`).
+        value = _truncate(base, EBAY_ITEM_SPECIFIC_MAX_LEN - len(suffix)) + suffix
         values.append(value)
         child["Relationship"] = "Variation"
         child["RelationshipDetails"] = f"{VARIATION_TRAIT}={value}"
+        # Keyed by that exact same value, per eBay's own File Exchange
+        # docs (see this function's docstring) -- a bare URL here is what
+        # a buyer's variation picker has nothing to match, and never
+        # displays that card's own photo once selected. Guarded rather
+        # than assumed non-empty: single_image_url already filters out
+        # rows with no photo before they ever reach this function, but a
+        # defensive check costs nothing against a future call site that
+        # doesn't.
+        if child.get("PicURL"):
+            child["PicURL"] = f"{value}={child['PicURL']}"
         child_rows.append(child)
 
     if not child_rows:
@@ -292,15 +493,32 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     parent.update({
         "CustomLabel": _parent_sku(set_name),
         "*Title": sanitize_title(f"{set_name} - Complete Your Master Set")[:80],
+        # set_name already carries a "(Japanese)" suffix when this whole
+        # group is one language (export_ebay_bulk_listing.py's
+        # _set_group_key), so it doesn't need a separate language clause
+        # here the way a single/lot row does in _build_description --
+        # it's already in the one line every buyer reads first.
         "*Description": sanitize_title(
-            f"Choose your card from {set_name}. Select a variation below to see its price and photo."
+            f"Choose your card from {set_name} -- {len(child_rows)} available, each at its own price. "
+            "Select a variation below to see the specific card and photo. "
+            "Condition: Near Mint or Better throughout. Ships promptly with protective sleeve and toploader."
         ),
         "*Quantity": "",
         "*StartPrice": "",
+        # The parent's own picture is the set's logo, not a pool and not
+        # any one card's keyed variation photo (child_rows[0]'s own
+        # PicURL is now "<value>=<url>", which is meaningless as the
+        # item-level picture) -- see this function's docstring. Falls
+        # back to the first card's plain photo only if the set has none.
         "PicURL": cards[0].get("set_logo_url") or cards[0]["image_url"],
         "C:Card Name": "",
         "C:Card Number": "",
         "C:Rarity": "",
+        # C:Finish too -- otherwise the parent silently inherits
+        # child_rows[0]'s printing (e.g. "Holo") and misrepresents every
+        # other Normal/Reverse Holo card in the set, the same class of bug
+        # 2026-09-26's language incident was about.
+        "C:Finish": "",
         "Relationship": "",
         "RelationshipDetails": f"{VARIATION_TRAIT}=" + ";".join(values),
     })
@@ -317,10 +535,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--condition-id", default=DEFAULT_CONDITION_ID,
                         help=f"eBay condition ID for SINGLE cards (default {DEFAULT_CONDITION_ID} = Ungraded -- "
                              "confirmed correct by a real upload; override only if some of this inventory is graded)")
-    parser.add_argument("--lot-condition-id", default=PLACEHOLDER,
-                        help="eBay condition ID for BULK LOTS -- 4000 was confirmed *invalid* for category 183455 "
-                             "by a real upload, and no verified replacement is known yet. List one lot by hand "
-                             "through eBay's normal flow to find the real value before setting this.")
+    parser.add_argument("--lot-condition-id", default=DEFAULT_LOT_CONDITION_ID,
+                        help=f"eBay condition ID for BULK LOTS (default {DEFAULT_LOT_CONDITION_ID} = Used -- "
+                             "confirmed 2026-09-28 against 3 real active category-183455 listings via GetItem, "
+                             "after 4000 -- the singles value -- was confirmed rejected here by a real upload)")
     parser.add_argument("--location", default=PLACEHOLDER)
     parser.add_argument("--dispatch-days", default=PLACEHOLDER)
     parser.add_argument("--payment-policy", default=PLACEHOLDER)
@@ -371,7 +589,11 @@ def main(argv: list[str] | None = None) -> int:
             variation_skipped.extend(group_skipped)
         print(f"grouped {len(rows)} card(s) into {len(groups)} set variation listing(s)", file=sys.stderr)
         if variation_skipped:
-            print(f"skipped {len(variation_skipped)} card(s) -- see reason per row:", file=sys.stderr)
+            # Not all of these are skipped cards -- a photo-pool-over-limit
+            # entry (see build_variation_group) is a listing-level warning,
+            # every card in it is still exported. Same list, same printout,
+            # since both are just "read this before you upload" notes.
+            print(f"{len(variation_skipped)} note(s) -- see reason per row:", file=sys.stderr)
             for reason in variation_skipped:
                 print(f"  {reason}", file=sys.stderr)
     else:

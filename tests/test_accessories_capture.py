@@ -222,3 +222,48 @@ def test_review_skip_leaves_status_pending(client, session):
 def test_capture_image_404_when_unknown(client):
     resp = client.get("/accessories/capture/image/does-not-exist")
     assert resp.status_code == 404
+
+
+def test_capture_db_failure_returns_a_controlled_error_not_a_crash(client, session):
+    """The failure mode diagnosed 2026-09-21: the AI call failed cleanly (a
+    real Anthropic outage, credit_balance_too_low), the fallback row that
+    produces then hit a transient DB error on its own commit ("database is
+    locked", another writer mid-transaction), and THAT second failure was
+    never caught -- surfacing as a raw, unexplained 500 with nothing to
+    show for it and nothing in the audit log. Two attempts in a row both
+    failed exactly like this.
+    """
+    with patch("automation_control.accessories.extract_accessory_details", return_value=[]), \
+         patch.object(session, "commit", side_effect=Exception("database is locked")):
+        resp = client.post("/accessories/capture", files=_upload(), follow_redirects=False)
+
+    assert resp.status_code == 500
+    assert "failed to save this capture" in resp.json()["detail"]
+    # Rolled back, not half-written -- the real commit.side_effect never
+    # let a partial row through.
+    assert session.query(CapturedAccessory).count() == 0
+
+    # The bug this closes wasn't just the one crash: a session left with a
+    # dead transaction breaks every request after it too, which is why the
+    # user's second attempt failed identically. Patch lifts at the end of
+    # the `with` above, so this proves the rollback actually happened.
+    with patch("automation_control.accessories.extract_accessory_details", return_value=[]):
+        resp2 = client.post("/accessories/capture", files=_upload(), follow_redirects=False)
+    assert resp2.status_code == 303
+
+
+def test_capture_records_the_real_failure_reason_in_the_audit_log(client, session):
+    """details={} on this event is what turned a five-minute fix into a
+    raw-service-log read: the AI failure reason was computed (blank_note)
+    but never actually written down."""
+    from sqlalchemy import select
+    from automation_control.models import AuditEvent
+
+    with patch("automation_control.accessories.extract_accessory_details", side_effect=RuntimeError("boom")):
+        client.post("/accessories/capture", files=_upload(), follow_redirects=False)
+
+    event = session.scalars(
+        select(AuditEvent).where(AuditEvent.action == "accessory.capture")
+    ).one()
+    assert event.outcome == "failed"
+    assert event.details == {"error": "boom"}

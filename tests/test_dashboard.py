@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.api import app
-from automation_control.ui import ADMIN_NAV
+from automation_control.ui import ADMIN_NAV, TOOL_NAV
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
@@ -151,35 +151,21 @@ def test_quick_links_are_rendered_from_the_shared_nav(client):
 
 
 def test_every_listed_module_is_reachable_from_the_drawer(client):
-    """Nothing in use may be built and then be unreachable. This is what
-    actually went wrong before: the live collectibles capture and review
-    pages were in neither the drawer nor the dashboard, so the only way to
-    them was typing the URL.
-
-    Driven from ADMIN_NAV rather than a hand-kept list, so it follows the
-    nav instead of having to be edited alongside it. The pages in
-    HIDDEN_NAV are excluded by construction -- being absent from the
-    drawer is the point of them, and test_nav.py holds them to the other
-    half of that bargain: their routes still answer.
-    """
+    """Every condensed workflow entrance is present in the drawer."""
     response = client.get("/dashboard")
     for _title, links, _collapsed in ADMIN_NAV:
         for href, _label in links:
             assert f"data-nav-href='{href}'" in response.text, href
-    # the specific pages whose absence prompted the test
-    for path in ["/collectibles/capture", "/collectibles/review", "/inventory-audit"]:
-        assert f"data-nav-href='{path}'" in response.text, path
 
 
-def test_review_queues_carry_a_count_badge(client):
+def test_review_centre_carries_the_combined_count_badge(client):
     response = client.get("/dashboard")
-    for path in ["/review", "/foil-review", "/inventory-audit", "/collectibles/review"]:
-        assert f"data-count-for='{path}'" in response.text, path
+    assert "data-count-for='/review-centre'" in response.text
 
 
 def test_jump_to_palette_lists_every_destination(client):
     response = client.get("/dashboard")
-    for _title, links, _collapsed in ADMIN_NAV:
+    for _title, links, _collapsed in ADMIN_NAV + TOOL_NAV:
         for href, _label in links:
             assert f"data-href='{href}'" in response.text, href
 

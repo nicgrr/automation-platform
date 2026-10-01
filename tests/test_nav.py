@@ -27,6 +27,7 @@ from automation_control.ui import (
     HIDDEN_NAV,
     NAV_COUNT_HREFS,
     PHOTO_FIELD_SCRIPT,
+    TOOL_NAV,
     page,
     photo_field,
 )
@@ -66,6 +67,13 @@ def test_every_nav_href_is_a_real_route():
             assert href in routes, href
 
 
+def test_every_palette_tool_is_a_real_route():
+    routes = set(app.openapi()["paths"])
+    for _title, links, _collapsed in TOOL_NAV:
+        for href, _label in links:
+            assert href in routes, href
+
+
 def test_no_href_appears_in_two_groups():
     """"Review queue" used to appear twice, in two groups, pointing at two
     different queues. One home per destination."""
@@ -81,19 +89,39 @@ def test_labels_are_unique():
     assert len(labels) == len(set(labels)), "two nav entries share a label"
 
 
+def test_drawer_is_the_condensed_eleven_destination_map():
+    assert sum(len(links) for _title, links, _collapsed in ADMIN_NAV) == 11
+    assert [title for title, _links, _collapsed in ADMIN_NAV] == [
+        "Home", "Stock", "Selling", "Buying & research", "System",
+    ]
+
+
 def test_count_badges_only_on_routes_that_are_counted(session, tmp_path):
-    """NAV_COUNT_HREFS and queue_counts are two halves of one contract."""
+    """NAV_COUNT_HREFS must be real on both ends: every href in it needs
+    an actual count from queue_counts() (a badge with no number behind
+    it), AND needs to actually be a drawer link (a badge span that could
+    never exist in the rendered DOM at all) -- real incident, 2026-09-29:
+    this used to assert equality with queue_counts()'s full key set,
+    which stayed passing even after ADMIN_NAV was condensed and seven of
+    those hrefs stopped being drawer links at all, silently making their
+    badge slots permanently dead."""
     app.state.settings.scan_media_dir = str(tmp_path / "media")
-    assert NAV_COUNT_HREFS == set(queue_counts(session, app.state.settings))
+    countable = set(queue_counts(session, app.state.settings))
+    drawer_hrefs = {h for _t, links, _c in ADMIN_NAV for h, _l in links}
+    assert NAV_COUNT_HREFS <= countable
+    assert NAV_COUNT_HREFS <= drawer_hrefs
+    # and the reverse: any drawer link that genuinely has a real count
+    # available should actually show its badge, not silently skip it
+    assert (drawer_hrefs & countable) <= NAV_COUNT_HREFS
 
 
-def test_the_live_capture_pipeline_is_in_the_nav():
-    """Regression: /collectibles/capture and /collectibles/review were the
-    pipeline in daily use and were in neither the drawer nor the
-    dashboard -- reachable only by typing the URL."""
-    hrefs = {h for _t, links, _c in ADMIN_NAV for h, _l in links}
+def test_the_live_capture_pipeline_is_in_the_condensed_navigation():
+    """Daily capture and review remain discoverable after drawer condensation."""
+    drawer = {h for _t, links, _c in ADMIN_NAV for h, _l in links}
+    tools = {h for _t, links, _c in TOOL_NAV for h, _l in links}
+    assert {"/scan-add", "/review-centre"} <= drawer
     for path in ["/collectibles/capture", "/collectibles/review", "/inventory-audit"]:
-        assert path in hrefs, path
+        assert path in tools, path
 
 
 # ------------------------------------------------------------------ counts
@@ -114,6 +142,7 @@ def test_queue_counts_reports_pending_work(session, tmp_path):
     assert counts["/cards/review"] == 2
     assert counts["/cards/pricing"] == 1
     assert counts["/collectibles/review"] == 1
+    assert counts["/review-centre"] == 4
 
 
 def test_scan_crop_count_is_a_directory_listing(session, tmp_path):
@@ -166,6 +195,19 @@ def test_nav_counts_requires_login():
     app.dependency_overrides.clear()
     response = TestClient(app).get("/nav/counts", follow_redirects=False)
     assert response.status_code in (302, 303, 401)
+
+
+@pytest.mark.parametrize(("path", "heading"), [
+    ("/scan-add", "Scan &amp; add"),
+    ("/review-centre", "Review centre"),
+    ("/ebay", "eBay"),
+    ("/nl-vault", "NL Vault shop"),
+    ("/market-tools", "Market tools"),
+])
+def test_condensed_navigation_hubs_render(client, path, heading):
+    response = client.get(path)
+    assert response.status_code == 200
+    assert heading in response.text
 
 
 # ------------------------------------------------------------- photo field
@@ -229,8 +271,9 @@ def test_hidden_nav_entries_are_still_real_routes():
         assert href in routes, href
 
 
-def test_hidden_nav_and_admin_nav_do_not_overlap():
+def test_hidden_nav_and_visible_tools_do_not_overlap():
     """A destination is either listed or hidden, never both."""
     listed = {href for _t, links, _c in ADMIN_NAV for href, _l in links}
+    listed.update(href for _t, links, _c in TOOL_NAV for href, _l in links)
     for href, _label in HIDDEN_NAV:
         assert href not in listed, href

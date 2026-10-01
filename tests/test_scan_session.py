@@ -433,6 +433,59 @@ def test_run_session_refuses_a_set_with_no_reference_hashes(db, settings):
         run_session(db, "xy12", settings, ScriptedPrompter(), max_sheets=1, max_wait=0.1, poll_interval=0.01)
 
 
+# --- manual path: per-sheet rotation detection (2026-09-29) -----------
+#
+# A manual `--set-id` session used to take one fixed --rotate for its
+# entire run -- a pile scanned sideways without remembering that flag
+# produced wrong-orientation crops (the root cause storefront/common.py's
+# own-photo workaround exists for). Now each sheet gets the same
+# per-sheet detection the fully-automatic path already uses, just scoped
+# to the one already-known set instead of searching every cached set.
+
+def _patch_process_sheet_recorder(monkeypatch, captured):
+    """Replaces process_sheet with a stub that records the rotation it
+    was actually called with and returns a minimal, valid SheetOutcome --
+    enough for run_session's loop body to proceed without erroring."""
+    def fake(db, sheet_path, scan_session, references, settings, prompter, **kwargs):
+        captured.append(kwargs.get("post_rotation_degrees"))
+        return session_mod.SheetOutcome(sheet_path=sheet_path, detected=0, archived_to=sheet_path)
+    monkeypatch.setattr(session_mod, "process_sheet", fake)
+
+
+def test_manual_session_uses_the_detected_rotation_for_that_sheet(db, settings, monkeypatch):
+    _make_sheet(Path(settings.scan_watch_dir) / "sheet1.png", [1, 2], rows=2, cols=1)
+    captured: list[int] = []
+    _patch_process_sheet_recorder(monkeypatch, captured)
+    seen_catalogs = []
+
+    def fake_detect_rotation(crop_paths, catalogs, max_phash_distance=12):
+        seen_catalogs.append(catalogs)
+        return ("xy11", 180)
+
+    monkeypatch.setattr(session_mod, "detect_sheet_set_and_rotation", fake_detect_rotation)
+
+    run_session(db, "xy11", settings, ScriptedPrompter(confirms=[False]), max_sheets=1, max_wait=0.5, poll_interval=0.01)
+
+    assert captured == [180]
+    # scoped to the operator-specified set only, not every cached set
+    assert seen_catalogs and set(seen_catalogs[0].keys()) == {"xy11"}
+
+
+def test_manual_session_falls_back_to_the_operator_value_when_detection_is_unconfident(db, settings, monkeypatch):
+    """A weak/ambiguous match must never block a session the operator
+    already pointed at a specific, known set -- fall back to whatever
+    --rotate they gave (default 0), not punt to manual review."""
+    _make_sheet(Path(settings.scan_watch_dir) / "sheet1.png", [1, 2], rows=2, cols=1)
+    captured: list[int] = []
+    _patch_process_sheet_recorder(monkeypatch, captured)
+    monkeypatch.setattr(session_mod, "detect_sheet_set_and_rotation", lambda *a, **k: None)
+
+    run_session(db, "xy11", settings, ScriptedPrompter(confirms=[False]), variant=CardVariant.NORMAL,
+               post_rotation_degrees=90, max_sheets=1, max_wait=0.5, poll_interval=0.01)
+
+    assert captured == [90]
+
+
 # --- unattended mode: nothing may ever block waiting for a terminal ---
 
 def test_unattended_never_asks_anything_even_with_a_prior_running_session(db, settings, monkeypatch):
@@ -741,9 +794,9 @@ def test_auto_session_discriminates_between_two_cached_sets(auto_db, settings, t
     assert scan_session.set_id == "setA"
 
 
-def test_auto_session_leaves_an_unmatched_sheet_in_the_watch_folder(auto_db, settings, monkeypatch):
-    """Nothing cached matches -- must not guess, must not create a session,
-    and must leave the file for a human rather than silently discarding it."""
+def test_auto_session_queues_and_archives_an_unmatched_sheet(auto_db, settings, monkeypatch):
+    """Nothing cached matches -- never guess or create a session, but put
+    every detected card in manual review so one sheet cannot halt scanning."""
     _make_sheet(Path(settings.scan_watch_dir) / "sheet.png", [1, 2], rows=2, cols=1)
     _register_reference(auto_db, "setA", "setA-1", _write_unrelated_reference(settings))
 
@@ -752,7 +805,10 @@ def test_auto_session_leaves_an_unmatched_sheet_in_the_watch_folder(auto_db, set
 
     assert scan_session is None
     assert any("none confidently match any cached set" in m for m in prompter.messages)
-    assert (Path(settings.scan_watch_dir) / "sheet.png").exists()
+    assert any("Queued 2 crop(s) for manual review" in m for m in prompter.messages)
+    assert not (Path(settings.scan_watch_dir) / "sheet.png").exists()
+    assert list((Path(settings.scan_archive_dir) / "unrouted").glob("sheet*.png"))
+    assert len(list((Path(settings.scan_media_dir) / "needs_review").glob("sheet-card*-unrouted.jpg"))) == 2
     assert auto_db.scalars(select(ScanSession)).all() == []
 
 
@@ -790,8 +846,8 @@ def test_auto_session_caches_an_unknown_set_from_the_printed_total(auto_db, sett
 
 
 def test_auto_session_gives_up_gracefully_when_the_printed_total_is_unreadable(auto_db, settings, monkeypatch):
-    """OCR finding nothing must leave the sheet alone, not crash the loop
-    or fetch something arbitrary."""
+    """OCR finding nothing must queue review, not crash or fetch something
+    arbitrary, and must not block the scanner's watch folder."""
     _make_sheet(Path(settings.scan_watch_dir) / "sheet.png", [31, 32], rows=2, cols=1)
     monkeypatch.setattr(session_mod, "read_set_totals", lambda paths: [])
 
@@ -804,12 +860,13 @@ def test_auto_session_gives_up_gracefully_when_the_printed_total_is_unreadable(a
     scan_session = run_session(auto_db, None, settings, prompter, max_sheets=1, max_wait=0.5, poll_interval=0.01, unattended=True)
 
     assert scan_session is None
-    assert (Path(settings.scan_watch_dir) / "sheet.png").exists()
+    assert not (Path(settings.scan_watch_dir) / "sheet.png").exists()
+    assert len(list((Path(settings.scan_media_dir) / "needs_review").glob("*.jpg"))) == 2
 
 
 def test_auto_session_survives_a_failed_set_lookup(auto_db, settings, monkeypatch):
-    """The catalog API is measurably flaky; a failed lookup must leave the
-    sheet for a retry rather than take the whole background service down."""
+    """A failed catalogue lookup must queue review rather than take down or
+    block the background scanning service."""
     _make_sheet(Path(settings.scan_watch_dir) / "sheet.png", [41, 42], rows=2, cols=1)
     monkeypatch.setattr(session_mod, "read_set_totals", lambda paths: [264])
 
@@ -823,7 +880,8 @@ def test_auto_session_survives_a_failed_set_lookup(auto_db, settings, monkeypatc
 
     assert scan_session is None
     assert any("could not be fetched" in m for m in prompter.messages)
-    assert (Path(settings.scan_watch_dir) / "sheet.png").exists()
+    assert not (Path(settings.scan_watch_dir) / "sheet.png").exists()
+    assert len(list((Path(settings.scan_media_dir) / "needs_review").glob("*.jpg"))) == 2
 
 
 def _write_unrelated_reference(settings) -> Path:

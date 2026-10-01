@@ -43,18 +43,18 @@ from .auth import require_dashboard_user
 from .database import get_session
 from .ebay_oauth import OAuthError, configured, ebay_services
 from .inventory_review import _aud, _latest_prices
+from .market_watch_service import COUNTRY_LABELS, allowed_country_codes
 from .models import CatalogCard
 from .reverse_image_search import ReverseImageSearchError, search_image
 from .ui import brand_header, page
 
 router = APIRouter(tags=["market-search"])
 
-# eBay's Browse API is scoped to one marketplace per call -- there's no
-# single "search everywhere" mode. AU is the default because that's where
-# this shop actually sells; US stands in for "international" since it's
-# by far the largest catalogue and the one eBay's own docs default to.
-MARKETPLACES = [("EBAY_AU", "Australia"), ("EBAY_US", "International (US)")]
-DEFAULT_MARKETPLACE = MARKETPLACES[0][0]
+# Search on the Australian eBay marketplace, restricting the seller/item
+# location with Browse API's official itemLocationCountry filter. There is
+# no supported EBAY_JP marketplace in the modern Buy API, so Japan is a
+# location, not a marketplace-header value.
+DEFAULT_COUNTRY = "AU"
 
 TITLE_FETCH_TIMEOUT_SECONDS = 15.0
 _OG_TITLE_RE = re.compile(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', re.IGNORECASE)
@@ -84,10 +84,10 @@ async def _title_from_url(url: str) -> str | None:
     return title or None
 
 
-def _marketplace_options(selected: str) -> str:
+def _country_options(selected: str, allowed: tuple[str, ...]) -> str:
     return "".join(
-        f"<option value='{code}'{' selected' if code == selected else ''}>{escape(label)}</option>"
-        for code, label in MARKETPLACES
+        f"<option value='{code}'{' selected' if code == selected else ''}>{escape(COUNTRY_LABELS.get(code, code))}</option>"
+        for code in allowed
     )
 
 
@@ -101,7 +101,7 @@ def _own_catalog_matches(session: Session, query: str, limit: int = 5) -> list[t
     return results
 
 
-async def _ebay_results_panel(session: Session, settings, query: str, marketplace: str) -> str:
+async def _ebay_results_panel(session: Session, settings, query: str, country: str) -> str:
     if not configured(settings):
         return (
             f"<div class='panel'><p>eBay {escape(settings.ebay_env.title())} OAuth isn't configured, so there's "
@@ -111,9 +111,12 @@ async def _ebay_results_panel(session: Session, settings, query: str, marketplac
         _, oauth = ebay_services(settings)
         token_payload = await oauth.application_token()
         payload = await EbaySandboxReadAdapter(token_payload["access_token"], environment=settings.ebay_env).search_market(
-            query, marketplace=marketplace,
+            query, marketplace="EBAY_AU", item_location_country=country,
         )
-        items = normalize_market(payload)
+        items = [
+            item for item in normalize_market(payload)
+            if (item.get("marketplace") or "").upper() == country
+        ]
     except (OAuthError, EbayApiError, KeyError):
         return "<div class='panel'><p>eBay search failed -- try again shortly.</p></div>"
 
@@ -142,27 +145,27 @@ async def _ebay_results_panel(session: Session, settings, query: str, marketplac
         )
     rows = "".join(row_html) or "<tr><td colspan=3>No results.</td></tr>"
 
-    marketplace_label = next((label for code, label in MARKETPLACES if code == marketplace), marketplace)
+    country_label = COUNTRY_LABELS.get(country, country)
     env_note = (
-        f"<p class='muted'>Region: {escape(marketplace_label)}.</p>" if settings.ebay_env == "production"
+        f"<p class='muted'>Seller location: {escape(country_label)} only.</p>" if settings.ebay_env == "production"
         else "<p class='muted'>Sandbox mode -- these are eBay's fake test-catalogue items, not real listings.</p>"
     )
 
     return (
         own_panel
         + f"<div class='panel'><h2>eBay results</h2>{env_note}{summary}"
-        + f"<div class='table-wrap'><table><thead><tr><th>Title</th><th>Price</th><th>Marketplace</th></tr></thead>"
+        + f"<div class='table-wrap'><table><thead><tr><th>Title</th><th>Price</th><th>Location</th></tr></thead>"
         + f"<tbody>{rows}</tbody></table></div></div>"
     )
 
 
-def _lens_picker_panel(items: list[dict], marketplace: str, error: str | None = None) -> str:
+def _lens_picker_panel(items: list[dict], country: str, error: str | None = None) -> str:
     if error:
         return f"<div class='panel'><p>Google Lens search failed: {escape(error)}</p></div>"
     if not items:
         return "<div class='panel'><p>Google Lens didn't return anything for that screenshot -- try a text search instead.</p></div>"
     rows = "".join(
-        f"<a class='msearch-lens-pick' href='/market-search?q={quote(item.get('title') or '')}&marketplace={quote(marketplace)}'>"
+        f"<a class='msearch-lens-pick' href='/market-search?q={quote(item.get('title') or '')}&country={quote(country)}'>"
         f"{escape(item.get('title') or 'untitled result')}</a>"
         for item in items if item.get("title")
     )
@@ -173,22 +176,22 @@ def _lens_picker_panel(items: list[dict], marketplace: str, error: str | None = 
     )
 
 
-def _page_shell(query: str, marketplace: str, extra_html: str) -> str:
+def _page_shell(query: str, country: str, allowed: tuple[str, ...], extra_html: str) -> str:
     body = (
         brand_header("Market search")
         + "<form method='get' action='/market-search' class='msearch-form'>"
         + f"<input name='q' value='{escape(query)}' placeholder='Charizard ex 199' autofocus>"
-        + f"<select name='marketplace'>{_marketplace_options(marketplace)}</select>"
+        + f"<select name='country' aria-label='Seller location'>{_country_options(country, allowed)}</select>"
         + "<button type='submit'>Search</button>"
         + "</form>"
         + "<form method='get' action='/market-search' class='msearch-form msearch-secondary'>"
         + "<input name='url' type='url' placeholder='Paste a listing or product link instead'>"
-        + f"<input type='hidden' name='marketplace' value='{escape(marketplace)}'>"
+        + f"<input type='hidden' name='country' value='{escape(country)}'>"
         + "<button type='submit'>Look up link</button>"
         + "</form>"
         + "<form method='post' action='/market-search/from-photo' enctype='multipart/form-data' class='msearch-form msearch-secondary' onsubmit='return marketSearchPhotoSubmitting(this)'>"
         + "<input name='photo' type='file' accept='image/*' required>"
-        + f"<input type='hidden' name='marketplace' value='{escape(marketplace)}'>"
+        + f"<input type='hidden' name='country' value='{escape(country)}'>"
         + "<button type='submit'>Search from a screenshot</button>"
         + "</form>"
         + extra_html
@@ -200,12 +203,14 @@ def _page_shell(query: str, marketplace: str, extra_html: str) -> str:
 
 @router.get("/market-search", response_class=HTMLResponse)
 async def market_search_page(
-    request: Request, q: str = Query(""), url: str = Query(""), marketplace: str = Query(DEFAULT_MARKETPLACE),
+    request: Request, q: str = Query(""), url: str = Query(""), country: str = Query(DEFAULT_COUNTRY),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ) -> HTMLResponse:
     settings = request.app.state.settings
-    if marketplace not in dict(MARKETPLACES):
-        marketplace = DEFAULT_MARKETPLACE
+    allowed = allowed_country_codes(settings.market_allowed_countries)
+    country = country.upper()
+    if country not in allowed:
+        country = allowed[0]
 
     query = q.strip()
     link = url.strip()
@@ -221,31 +226,33 @@ async def market_search_page(
             )
 
     if query:
-        extra_html = await _ebay_results_panel(session, settings, query, marketplace)
+        extra_html = await _ebay_results_panel(session, settings, query, country)
     elif not extra_html:
         extra_html = (
             "<div class='panel'><p>Search a card, figure, or set name to see what's listed on eBay right now -- "
             "or paste a link, or upload a screenshot, using the options below.</p></div>"
         )
 
-    return HTMLResponse(_page_shell(query, marketplace, extra_html))
+    return HTMLResponse(_page_shell(query, country, allowed, extra_html))
 
 
 @router.post("/market-search/from-photo", response_class=HTMLResponse)
 async def market_search_from_photo(
-    request: Request, photo: UploadFile = File(...), marketplace: str = Form(DEFAULT_MARKETPLACE),
+    request: Request, photo: UploadFile = File(...), country: str = Form(DEFAULT_COUNTRY),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ) -> HTMLResponse:
     settings = request.app.state.settings
-    if marketplace not in dict(MARKETPLACES):
-        marketplace = DEFAULT_MARKETPLACE
+    allowed = allowed_country_codes(settings.market_allowed_countries)
+    country = country.upper()
+    if country not in allowed:
+        country = allowed[0]
 
     if not settings.apify_token:
         extra_html = (
             "<div class='panel'><p>Screenshot search isn't configured (APIFY_TOKEN missing), so there's nothing "
             "to run the image against yet.</p></div>"
         )
-        return HTMLResponse(_page_shell("", marketplace, extra_html))
+        return HTMLResponse(_page_shell("", country, allowed, extra_html))
 
     data = await photo.read()
     suffix = Path(photo.filename or "screenshot.jpg").suffix or ".jpg"
@@ -255,11 +262,11 @@ async def market_search_from_photo(
         try:
             items = await search_image(photo_path, settings.apify_token, settings.apify_google_lens_actor_id)
         except ReverseImageSearchError as exc:
-            extra_html = _lens_picker_panel([], marketplace, error=str(exc))
+            extra_html = _lens_picker_panel([], country, error=str(exc))
         else:
-            extra_html = _lens_picker_panel(items, marketplace)
+            extra_html = _lens_picker_panel(items, country)
 
-    return HTMLResponse(_page_shell("", marketplace, extra_html))
+    return HTMLResponse(_page_shell("", country, allowed, extra_html))
 
 
 _STYLE = """<style>
@@ -281,6 +288,9 @@ _STYLE = """<style>
 .table-wrap td,.table-wrap th{overflow-wrap:anywhere;word-break:break-word}
 .table-wrap td:first-child,.table-wrap th:first-child{width:55%}
 .muted{color:var(--text-dim);font-size:13px}
+@media (max-width: 500px) {
+  .msearch-form input, .msearch-form select{flex-basis:100%}
+}
 </style>"""
 
 _SCRIPT = """<script>

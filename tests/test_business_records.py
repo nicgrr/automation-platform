@@ -67,6 +67,19 @@ def test_add_a_release_calendar_entry(client):
     assert "2026-11-01" in listing.text
 
 
+def test_release_calendar_rows_are_capped_at_200(client, session):
+    from automation_control.models import ReleaseCalendarEntry
+
+    for i in range(205):
+        session.add(ReleaseCalendarEntry(id=f"r{i}", product_name=f"Product {i}", release_date="2026-12-01"))
+    session.commit()
+
+    page = client.get("/release-calendar").text
+
+    assert page.count("<tr>") == 201  # 1 header row + 200 capped body rows, not all 205
+    assert "200 of 205 shown, capped at 200 rows." in page
+
+
 # --- release calendar: editing, deleting, urgency ------------------------
 
 def test_a_release_can_be_edited(client, session):

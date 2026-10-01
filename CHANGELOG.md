@@ -3,6 +3,75 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-10-01 — Platform review, truthful health and schema baseline
+
+Completed the head-to-toe platform review and recorded all 19 owner decisions in
+`docs/EZBAY_PLATFORM_REVIEW_2026-10-01.md`, with the sequenced delivery plan in
+`docs/EZBAY_IMPLEMENTATION_ROADMAP.md`. Expanded dashboard health from seven to
+thirteen operational dependencies: unreadable state is now attention-worthy, and
+scanner-button, scanner-recovery, inventory-photo-audit, encrypted-backup,
+backup-check and backup-maintenance jobs are covered.
+
+Settings now shows the exact application Git revision (including a dirty-working-
+tree warning) and database revision. Adopted Alembic, generated and blank-database
+tested a complete static schema baseline, reconciled historical SQLite type/index
+representations, made a fresh integrity-checked backup, and stamped production at
+`20261001_01`. `alembic check` reports no schema drift and no business table or row
+was changed by the stamp.
+
+## 2026-09-24 — Generic collectible discovery and alert inbox
+
+Expanded the Sonny Angel market page into a generic AU/JP collectible watch
+workflow. Users can add, pause and scan watch terms; eBay continues to use its
+exact item-location filter, while optional Brave public-web discovery remains
+disabled until both an API key and licensed result-storage permission are
+configured. Added deduplicated `.eml`/IMAP intake for Gumtree, Buyee,
+ZenMarket, FROM JAPAN, Depop and Facebook alerts, plus a PWA share target and
+manual listing intake that never stores marketplace credentials or fetches the
+shared page. A twice-daily systemd timer refreshes watches without sending
+messages or making purchases. The additive migration preserved all market
+history and backfilled the existing Sonny Angel listings into the seeded
+watch.
+
+## 2026-09-24 — Australia/Japan market scope and marketplace intake
+
+Restricted eBay market search and the Sonny Angel market watch to sellers in
+Australia or Japan using eBay Browse API's official `itemLocationCountry`
+filter. The watch page now filters by seller country, excludes older rows from
+other locations, shows the configured scope, and can launch a fresh AU/JP eBay
+scan. Added validated manual link intake for Facebook Marketplace and Depop
+finds, including AUD/JPY landed-cost conversion. This deliberately does not
+scrape either service or store a personal login: Meta has no public Marketplace
+search API, and Depop's API is partner-only rather than a public market-search
+feed.
+
+## 2026-09-24 — Condensed workflow navigation
+
+Replaced the 39-link drawer with eleven workflow entrances across Home,
+Stock, Selling, Buying & research, and System. Added native mobile-friendly
+hubs for Scan & add, Review centre, eBay, NL Vault and Market tools. The
+Review centre carries one combined queue badge; every specialist route keeps
+its original URL and remains directly searchable through Ctrl-K. Settings now
+links to CRM data exports, and the dashboard quicklinks use the same condensed
+map as the drawer.
+
+## 2026-09-24 — Retailer Goals / Gameology Guild tracker
+
+Added a native `/retailer-goals` module for accumulating a weekly buying
+fund while measuring eligible Gameology Guild spend and the actual premium
+paid over trusted Australian competitors. It includes configurable $1k/$5k
+milestones and premium bands, a sealed-product Buy Queue, fund affordability,
+completion projections, retailer trust controls, price history, an objective
+recommendation panel, purchase/refund history, inventory creation through the
+existing `InventoryItem` model, notification preferences for future monitors,
+and a compact dashboard widget. No purchasing or payment automation exists.
+
+The additive `migrate_add_retailer_goals` migration created ten generic
+retailer/program tables and seeded Gameology plus three requested products
+with blank prices and product URLs. A SQLite-consistent pre-migration backup
+is at `backups/automation-pre-retailer-goals-20260924.db`; integrity and
+foreign-key checks passed. Full suite: 1,592 tests green.
+
 ## 2026-09-15 — A release calendar with something on it, and an obsolescence sweep
 
 **The release calendar is no longer a flat add-only table.** It shipped

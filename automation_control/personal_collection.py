@@ -65,7 +65,11 @@ def _save_photo(item_id: str, data: bytes, content_type: str | None) -> str:
 # Same trust order scripts/list_for_sale.py uses for normal stock -- a
 # personal-collection item usually only has "collector_import" on file,
 # which falls through to the generic "any priced row" branch below.
-PREFERRED_SOURCES = ["ebay_active_low", "optcgapi_market", "pokemonpricetracker_market"]
+# "manual" wins over every live-market source, not just as a fallback when
+# nothing else exists -- a human explicitly overriding a price (see
+# inventory_review.py's rarity/cost edit) is a deliberate correction, and a
+# stale automated re-scrape shouldn't quietly outrank it.
+PREFERRED_SOURCES = ["manual", "ebay_active_low", "optcgapi_market", "pokemonpricetracker_market"]
 
 
 def _best_price(session: Session, catalog_item_id: str) -> tuple[Decimal, str] | None:
@@ -215,6 +219,7 @@ SORTS = {
     "name": "Name",
     "price_desc": "Price: high to low",
     "price_asc": "Price: low to high",
+    "unpriced": "Unpriced only",
 }
 
 
@@ -236,7 +241,12 @@ def personal_collection_page(
     reference_images = _reference_images(session, tcg_cards)
     prices = _best_prices(session, [catalog_item.id for _, catalog_item, _ in rows_data])
 
-    if sort in ("price_desc", "price_asc"):
+    if sort == "unpriced":
+        # Not a sort at all -- a filter down to only the items with no
+        # CardPrice on file, so they're easy to find and price up rather
+        # than buried under 500 priced rows.
+        rows_data = [r for r in rows_data if prices.get(r[1].id) is None]
+    elif sort in ("price_desc", "price_asc"):
         # Unpriced items always sink to the bottom, in either direction --
         # "no price on file" isn't the same as "worth zero", and burying
         # priced items under a wall of unknowns would defeat the point.
@@ -273,7 +283,8 @@ def personal_collection_page(
     )
 
     note = (
-        f"<p class='subtitle'>{count} item(s) held privately, off the shop and out of normal inventory."
+        f"<p class='subtitle'>{len(rows_data) if sort == 'unpriced' else count} item(s) "
+        f"{'with no price on file' if sort == 'unpriced' else 'held privately, off the shop and out of normal inventory'}."
         f"{' Shown, capped at 500 rows -- narrow your search to see the rest.' if count > 500 else ''}"
         " Use “List for sale” to move one into review on the Shop listings page.</p>"
     )
@@ -370,4 +381,9 @@ _STYLE = """<style>
 .pc-photo-form{display:flex;flex-direction:column;gap:4px;margin-top:6px;width:70px}
 .pc-photo-form input[type=file]{font-size:10px;width:70px}
 .pc-photo-form .btn.small{padding:3px 6px;font-size:11px}
+@media (max-width: 680px) {
+  .listing-toolbar{flex-direction:column;align-items:stretch}
+  .listing-search{flex-wrap:wrap}
+  .listing-search input{width:100%}
+}
 </style>"""

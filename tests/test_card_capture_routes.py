@@ -415,6 +415,21 @@ def test_capture_ai_failure_still_creates_record_for_manual_entry(client, sessio
     assert card.status == CardCaptureStatus.PENDING_REVIEW
 
 
+def test_capture_records_the_real_failure_reason_in_the_audit_log(client, session):
+    """card.capture's details={} was the same swallowed-error gap found and
+    fixed for accessories.py and collectibles.py -- this one had the
+    commit-failure rollback already, just not this."""
+    from sqlalchemy import select
+    from automation_control.models import AuditEvent
+
+    with patch("automation_control.capture.extract_card_details", side_effect=RuntimeError("boom")):
+        client.post("/cards/capture", files=_upload_files(), follow_redirects=False)
+
+    event = session.scalars(select(AuditEvent).where(AuditEvent.action == "card.capture")).one()
+    assert event.outcome == "failed"
+    assert event.details == {"error": "boom"}
+
+
 def test_capture_without_api_key_returns_503(client):
     app.state.settings.anthropic_api_key = None
     resp = client.post("/cards/capture", files=_upload_files())

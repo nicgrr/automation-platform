@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
@@ -29,6 +30,17 @@ def test_expired_oauth_state_is_rejected(session):
     assert not consume_oauth_state(session, state, now=now)
 
 
+def test_starting_a_new_oauth_flow_removes_expired_states(session):
+    now = datetime.now(UTC)
+    expired = new_oauth_state(session, now=now - timedelta(minutes=11))
+    expired_hash = hashlib.sha256(expired.encode()).hexdigest()
+
+    new_oauth_state(session, now=now)
+
+    from automation_control.models import OAuthState
+    assert session.get(OAuthState, expired_hash) is None
+
+
 async def test_callback_failure_and_unauthorized_dashboard(session):
     assert not consume_oauth_state(session, None)
     class Request:
@@ -36,7 +48,7 @@ async def test_callback_failure_and_unauthorized_dashboard(session):
         class app:
             state = type("State", (), {"settings": Settings()})()
     try:
-        require_dashboard_user(Request())
+        await require_dashboard_user(Request())
     except HTTPException as exc:
         assert exc.status_code == 401
         assert "token" not in str(exc.detail).lower()

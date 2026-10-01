@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -59,6 +59,13 @@ class PricingStatus(str, enum.Enum):
     PENDING_PRICE_REVIEW = "pending_price_review"
     PRICE_APPROVED = "price_approved"
     PRICE_REJECTED = "price_rejected"
+
+
+class CapturePromotionStatus(str, enum.Enum):
+    """Result of handing a priced photo capture to the normal sell pipeline."""
+
+    PROMOTED = "promoted"
+    NEEDS_REVIEW = "needs_review"
 
 
 class CaptureBatchStatus(str, enum.Enum):
@@ -174,6 +181,45 @@ class WhatnotShowItemOutcome(str, enum.Enum):
 class ScanSessionStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
+
+
+class RetailerTrustStatus(str, enum.Enum):
+    TRUSTED = "trusted"
+    UNVERIFIED = "unverified"
+    BLOCKED = "blocked"
+
+
+class RetailerProductStatus(str, enum.Enum):
+    WATCH = "watch"
+    BUY = "buy"
+    HIGH_PRIORITY = "high_priority"
+    PREORDER = "preorder"
+    PURCHASED = "purchased"
+    SOLD_OUT = "sold_out"
+    SKIP = "skip"
+    PRICE_TOO_HIGH = "price_too_high"
+    WAIT_FOR_RESTOCK = "wait_for_restock"
+
+
+class RetailerStockStatus(str, enum.Enum):
+    UNKNOWN = "unknown"
+    IN_STOCK = "in_stock"
+    PREORDER = "preorder"
+    OUT_OF_STOCK = "out_of_stock"
+
+
+class RetailerPurchaseStatus(str, enum.Enum):
+    RECORDED = "recorded"
+    REFUNDED = "refunded"
+    VOID = "void"
+
+
+class RetailerFundEntryKind(str, enum.Enum):
+    OPENING_BALANCE = "opening_balance"
+    CONTRIBUTION = "contribution"
+    ADJUSTMENT = "adjustment"
+    PURCHASE = "purchase"
+    REFUND = "refund"
 
 
 class AuditEvent(Base):
@@ -319,6 +365,64 @@ class EbayListingLinkStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class EbayExportItemStatus(str, enum.Enum):
+    """Where one SKU is in the File Exchange hand-off.
+
+    Downloading a CSV is not the same thing as eBay accepting it, so the
+    ledger deliberately keeps those as two separate states.  A failed or
+    cancelled row is eligible for a later export; pending and confirmed
+    rows are not.
+    """
+
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class EbayExportBatch(Base):
+    """One CSV downloaded from the eBay bulk-export review page."""
+
+    __tablename__ = "ebay_export_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename: Mapped[str] = mapped_column(String(256))
+    row_count: Mapped[int] = mapped_column(Integer)
+    selected_count: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    result_filename: Mapped[str | None] = mapped_column(String(256))
+    result_imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EbayExportItem(Base):
+    """Per-SKU history for an :class:`EbayExportBatch`.
+
+    This is intentionally not a flag on ShopListing: variation-parent SKUs
+    are synthetic and have no ShopListing row, and preserving batch history
+    makes a partial eBay upload result diagnosable instead of collapsing it
+    into one mutable boolean.
+    """
+
+    __tablename__ = "ebay_export_items"
+    __table_args__ = (UniqueConstraint("batch_id", "sku"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    batch_id: Mapped[str] = mapped_column(ForeignKey("ebay_export_batches.id"), index=True)
+    sku: Mapped[str] = mapped_column(String(128), index=True)
+    title: Mapped[str | None] = mapped_column(String(512))
+    kind: Mapped[str] = mapped_column(String(32), default="single")
+    status: Mapped[EbayExportItemStatus] = mapped_column(
+        Enum(EbayExportItemStatus), default=EbayExportItemStatus.PENDING, index=True
+    )
+    ebay_listing_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    exported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    batch: Mapped[EbayExportBatch] = relationship()
+
+
 class EbayListingLink(Base):
     """The write-side source of truth for "is this ShopListing also live on
     eBay, and as what" -- deliberately separate from EbayListing (below),
@@ -366,15 +470,27 @@ class EbayImportedOrder(Base):
     applied_at is None the moment a row is written (seen, not yet acted
     on) and set only once the matching ShopListing has actually been
     decremented -- the poller's idempotency check is "does a row with
-    this ebay_order_id already have applied_at set", not merely "does a
-    row exist", so a row written just before a crash gets retried rather
-    than silently treated as done.
+    this (ebay_order_id, sku) pair already have applied_at set", not
+    merely "does a row exist", so a row written just before a crash gets
+    retried rather than silently treated as done.
+
+    The natural key is the (ebay_order_id, sku) *pair*, not ebay_order_id
+    alone -- a multi-item order has one row per line. This was originally
+    `unique=True` on ebay_order_id by itself, which made every line after
+    the first on the same order raise an IntegrityError; see
+    scripts/migrations/migrate_fix_ebay_imported_orders_unique.py for the
+    real production incident this caused and the index-only fix.
     """
 
     __tablename__ = "ebay_imported_orders"
+    # Production uses a unique index (created by the incident-repair
+    # migration), not a table-level UNIQUE constraint. They enforce the
+    # same business rule in SQLite, but declaring the real shape prevents
+    # every Alembic check from proposing a pointless table rebuild.
+    __table_args__ = (Index("uq_ebay_imported_orders_order_sku", "ebay_order_id", "sku", unique=True),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    ebay_order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    ebay_order_id: Mapped[str] = mapped_column(String(128), index=True)
     sku: Mapped[str] = mapped_column(String(64), index=True)
     quantity: Mapped[int] = mapped_column(Integer)
     marketplace_id: Mapped[str] = mapped_column(String(32))
@@ -383,6 +499,11 @@ class EbayImportedOrder(Base):
     shop_listing_id: Mapped[str | None] = mapped_column(ForeignKey("shop_listings.id"))
     raw_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str | None] = mapped_column(Text)
+    # The operator's own "done with this" marker for /ebay-sales -- set by
+    # marking an order complete or discarding it from the active view.
+    # Never touched by the sync poller: that idempotency check is
+    # applied_at alone, so this can't affect whether stock gets decremented.
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class EbayCategoryMapping(Base):
@@ -480,8 +601,30 @@ class CapturedCard(Base):
     price_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     price_lookup_error: Mapped[str | None] = mapped_column(String(512))
     approved_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    # The physical printing is required before Inventory handoff. It cannot
+    # be inferred safely from an ex/VMAX name or a flat photo: some catalogue
+    # cards have normal, holo and reverse-holo copies with different stock.
+    variant: Mapped[CardVariant | None] = mapped_column(Enum(CardVariant))
     bundle_id: Mapped[str | None] = mapped_column(String(36), index=True)
     pricing_status: Mapped[PricingStatus] = mapped_column(Enum(PricingStatus), default=PricingStatus.NOT_PRICED, index=True)
+
+
+class CapturePromotion(Base):
+    """Idempotency and diagnostics for capture -> Inventory -> ShopListing."""
+
+    __tablename__ = "capture_promotions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    captured_card_id: Mapped[str] = mapped_column(
+        ForeignKey("captured_cards.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    status: Mapped[CapturePromotionStatus] = mapped_column(Enum(CapturePromotionStatus), index=True)
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    shop_listing_id: Mapped[str | None] = mapped_column(ForeignKey("shop_listings.id"), index=True)
+    issue: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class CaptureBatch(Base):
@@ -924,7 +1067,11 @@ class SaleItem(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     sale_id: Mapped[str] = mapped_column(ForeignKey("sales.id"), index=True)
-    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    # A sale is permanent business history even if its source inventory row
+    # is later cleaned up.  Keep the line and only detach the optional link.
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="SET NULL"), index=True
+    )
     description: Mapped[str] = mapped_column(String(256))
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
@@ -1016,7 +1163,9 @@ class WhatnotShowItem(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     whatnot_show_id: Mapped[str] = mapped_column(ForeignKey("whatnot_shows.id"), index=True)
-    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="SET NULL"), index=True
+    )
     description: Mapped[str] = mapped_column(String(256))
     starting_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     final_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
@@ -1118,7 +1267,11 @@ class FoilLabel(Base):
     __tablename__ = "foil_labels"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    inventory_item_id: Mapped[str] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    # Labels remain useful training data after a holding is sold, merged or
+    # removed.  Preserve the sample but detach it from the vanished copy.
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     card_id: Mapped[str] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
     filed_variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant))
     suggested_variant: Mapped[CardVariant] = mapped_column(Enum(CardVariant))
@@ -1135,7 +1288,7 @@ class FoilLabel(Base):
 
 
 class CardPrice(Base):
-    """A price observation for a catalog card, kept append-only and
+    """A price observation for a catalogue item, kept append-only and
     source-tagged rather than as a single mutable column on InventoryItem.
 
     Deliberately decoupled from ingest: pokemontcg.io's pricing proved
@@ -1147,14 +1300,125 @@ class CardPrice(Base):
     __tablename__ = "card_prices"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    card_id: Mapped[str] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
+    # The historical column name is retained because it is used throughout
+    # the pricing API, but its id-space is CatalogItem: prices now cover One
+    # Piece, Dragon Ball, collectibles and sealed stock as well as Pokemon.
+    card_id: Mapped[str] = mapped_column(
+        ForeignKey("catalog_items.id", ondelete="CASCADE"), index=True
+    )
     variant: Mapped[CardVariant | None] = mapped_column(Enum(CardVariant))
     source: Mapped[str] = mapped_column(String(64), index=True)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     currency: Mapped[str] = mapped_column(String(3), default="AUD")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
-    card: Mapped[CatalogCard] = relationship()
+    catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class MarketWatchTerm(Base):
+    """A user-managed collectible search shared by every market source.
+
+    ``sources`` names discovery mechanisms (currently eBay and public-web
+    search), while individual normalized listings retain the marketplace
+    they came from.  Countries live on the term as JSON because a watch can
+    deliberately cover AU, JP, or both without duplicating the query.
+    """
+
+    __tablename__ = "market_watch_terms"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    query: Mapped[str] = mapped_column(String(256))
+    category: Mapped[str | None] = mapped_column(String(64), index=True)
+    countries: Mapped[list] = mapped_column(JSON, default=lambda: ["AU", "JP"])
+    sources: Mapped[list] = mapped_column(JSON, default=lambda: ["ebay"])
+    max_landed_aud: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_scan_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MarketListing(Base):
+    """A normalized, current listing discovered on any marketplace.
+
+    Prices retain their source currency while ``landed_aud`` is the number
+    used for deal comparisons: item + delivery + estimated import tax, all
+    converted to AUD.  Keeping both makes exchange-rate changes auditable.
+    """
+
+    __tablename__ = "market_listings"
+    __table_args__ = (UniqueConstraint("source", "external_id", name="uq_market_listing_source_external"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    external_id: Mapped[str] = mapped_column(String(256))
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id", ondelete="SET NULL"), index=True)
+    title: Mapped[str] = mapped_column(String(512))
+    url: Mapped[str] = mapped_column(String(1024))
+    image_url: Mapped[str | None] = mapped_column(String(1024))
+    seller: Mapped[str | None] = mapped_column(String(256))
+    item_kind: Mapped[str] = mapped_column(String(32), default="unknown", index=True)
+    condition: Mapped[str | None] = mapped_column(String(64))
+    country: Mapped[str | None] = mapped_column(String(8), index=True)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    shipping: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate_aud: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal("1"))
+    estimated_tax_aud: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    landed_aud: Mapped[Decimal] = mapped_column(Numeric(12, 2), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    catalog_item: Mapped[CatalogItem | None] = relationship()
+
+
+class MarketListingMatch(Base):
+    """Many-to-many link between a listing and the watches it satisfied."""
+
+    __tablename__ = "market_listing_matches"
+
+    watch_term_id: Mapped[str] = mapped_column(
+        ForeignKey("market_watch_terms.id", ondelete="CASCADE"), primary_key=True,
+    )
+    market_listing_id: Mapped[str] = mapped_column(
+        ForeignKey("market_listings.id", ondelete="CASCADE"), primary_key=True,
+    )
+    matched_by: Mapped[str] = mapped_column(String(32), default="query")
+    matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MarketAlertImport(Base):
+    """Deduplication ledger for uploaded or IMAP-fetched marketplace mail."""
+
+    __tablename__ = "market_alert_imports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="email")
+    subject: Mapped[str | None] = mapped_column(String(512))
+    imported_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="imported", index=True)
+    detail: Mapped[str | None] = mapped_column(String(1024))
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class MarketAlertDelivery(Base):
+    """Deduplication/audit ledger for Telegram and Discord alerts."""
+
+    __tablename__ = "market_alert_deliveries"
+    __table_args__ = (UniqueConstraint("market_listing_id", "channel", name="uq_market_alert_listing_channel"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    market_listing_id: Mapped[str] = mapped_column(ForeignKey("market_listings.id", ondelete="CASCADE"), index=True)
+    channel: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="sent")
+    detail: Mapped[str | None] = mapped_column(String(512))
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 # --- NL Vault storefront (Module 24) ----------------------------------------
@@ -1201,7 +1465,12 @@ class ShopListing(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     catalog_item_id: Mapped[str] = mapped_column(ForeignKey("catalog_items.id"), index=True)
-    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    # A listing backed by physical stock must not survive deletion of that
+    # stock as an active, unfulfillable storefront item.  Manually-created
+    # listings can still leave this nullable field empty.
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str] = mapped_column(String(256))
     description: Mapped[str | None] = mapped_column(Text)
     condition: Mapped[str | None] = mapped_column(String(64))
@@ -1420,3 +1689,193 @@ class ContactMessage(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# --- Retailer loyalty goals -------------------------------------------------
+#
+# These tables deliberately use retailer/program language rather than
+# Gameology-specific names. Gameology Guild is the first seeded program, but
+# the same ledger can later represent an EB Games tier, a distributor spend
+# target, or a supplier minimum-order program without another parallel system.
+
+
+class Retailer(Base):
+    __tablename__ = "retailers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    website: Mapped[str | None] = mapped_column(String(512))
+    domain: Mapped[str | None] = mapped_column(String(256), unique=True)
+    trust_status: Mapped[RetailerTrustStatus] = mapped_column(
+        Enum(RetailerTrustStatus), default=RetailerTrustStatus.UNVERIFIED, index=True
+    )
+    best_price_eligible: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    last_reviewed: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RetailerProgram(Base):
+    __tablename__ = "retailer_programs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    retailer_id: Mapped[str] = mapped_column(ForeignKey("retailers.id"), index=True)
+    slug: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(256))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    historical_eligible_spend: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    eligible_spend_notes: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    retailer: Mapped[Retailer] = relationship()
+
+
+class RetailerMilestone(Base):
+    __tablename__ = "retailer_milestones"
+    __table_args__ = (UniqueConstraint("program_id", "target_amount", name="uq_retailer_milestone_target"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id: Mapped[str] = mapped_column(ForeignKey("retailer_programs.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(256))
+    target_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    achieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RetailerBudget(Base):
+    __tablename__ = "retailer_budgets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id: Mapped[str] = mapped_column(
+        ForeignKey("retailer_programs.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    weekly_contribution: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("100"))
+    monthly_maximum: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    per_product_maximum: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    contribution_weekday: Mapped[int] = mapped_column(Integer, default=4)  # Monday=0, Friday=4
+    next_contribution_date: Mapped[date] = mapped_column(Date)
+    is_paused: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class RetailerPremiumConfig(Base):
+    __tablename__ = "retailer_premium_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id: Mapped[str] = mapped_column(
+        ForeignKey("retailer_programs.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    excellent_max_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    excellent_guild_max_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("5"))
+    acceptable_max_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("10"))
+    borderline_max_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("15"))
+
+
+class RetailerProduct(Base):
+    __tablename__ = "retailer_products"
+    __table_args__ = (UniqueConstraint("program_id", "name", name="uq_retailer_product_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id: Mapped[str] = mapped_column(ForeignKey("retailer_programs.id", ondelete="CASCADE"), index=True)
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    tcg: Mapped[str] = mapped_column(String(32), default="other", index=True)
+    product_type: Mapped[str] = mapped_column(String(64), default="other", index=True)
+    set_name: Mapped[str | None] = mapped_column(String(256))
+    retailer_url: Mapped[str | None] = mapped_column(String(1024))
+    quantity_wanted: Mapped[int] = mapped_column(Integer, default=1)
+    maximum_acceptable_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    release_date: Mapped[date | None] = mapped_column(Date, index=True)
+    preorder_date: Mapped[date | None] = mapped_column(Date)
+    purchase_limit: Mapped[int | None] = mapped_column(Integer)
+    stock_status: Mapped[RetailerStockStatus] = mapped_column(
+        Enum(RetailerStockStatus), default=RetailerStockStatus.UNKNOWN, index=True
+    )
+    status: Mapped[RetailerProductStatus] = mapped_column(
+        Enum(RetailerProductStatus), default=RetailerProductStatus.WATCH, index=True
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=3, index=True)
+    image_url: Mapped[str | None] = mapped_column(String(1024))
+    notes: Mapped[str | None] = mapped_column(Text)
+    date_added: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    catalog_item: Mapped[CatalogItem | None] = relationship()
+
+
+class RetailerPriceSnapshot(Base):
+    __tablename__ = "retailer_price_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_id: Mapped[str] = mapped_column(ForeignKey("retailer_products.id", ondelete="CASCADE"), index=True)
+    retailer_id: Mapped[str] = mapped_column(ForeignKey("retailers.id"), index=True)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    product_url: Mapped[str | None] = mapped_column(String(1024))
+    stock_status: Mapped[RetailerStockStatus] = mapped_column(
+        Enum(RetailerStockStatus), default=RetailerStockStatus.UNKNOWN, index=True
+    )
+    source: Mapped[str] = mapped_column(String(64), default="manual")
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    retailer: Mapped[Retailer] = relationship()
+
+
+class RetailerPurchase(Base):
+    __tablename__ = "retailer_purchases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id: Mapped[str] = mapped_column(ForeignKey("retailer_programs.id"), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("retailer_products.id"), index=True)
+    retailer_id: Mapped[str] = mapped_column(ForeignKey("retailers.id"), index=True)
+    purchase_unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    eligible_spend: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    shipping: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    market_unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    guild_premium_paid: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    purchase_date: Mapped[date] = mapped_column(Date, index=True)
+    order_number: Mapped[str | None] = mapped_column(String(256))
+    notes: Mapped[str | None] = mapped_column(Text)
+    inventory_added: Mapped[bool] = mapped_column(Boolean, default=False)
+    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    status: Mapped[RetailerPurchaseStatus] = mapped_column(
+        Enum(RetailerPurchaseStatus), default=RetailerPurchaseStatus.RECORDED, index=True
+    )
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RetailerFundEntry(Base):
+    __tablename__ = "retailer_fund_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    budget_id: Mapped[str] = mapped_column(ForeignKey("retailer_budgets.id", ondelete="CASCADE"), index=True)
+    purchase_id: Mapped[str | None] = mapped_column(ForeignKey("retailer_purchases.id"), index=True)
+    kind: Mapped[RetailerFundEntryKind] = mapped_column(Enum(RetailerFundEntryKind), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))  # signed: spending is negative
+    entry_date: Mapped[date] = mapped_column(Date, index=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(128), unique=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RetailerNotificationPreference(Base):
+    __tablename__ = "retailer_notification_preferences"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id: Mapped[str] = mapped_column(
+        ForeignKey("retailer_programs.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    preorder_open: Mapped[bool] = mapped_column(Boolean, default=True)
+    restock: Mapped[bool] = mapped_column(Boolean, default=True)
+    price_drop: Mapped[bool] = mapped_column(Boolean, default=True)
+    premium_at_or_below_5: Mapped[bool] = mapped_column(Boolean, default=True)
+    premium_at_or_below_10: Mapped[bool] = mapped_column(Boolean, default=True)
+    becomes_affordable: Mapped[bool] = mapped_column(Boolean, default=True)
+    high_priority_status_change: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

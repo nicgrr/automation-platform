@@ -1,13 +1,15 @@
+import re
 import threading
 import time
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from .adapters.currency import CurrencyLookupError, get_usd_to_aud_rate, usd_to_aud
@@ -17,8 +19,10 @@ from .auth import require_dashboard_user
 from .classification import classify_pending_cards, load_pipeline_config
 from .scan_ingest.pricing import POKEMONPRICETRACKER_SOURCE_NAME
 from .database import SessionLocal, get_session
-from .models import (CapturedCard, CardCaptureStatus, CardPrice, CatalogItem, CatalogItemType,
-                     InventoryItem, PricingStatus)
+from .inventory_review import _latest_ebay_prices, _latest_prices
+from .models import (CapturePromotion, CapturePromotionStatus, CapturedCard, CardCaptureStatus,
+                     CardPrice, CardSet, CardVariant, CatalogItem, CatalogItemType, InventoryItem,
+                     InventoryStatus, PricingStatus, TcgCard)
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/cards/pricing", tags=["pricing"])
@@ -47,6 +51,52 @@ _NEEDS_A_PERSON = (
 def needs_a_person(error: str | None) -> bool:
     """True when re-running the lookup cannot help -- only you can."""
     return bool(error) and any(hint in error.lower() for hint in _NEEDS_A_PERSON)
+
+
+# The three _NEEDS_A_PERSON hints need genuinely different things from you --
+# a missing price to type in, a pick between candidates, or a capture to fix
+# -- so the "Needs your decision" list is grouped by these instead of shown
+# as one flat list of raw error strings (real feedback, 2026-09-30: the raw
+# technical error text in every row read as noise on a phone screen).
+_DECISION_GROUPS = (
+    ("not_found", "No match found",
+     "Searched pokemontcg.io and found nothing for these -- set a price by hand, or use the eBay "
+     "search link to check a real sold price."),
+    ("ambiguous", "Ambiguous match",
+     "More than one candidate came back with different prices -- pick one by eye."),
+    ("incomplete", "Incomplete capture",
+     "The capture itself is missing a character or set name, so no lookup was possible."),
+)
+
+
+def _decision_category(error: str | None) -> str:
+    lowered = (error or "").lower()
+    if "ambiguous match" in lowered:
+        return "ambiguous"
+    if "no priced match found" in lowered:
+        return "not_found"
+    return "incomplete"
+
+
+def _decision_detail(category: str, error: str | None) -> str:
+    """A short, human-readable extract from the raw lookup error --
+    everything else about it is already said by the group it's sorted
+    into, so this only needs to add what's genuinely extra."""
+    if category == "not_found":
+        match = re.search(r"after (\d+) search variant", error or "")
+        return f"{match.group(1)} variant(s) tried" if match else ""
+    if category == "ambiguous":
+        match = re.search(r"(\d+) candidates?", error or "")
+        return f"{match.group(1)} candidates" if match else ""
+    return ""
+
+
+def _ebay_search_url(*query_parts: str | None) -> str:
+    """A sold/completed-listings eBay search for the given terms -- the
+    fastest way to eyeball a real price when the automated lookup couldn't
+    find one."""
+    query = " ".join(part for part in query_parts if part)
+    return f"https://www.ebay.com.au/sch/i.html?_nkw={quote_plus(query)}&LH_Sold=1&LH_Complete=1"
 
 
 
@@ -156,7 +206,8 @@ def _run_price_check(api_key: str | None, user: str, include_blocked: bool = Fal
             except Exception as exc:
                 record_event(session, actor_type="user", actor_id=user, action="card.auto_classify", resource_type="captured_card", resource_id=None, outcome="failed", correlation_id=_correlation_id(), details={"error": f"could not load classification config: {exc}"})
             else:
-                if pipeline_config.classification is not None:
+                if (pipeline_config.classification is not None
+                        and pipeline_config.classification.bundling_enabled):
                     classify_pending_cards(
                         session,
                         threshold_aud=pipeline_config.classification.bulk_price_threshold_aud,
@@ -230,6 +281,56 @@ def _ebay_price_gap(session: Session) -> int:
     return len(held - priced)
 
 
+UNPRICED_INVENTORY_LIMIT = 200
+
+
+def _unpriced_inventory(session: Session, limit: int = UNPRICED_INVENTORY_LIMIT):
+    """Held AVAILABLE inventory with no price from either source -- the
+    actual list behind the dashboard's "98% priced" figure, so there's
+    something to act on instead of just a number. Uses the same "any
+    source" definition dashboard.py's priced_pct does (pokemonpricetracker
+    OR eBay), which is why this can find fewer items than
+    `_inventory_price_backlog`'s pokemonpricetracker-only count.
+
+    Returns (rows, total) where rows is capped at `limit` and each row is
+    (InventoryItem, display_name, set_display_name, number). set_display_name
+    is CardSet.name when the set is cached (real text like "Chasing Glory
+    Together"), falling back to the raw set_id ("cn-csv10c") only when the
+    set itself isn't cached -- real gap, found 2026-10-01: this used to
+    show (and eBay-search for) the raw set_id directly, which is not a
+    string any real eBay listing would ever use.
+    """
+    items = session.scalars(
+        select(InventoryItem).where(InventoryItem.status == InventoryStatus.AVAILABLE)
+    ).all()
+    prices = _latest_prices(session, {i.catalog_item_id for i in items})
+    ebay_prices = _latest_ebay_prices(session, {i.catalog_item_id for i in items})
+    unpriced = [
+        i for i in items
+        if prices.get((i.catalog_item_id, i.variant)) is None
+        and ebay_prices.get(i.catalog_item_id) is None
+    ]
+    if not unpriced:
+        return [], 0
+
+    ids = {i.catalog_item_id for i in unpriced}
+    names = dict(session.execute(select(CatalogItem.id, CatalogItem.name).where(CatalogItem.id.in_(ids))).all())
+    tcg_detail = {
+        cid: (set_id, number)
+        for cid, set_id, number in session.execute(
+            select(TcgCard.catalog_item_id, TcgCard.set_id, TcgCard.number).where(TcgCard.catalog_item_id.in_(ids))
+        ).all()
+    }
+    set_ids = {set_id for set_id, _number in tcg_detail.values() if set_id}
+    set_names = dict(session.execute(select(CardSet.id, CardSet.name).where(CardSet.id.in_(set_ids))).all())
+    rows = []
+    for i in unpriced[:limit]:
+        set_id, number = tcg_detail.get(i.catalog_item_id, (None, None))
+        set_display = set_names.get(set_id, set_id)
+        rows.append((i, names.get(i.catalog_item_id, i.catalog_item_id), set_display, number))
+    return rows, len(unpriced)
+
+
 def _run_ebay_price_refresh(user: str) -> None:
     from scripts.import_ebay_prices import main as import_prices
 
@@ -278,8 +379,26 @@ def _next_price_review_card_id(session: Session, exclude_id: str) -> str | None:
 
 @router.get("", response_class=HTMLResponse)
 def pricing_list(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+    classification = load_pipeline_config().classification
+    bundling_enabled = bool(classification and classification.bundling_enabled)
     pending = session.scalars(select(CapturedCard).where(CapturedCard.pricing_status == PricingStatus.PENDING_PRICE_REVIEW).order_by(CapturedCard.price_checked_at)).all()
     unpriced = session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.REVIEWED, CapturedCard.pricing_status == PricingStatus.NOT_PRICED)).all()
+    # Approved cards drop off every other list on this page -- without this
+    # there is no link back to one anywhere, so a price set by hand is
+    # effectively uneditable once approved. Real gap, found 2026-10-01.
+    handed_off = select(CapturePromotion.captured_card_id)
+    approved = session.scalars(
+        select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.REVIEWED,
+                                   CapturedCard.pricing_status == PricingStatus.PRICE_APPROVED,
+                                   CapturedCard.id.not_in(handed_off))
+        .order_by(CapturedCard.character)
+    ).all()
+    handoff_issues = session.execute(
+        select(CapturedCard, CapturePromotion)
+        .join(CapturePromotion, CapturePromotion.captured_card_id == CapturedCard.id)
+        .where(CapturePromotion.status == CapturePromotionStatus.NEEDS_REVIEW)
+        .order_by(CapturedCard.character)
+    ).all()
 
     pending_rows = "".join(
         f"<li><a href='/cards/pricing/{c.id}'>{escape(c.character or '?')} — {escape(c.set_name or '?')} #{escape(c.card_number or '?')} — AUD ${c.suggested_price}</a></li>"
@@ -302,13 +421,59 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
 
     retry_rows = "".join(_row(c, show_error=False) for c in retryable) or \
         "<li>Nothing waiting on a retry.</li>"
-    blocked_rows = "".join(_row(c, show_error=True) for c in blocked) or \
-        "<li>Nothing needs a decision.</li>"
     never_checked = sum(1 for c in retryable if not c.price_lookup_error)
     failed_before = len(retryable) - never_checked
 
+    blocked_by_category: dict[str, list[CapturedCard]] = {key: [] for key, _label, _hint in _DECISION_GROUPS}
+    for c in blocked:
+        blocked_by_category[_decision_category(c.price_lookup_error)].append(c)
+
+    def _decision_table(category: str, label: str, hint: str) -> str:
+        cards = blocked_by_category[category]
+        if not cards:
+            return ""
+        rows = "".join(
+            "<tr><td style='white-space:normal'>"
+            f"{escape(c.character or '?')} &mdash; {escape(c.set_name or '?')}"
+            + (f" #{escape(c.card_number)}" if c.card_number else "")
+            + "</td>"
+            f"<td style='color:var(--text-faint)'>{escape(_decision_detail(category, c.price_lookup_error))}</td>"
+            f"<td><a href='/cards/pricing/{c.id}'>set price manually</a> &middot; "
+            f"<a href='{_ebay_search_url(c.character, c.set_name, c.card_number)}' target='_blank' "
+            "rel='noopener'>eBay search</a></td>"
+            "</tr>"
+            for c in cards
+        )
+        return (
+            f"<h3>{escape(label)} ({len(cards)})</h3>"
+            f"<p class='subtitle'>{escape(hint)}</p>"
+            "<div class='table-wrap'><table><thead><tr><th>Card</th><th>Detail</th><th>Actions</th></tr></thead>"
+            f"<tbody>{rows}</tbody></table></div>"
+        )
+
+    decision_sections = "".join(
+        _decision_table(key, label, hint) for key, label, hint in _DECISION_GROUPS
+    ) or "<p class='subtitle'>Nothing needs a decision.</p>"
+
     backlog = _inventory_price_backlog(session)
     ebay_gap = _ebay_price_gap(session)
+    unpriced_rows, unpriced_total = _unpriced_inventory(session)
+
+    from .job_health import FAILED, JOBS, OVERDUE, status_for
+    job_status_by_unit = {job.unit: status_for(job) for job in JOBS}
+
+    def _last_ran_note(unit: str) -> str:
+        status = job_status_by_unit.get(unit)
+        if not status:
+            return ""
+        if status.state == FAILED:
+            return f"<p class='pill bad'>Last run failed -- {escape(status.detail or 'see logs')}</p>"
+        if status.state == OVERDUE:
+            return "<p class='pill warn'>Overdue -- hasn't run when it should have.</p>"
+        if status.last_run:
+            return f"<p class='subtitle'>Last ran {status.last_run:%a %H:%M}.</p>"
+        return ""
+
     head_extra = "<meta http-equiv='refresh' content='4'>" if request.query_params.get("checking") else ""
     checking_note = "<p class='subtitle'>Checking prices in the background -- this page refreshes automatically.</p>" if request.query_params.get("checking") else ""
 
@@ -324,6 +489,33 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
     button = ("Check prices" if not failed_before
               else f"Retry {len(retryable)} lookup{'s' if len(retryable) != 1 else ''}")
 
+    bundle_counts: dict[str, int] = {}
+    for c in approved:
+        if c.bundle_id:
+            bundle_counts[c.bundle_id] = bundle_counts.get(c.bundle_id, 0) + 1
+
+    def _approved_row(c: CapturedCard) -> str:
+        label = f"{escape(c.character or '?')} — {escape(c.set_name or '?')}"
+        if c.card_number:
+            label += f" #{escape(c.card_number)}"
+        bundle_note = (f" <span class='pill neutral'>bundled &times;{bundle_counts[c.bundle_id]}</span>"
+                       if bundling_enabled and c.bundle_id and bundle_counts.get(c.bundle_id, 0) > 1 else "")
+        return (f"<li>{label}{bundle_note} &mdash; AUD ${c.approved_price} "
+               f"<a href='/cards/pricing/{c.id}'>edit</a></li>")
+
+    approved_rows = "".join(_approved_row(c) for c in approved) or \
+        "<li>Nothing approved yet.</li>"
+
+    issue_rows = "".join(
+        "<tr><td style='white-space:normal'>"
+        f"{escape(card.character or '?')} &mdash; {escape(card.set_name or '?')}"
+        + (f" #{escape(card.card_number)}" if card.card_number else "")
+        + "</td>"
+        f"<td style='white-space:normal;color:var(--danger)'>{escape(promotion.issue or 'Needs review')}</td>"
+        f"<td><a href='/cards/pricing/{card.id}'>fix &amp; retry</a></td></tr>"
+        for card, promotion in handoff_issues
+    )
+
     body = (
         brand_header("Price review")
         + checking_note
@@ -337,12 +529,24 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
         + f"<div class='panel'><h2>Needs your decision ({len(blocked)})</h2>"
         + "<p class='subtitle'>Asking again returns the same answer &mdash; these need a price set by "
           "hand, or the capture corrected.</p>"
-        + f"<ul class='events'>{blocked_rows}</ul>"
+        + decision_sections
         + ("<form method='post' action='/cards/pricing/check-all'>"
            "<input type='hidden' name='include_blocked' value='1'>"
            "<button class='ghost'>Try these anyway</button></form>" if blocked else "")
         + "</div>"
+        + f"<div class='panel'><h2>Approved, not yet listed ({len(approved)})</h2>"
+        + "<p class='subtitle'>Priced and approved, waiting to become individual single-card listings. "
+          "Click edit to change a price before that happens.</p>"
+        + f"<ul class='events'>{approved_rows}</ul></div>"
+        + f"<div class='panel'><h2>Listing handoff issues ({len(handoff_issues)})</h2>"
+        + "<p class='subtitle'>Approved prices that could not safely enter Inventory and Bulk Upload. "
+          "Nothing here has changed stock or created a duplicate listing.</p>"
+        + ("<div class='table-wrap'><table><thead><tr><th>Card</th><th>Issue</th><th></th></tr></thead><tbody>"
+           + issue_rows + "</tbody></table></div>" if issue_rows else
+           "<p class='subtitle'>No handoff issues.</p>")
+        + "</div>"
         + f"<div class='panel'><h2>Inventory prices</h2>"
+        + _last_ran_note("pokemonpricetracker-backfill.service")
         + (f"<p class='subtitle'>{backlog:,} held card/variant pair{'s' if backlog != 1 else ''} "
            "still have no market price. The free tier allows about 25 a day, so this "
            "works through the backlog rather than finishing it &mdash; it also runs "
@@ -353,6 +557,7 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
            "<button>Price the next 25</button></form>" if backlog else "")
         + "</div>"
         + "<div class='panel'><h2>eBay market signal</h2>"
+        + _last_ran_note("ebay-price-import.service")
         + (f"<p class='subtitle'>{ebay_gap:,} held "
            f"{'cards have' if ebay_gap != 1 else 'card has'} no eBay "
            "asking-price signal. This is the figure listing prices are built from, and eBay's quota "
@@ -362,6 +567,29 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
            "asking prices move.</p>")
         + "<form method='post' action='/cards/pricing/refresh-ebay'>"
           "<button>Refresh eBay prices</button></form></div>"
+        + f"<div class='panel'><h2>Unpriced inventory ({unpriced_total})</h2>"
+        + (
+            "<p class='subtitle'>Held cards with no price from either source &mdash; "
+            "the actual list behind the dashboard's price-coverage figure.</p>"
+            + (f"<p class='subtitle'>{unpriced_total} total, showing the first {len(unpriced_rows)}.</p>"
+               if unpriced_total > len(unpriced_rows) else "")
+            + "<div class='table-wrap'><table><thead><tr><th>Card</th><th>Set / No.</th><th></th></tr></thead><tbody>"
+            + "".join(
+                "<tr><td style='white-space:normal'>"
+                f"{escape(name)}"
+                + (f" ({escape(item.variant.value)})" if item.variant != CardVariant.NORMAL else "")
+                + "</td>"
+                f"<td style='color:var(--text-faint)'>{escape(set_id or '?')}"
+                + (f" #{escape(number)}" if number else "") + "</td>"
+                f"<td><a href='{_ebay_search_url(name, set_id, number)}' target='_blank' "
+                "rel='noopener'>eBay search</a></td></tr>"
+                for item, name, set_id, number in unpriced_rows
+            )
+            + "</tbody></table></div>"
+            if unpriced_rows else
+            "<p class='subtitle'>Every held card has a price from at least one source.</p>"
+        )
+        + "</div>"
     )
     return HTMLResponse(page("EzBay — Price review", body, head_extra=head_extra))
 
@@ -415,23 +643,57 @@ def price_review_form(card_id: str, user: str = Depends(require_dashboard_user),
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
 
+    classification = load_pipeline_config().classification
+    bundling_enabled = bool(classification and classification.bundling_enabled)
+
+    # Not-yet-priced cards are the usual candidates to bundle in, but
+    # re-opening an already-bundled card (editing its price) must also see
+    # its existing bundle mates, even though they're PRICE_APPROVED now --
+    # otherwise their checkboxes don't render, "approve" re-submits with an
+    # empty bundle_with, and only this one card's price actually changes
+    # while its bundle mates silently keep the old price. Real bug, found
+    # 2026-10-01 right after bundling three cards together.
+    bundleable = CapturedCard.pricing_status.in_([PricingStatus.NOT_PRICED, PricingStatus.PENDING_PRICE_REVIEW])
+    candidate_filter = or_(bundleable, CapturedCard.bundle_id == card.bundle_id) if card.bundle_id else bundleable
     candidates = session.scalars(
-        select(CapturedCard).where(
-            CapturedCard.id != card_id,
-            CapturedCard.status == CardCaptureStatus.REVIEWED,
-            CapturedCard.pricing_status.in_([PricingStatus.NOT_PRICED, PricingStatus.PENDING_PRICE_REVIEW]),
-        )
-    ).all()
-    bundle_options = "".join(
-        f"<label><input type='checkbox' name='bundle_with' value='{c.id}'"
-        + (" checked" if card.bundle_id and c.bundle_id == card.bundle_id else "")
-        + f"> {escape(c.character or '?')} — {escape(c.set_name or '?')} #{escape(c.card_number or '?')}</label>"
-        for c in candidates
-    ) or "<p class='subtitle'>No other unbundled cards available to bundle with.</p>"
+        select(CapturedCard).where(CapturedCard.id != card_id, CapturedCard.status == CardCaptureStatus.REVIEWED,
+                                   candidate_filter)
+    ).all() if bundling_enabled else []
+    bundle_options = ""
+    if bundling_enabled:
+        choices = "".join(
+            f"<label><input type='checkbox' name='bundle_with' value='{c.id}'"
+            + (" checked" if card.bundle_id and c.bundle_id == card.bundle_id else "")
+            + f"> {escape(c.character or '?')} — {escape(c.set_name or '?')} #{escape(c.card_number or '?')}</label>"
+            for c in candidates
+        ) or "<p class='subtitle'>No other unbundled cards available to bundle with.</p>"
+        bundle_options = f"<h3>Bundle with</h3>{choices}"
 
     error_html = f"<p class='pill bad'>{escape(card.price_lookup_error)}</p>" if card.price_lookup_error else ""
-    price_value = card.suggested_price if card.suggested_price is not None else ""
+    # approved_price is the authoritative, already-committed price -- a
+    # card reopened for editing after approval must show what it's
+    # actually set to, not fall through to the stale automated suggestion
+    # (or blank, since a manually-approved card has no suggested_price at
+    # all). Real bug, found 2026-10-01: there was no way to even see what
+    # an approved card's current price was, let alone edit it.
+    if card.approved_price is not None:
+        price_value = card.approved_price
+    elif card.suggested_price is not None:
+        price_value = card.suggested_price
+    else:
+        price_value = ""
     source_note = f"<p class='subtitle'>Suggested from {escape(card.price_source)} on {card.price_checked_at}</p>" if card.price_source else ""
+    variant_labels = {
+        CardVariant.NORMAL: "Normal",
+        CardVariant.HOLO: "Holo",
+        CardVariant.REVERSE_HOLO: "Reverse Holo",
+        CardVariant.POKEBALL_PATTERN: "Poké Ball pattern",
+        CardVariant.MASTERBALL_PATTERN: "Master Ball pattern",
+    }
+    variant_options = "<option value=''>Choose printing…</option>" + "".join(
+        f"<option value='{printing.value}'{' selected' if card.variant == printing else ''}>{label}</option>"
+        for printing, label in variant_labels.items()
+    )
 
     body = (
         brand_header("Price review")
@@ -441,7 +703,9 @@ def price_review_form(card_id: str, user: str = Depends(require_dashboard_user),
         + error_html + source_note
         + f"<form method='post' action='/cards/pricing/{card_id}'>"
         + f"<label>Price (AUD) <input name='price' value='{price_value}' required></label>"
-        + f"<h3>Bundle with</h3>{bundle_options}"
+        + f"<label>Printing <select name='variant' required>{variant_options}</select></label>"
+        + "<p class='subtitle'>Required for Inventory and Bulk Upload so a Holo copy is never filed or listed as Normal.</p>"
+        + bundle_options
         + "<div style='display:flex;gap:12px'>"
         + "<button name='action' value='approve' style='background:linear-gradient(120deg,var(--success),var(--accent))'>Approve</button>"
         + "<button name='action' value='reject' style='background:var(--danger);color:#fff'>Deny</button>"
@@ -453,8 +717,10 @@ def price_review_form(card_id: str, user: str = Depends(require_dashboard_user),
 @router.post("/{card_id}")
 def price_review_submit(
     card_id: str,
+    request: Request,
     action: str = Form("approve"),
     price: str = Form(""),
+    variant: str = Form(""),
     bundle_with: list[str] = Form([]),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -473,22 +739,48 @@ def price_review_submit(
             raise HTTPException(status_code=400, detail="price must be a valid number") from None
         if decimal_price <= 0:
             raise HTTPException(status_code=400, detail="price must be greater than zero")
+        if variant:
+            try:
+                selected_variant = CardVariant(variant)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="unknown printing") from None
+        else:
+            selected_variant = card.variant
 
+        classification = load_pipeline_config().classification
+        bundling_enabled = bool(classification and classification.bundling_enabled)
         bundle_id = card.bundle_id or str(uuid.uuid4())
         bundle_members = [card]
-        if bundle_with:
+        if bundling_enabled and bundle_with:
             others = session.scalars(select(CapturedCard).where(CapturedCard.id.in_(bundle_with))).all()
             bundle_members.extend(others)
 
         for member in bundle_members:
             member.approved_price = decimal_price
+            member.variant = selected_variant
             member.pricing_status = PricingStatus.PRICE_APPROVED
-            if len(bundle_members) > 1:
+            if bundling_enabled and len(bundle_members) > 1:
                 member.bundle_id = bundle_id
+            elif not bundling_enabled:
+                member.bundle_id = None
+        # A successful handoff creates the active ShopListing that the Bulk
+        # Upload page already reads. A blocked handoff records its reason and
+        # leaves inventory untouched; re-approving after a correction retries
+        # safely because capture_promotions is unique per captured card.
+        from .capture_promotion import promote_approved_card
+        promotion_results = [promote_approved_card(session, member, request.app.state.settings)
+                             for member in bundle_members]
         audit_action = "card.price_approve"
 
     session.commit()
-    record_event(session, actor_type="user", actor_id=user, action=audit_action, resource_type="captured_card", resource_id=card_id, outcome="success", correlation_id=_correlation_id(), details={"bundle_with": bundle_with} if action != "reject" else {})
+    details = {"bundle_with": bundle_with} if action != "reject" else {}
+    if action != "reject":
+        details["listing_handoff"] = [
+            {"promoted": result.promoted, "issue": result.issue,
+             "shop_listing_id": result.shop_listing_id}
+            for result in promotion_results
+        ]
+    record_event(session, actor_type="user", actor_id=user, action=audit_action, resource_type="captured_card", resource_id=card_id, outcome="success", correlation_id=_correlation_id(), details=details)
 
     next_id = _next_price_review_card_id(session, card_id)
     if next_id:

@@ -1,0 +1,13 @@
+[Unit]
+Description=EzBay Australia/Japan collectible market scan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ezbay
+Group=ezbay
+WorkingDirectory=/home/nic/automation-platform
+ExecStart=/bin/bash /home/nic/automation-platform/scripts/run-market-watch-scan.sh
+StandardOutput=append:/home/nic/automation-platform/scan_ingest_data/logs/market-watch-scan.log
+StandardError=append:/home/nic/automation-platform/scan_ingest_data/logs/market-watch-scan.log

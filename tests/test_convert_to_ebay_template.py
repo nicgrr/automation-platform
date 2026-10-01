@@ -22,6 +22,47 @@ def test_a_dragon_ball_row_gets_dragon_ball_franchise_not_pokemon():
     assert out["*C:Manufacturer"] == "Bandai"
 
 
+def test_a_dragon_ball_carddass_row_gets_dragon_ball_franchise_not_pokemon():
+    """Real gap found 2026-09-26: dragon_ball_carddass and
+    dragon_ball_art_card were never added to GAME_ITEM_SPECIFICS when the
+    other Dragon Ball games were, so 12 real vintage Carddass/art-card
+    listings silently exported as Franchise=Pokémon."""
+    out = convert_row(_row(game="dragon_ball_carddass"), _args())
+    assert out["*C:Franchise"] == "Dragon Ball"
+    assert out["*C:Manufacturer"] == "Bandai"
+
+
+def test_a_dragon_ball_art_card_row_gets_dragon_ball_franchise_not_pokemon():
+    out = convert_row(_row(game="dragon_ball_art_card"), _args())
+    assert out["*C:Franchise"] == "Dragon Ball"
+    # Not Bandai: real mislabeling found 2026-09-28 -- this catalogue's
+    # only dragon_ball_art_card set is explicitly "(Unofficial)", a
+    # fan-made product Bandai never released. "Unbranded" is eBay's own
+    # standard convention for an item with no real manufacturer to name.
+    assert out["*C:Manufacturer"] == "Unbranded"
+
+
+def test_a_dragon_ball_z_row_gets_panini_manufacturer_not_bandai():
+    """Real mislabeling found 2026-09-28, auditing every Dragon Ball game
+    key: dragon_ball_z is this catalogue's key for the Score/Panini-
+    published Dragon Ball Z CCG (every one of its 1806 real cards' own
+    CardSet name already says "Panini: ..."), not a Bandai product."""
+    out = convert_row(_row(game="dragon_ball_z"), _args())
+    assert out["*C:Franchise"] == "Dragon Ball"
+    assert out["*C:Manufacturer"] == "Panini"
+
+
+def test_a_dragon_ball_artbox_row_gets_artbox_manufacturer_not_bandai():
+    """Real mislabeling found 2026-09-27: these 12 cards are 1996 Artbox
+    Entertainment trading cards, not a Bandai product -- they'd shared
+    the "dragon_ball_z" game key (Manufacturer=Bandai) purely because the
+    set they lived in had never been given its own real identity."""
+    out = convert_row(_row(game="dragon_ball_artbox"), _args())
+    assert out["*C:Franchise"] == "Dragon Ball"
+    assert out["*C:Manufacturer"] == "Artbox"
+    assert "C:Game" not in out
+
+
 def test_a_one_piece_row_gets_one_piece_franchise():
     out = convert_row(_row(game="one_piece"), _args())
     assert out["*C:Franchise"] == "One Piece"
@@ -35,6 +76,60 @@ def test_a_row_with_no_game_field_falls_back_to_pokemon():
     assert "game" not in row
     out = convert_row(row, _args())
     assert out["*C:Franchise"] == "Pokémon"
+
+
+# --- C:Game (added 2026-09-27 -- eBay's own item-specifics editor showed
+# "Required -- Game" blank on a live listing; nothing in this pipeline had
+# ever populated it) --
+
+def test_a_pokemon_row_gets_the_pokemon_game_specific():
+    out = convert_row(_row(game="pokemon"), _args())
+    assert out["C:Game"] == "Pokémon TCG"
+
+
+def test_a_one_piece_row_gets_the_one_piece_game_specific():
+    out = convert_row(_row(game="one_piece"), _args())
+    assert out["C:Game"] == "One Piece Card Game"
+
+
+def test_a_dragon_ball_carddass_row_gets_no_game_specific():
+    """Carddass/art cards aren't really "a game" in the sense this
+    picklist means -- a guessed value risks being wrong, so it's left
+    unset rather than guessed."""
+    out = convert_row(_row(game="dragon_ball_carddass"), _args())
+    assert "C:Game" not in out
+
+
+def test_a_row_with_no_game_field_gets_the_pokemon_game_specific():
+    out = convert_row(_row(), _args())
+    assert out["C:Game"] == "Pokémon TCG"
+
+
+# --- C:Finish (added 2026-09-27 -- real per-card printing data this app
+# already tracks, e.g. via InventoryItem.variant, but never sent on) --
+
+def test_a_single_cards_finish_is_sent_as_its_own_item_specific():
+    out = convert_row(_row(variant="Reverse Holo"), _args())
+    assert out["C:Finish"] == "Reverse Holo"
+
+
+def test_a_lot_never_gets_a_finish_specific():
+    """A lot mixes many cards' printings under one sku -- a single Finish
+    value would misrepresent whichever ones aren't that exact printing."""
+    out = convert_row(_row(title="Bulk lot (12 cards)", variant="Holo"), _args())
+    assert "C:Finish" not in out
+
+
+def test_the_variation_parent_never_inherits_a_childs_finish():
+    """Otherwise the parent silently inherits child_rows[0]'s printing and
+    misrepresents every other Normal/Reverse Holo card in the set -- the
+    same class of bug 2026-09-26's language incident was about."""
+    cards = [
+        _row(sku="sku-4-holo", title="Card4 #4", set_total="99", variant="Holo"),
+        _row(sku="sku-5-normal", title="Card5 #5", set_total="99", variant="Normal"),
+    ]
+    rows, _ = build_variation_group("Obsidian Flames", cards, _args())
+    assert rows[0]["C:Finish"] == ""
 
 
 def _args(**overrides):
@@ -80,6 +175,18 @@ def test_a_single_card_row_splits_name_and_number_from_the_title():
     assert "C:Number of Cards" not in out
 
 
+def test_a_card_name_over_65_chars_is_truncated_not_rejected():
+    """Real upload failure (2026-09-26, ErrorCode 21919308): 'Card Name's
+    value of "Majin Buu : Evil - FB04-091 (Dragon Ball Z Dokkan Battle
+    Alternate Art)" is too long. Enter a value of no more than 65
+    characters.' -- *Title was already capped at 80, Card Name never
+    was."""
+    long_name = "Majin Buu : Evil - FB04-091 (Dragon Ball Z Dokkan Battle Alternate Art) #FB04-091"
+    out = convert_row(_row(title=long_name), _args())
+    assert len(out["C:Card Name"]) <= 65
+    assert out["C:Card Name"] == "Majin Buu : Evil - FB04-091 (Dragon Ball Z Dokkan Battle Alternat"
+
+
 def test_a_bulk_lot_row_gets_card_count_instead_of_a_name_and_number():
     out = convert_row(_row(title="Obsidian Flames — bulk lot (21 cards)", weight_grams="143"), _args())
     assert out["C:Number of Cards"] == "21"
@@ -118,6 +225,64 @@ def test_a_bulk_lot_gets_the_mixed_card_lots_category():
 def test_set_name_passes_through_to_the_required_c_set_field():
     out = convert_row(_row(set_name="Unified Minds"), _args())
     assert out["*C:Set"] == "Unified Minds"
+
+
+# --- *Description's actual body text (2026-09-27) -- until now this was
+# just row["description"], which for most listings meant the title
+# repeated verbatim: no set, no condition, no language, nothing this app
+# had already computed for the item specifics sitting right next to it. --
+
+def test_a_singles_description_mentions_its_set_and_a_condition_statement():
+    out = convert_row(_row(title="Abra #54", set_name="Unified Minds"), _args())
+    assert "Unified Minds" in out["*Description"]
+    assert "Near Mint or Better" in out["*Description"]
+    assert "Abra" in out["*Description"]
+
+
+def test_a_singles_description_includes_rarity_and_finish_when_present():
+    out = convert_row(_row(rarity="Ultra Rare", variant="Holo"), _args())
+    assert "Ultra Rare" in out["*Description"]
+    assert "Holo" in out["*Description"]
+
+
+def test_a_japanese_singles_description_states_its_language():
+    out = convert_row(_row(language="Japanese"), _args())
+    assert "Language: Japanese" in out["*Description"]
+
+
+def test_an_english_singles_description_does_not_bother_stating_the_language():
+    out = convert_row(_row(language="English"), _args())
+    assert "Language:" not in out["*Description"]
+
+
+def test_a_lots_description_mentions_its_set_not_a_single_cards_specifics():
+    out = convert_row(_row(title="Obsidian Flames — bulk lot (21 cards)", set_name="Obsidian Flames",
+                          weight_grams="143"), _args())
+    assert "Obsidian Flames" in out["*Description"]
+    assert "Near Mint or Better" in out["*Description"]
+    assert "C:Card Name" not in out  # unaffected -- still no per-card specifics on a lot
+
+
+# --- C:Language -- added 2026-09-27 after a real sale of a Japanese-printed
+# Dragon Ball card pictured and catalogued as the English release. Confirmed
+# against the real downloaded template: C:Language is a recognised aspect
+# on this category, with "Japanese" one of its own listed values. --------
+
+def test_language_passes_through_to_c_language():
+    out = convert_row(_row(language="Japanese"), _args())
+    assert out["C:Language"] == "Japanese"
+
+
+def test_a_row_with_no_language_field_defaults_to_english():
+    """_row()'s own base dict predates this field, matching a real row
+    from a builder that hasn't been updated for it (e.g. a lot, per
+    export_ebay_bulk_listing.py's own comment on why it leaves lots
+    blank) -- convert_row must not KeyError, and English is exactly as
+    accurate a guess here as it was before the field existed."""
+    row = _row()
+    assert "language" not in row
+    out = convert_row(row, _args())
+    assert out["C:Language"] == "English"
 
 
 def test_a_single_card_gets_the_confirmed_near_mint_condition_descriptor():
@@ -273,6 +438,26 @@ def test_the_parent_gets_a_pick_your_card_title_and_the_sets_own_category_id():
     assert parent["CustomLabel"] == "set-variation-obsidian-flames"
 
 
+def test_the_parent_description_states_the_card_count_and_a_condition_statement():
+    rows, _ = build_variation_group("Obsidian Flames", _cards(4, 21, 63), _args())
+    assert "3 available" in rows[0]["*Description"]
+    assert "Near Mint or Better" in rows[0]["*Description"]
+
+
+def test_a_japanese_group_key_produces_an_honest_title_and_a_collision_free_slug():
+    """build_variation_group takes whatever string export_ebay_bulk_listing.py's
+    _set_group_key hands it as the group's identity -- this is the other
+    half of the language-split fix: a set that exists in both languages
+    already arrives here as two differently-keyed groups ("Cross Force" /
+    "Cross Force (Japanese)"), and this function needs no knowledge of
+    language at all for the right title and a non-colliding sku to fall
+    out of that automatically."""
+    rows, _ = build_variation_group("Cross Force (Japanese)", _cards(4), _args())
+    parent = rows[0]
+    assert parent["*Title"] == "Cross Force (Japanese) - Complete Your Master Set"
+    assert parent["CustomLabel"] == "set-variation-cross-force-japanese"
+
+
 def test_a_card_with_no_readable_number_is_skipped_not_a_broken_variation():
     cards = _cards(4) + [_row(sku="sku-x", title="No Number Card", price="2.00", set_name="Obsidian Flames")]
     rows, skipped = build_variation_group("Obsidian Flames", cards, _args())
@@ -343,6 +528,48 @@ def test_the_variant_is_appended_to_the_variation_value():
     assert rows[1]["RelationshipDetails"] == "MPN=04 - Card4 (RH)"
 
 
+def test_an_mpn_value_over_65_chars_is_truncated_with_the_variant_suffix_kept():
+    """Real upload failure (2026-09-26, ErrorCode 21919318): 'The
+    variation detail MPN contains the value "EX25-39 - Kale & Caulifla,
+    Becoming the Strongest in the Multiverse (N)", which has too many
+    characters. Reduce it to 65 or fewer characters.' The suffix must
+    survive truncation -- losing it would make this collide with the (H)
+    printing's own value (see the next test)."""
+    cards = [_row(sku="sku-39", title="Kale & Caulifla, Becoming the Strongest in the Multiverse #39",
+                  number="39", set_total="45", variant="Normal")]
+    rows, _ = build_variation_group("Expansion Deck Box Set 25", cards, _args())
+    value = rows[1]["RelationshipDetails"].removeprefix("MPN=")
+    assert len(value) <= 65
+    assert value.endswith("(N)")
+
+
+def test_two_variants_of_an_overly_long_name_still_get_distinct_mpn_values():
+    cards = [
+        _row(sku="sku-39-n", title="Kale & Caulifla, Becoming the Strongest in the Multiverse #39",
+             number="39", set_total="45", variant="Normal"),
+        _row(sku="sku-39-h", title="Kale & Caulifla, Becoming the Strongest in the Multiverse #39",
+             number="39", set_total="45", variant="Holo"),
+    ]
+    rows, skipped = build_variation_group("Expansion Deck Box Set 25", cards, _args())
+    assert skipped == []
+    children = rows[1:]
+    values = {c["RelationshipDetails"] for c in children}
+    assert len(values) == 2  # not collapsed to one truncated value
+
+
+def test_javascript_token_inside_an_innocent_card_name_is_broken_for_ebay():
+    cards = [_row(
+        sku="energy-retrieval", title="Energy Retrieval #82", number="82",
+        set_name="White Flare", set_total="86", variant="Reverse Holo",
+    )]
+
+    rows, skipped = build_variation_group("White Flare", cards, _args())
+
+    assert skipped == []
+    assert rows[1]["RelationshipDetails"] == "MPN=82 - Energy Retr. (RH)"
+    assert "eval" not in rows[0]["RelationshipDetails"].casefold()
+
+
 def test_two_different_printings_of_the_same_number_are_both_included():
     """Unlike a genuine reprint/alt-art collision, a Normal and a Reverse
     Holo of the same card number are both real, distinct sellable copies
@@ -373,7 +600,42 @@ def test_a_genuine_reprint_with_the_same_number_and_printing_is_still_skipped():
     assert "sku-alt" in skipped[0]
 
 
-def test_the_parent_picture_is_the_sets_logo_not_a_cards_photo():
+def test_cards_with_no_real_printed_number_are_not_treated_as_reprints_of_each_other():
+    """Real bug found 2026-09-27: 12 real, distinct 1996 Artbox Dragon Ball
+    Z cards all partition to "#n/a" (no printed number at all), which
+    collided on the same dedup key and silently dropped 11 of the 12 --
+    only the first one made it into a real relist CSV. Distinct card
+    names with the placeholder "n/a" number must all survive."""
+    cards = [
+        _row(sku="sku-piccolo", title="Piccolo (Artbox '96) #n/a", set_total="", variant="Holo"),
+        _row(sku="sku-trunks", title="Trunks #n/a", set_total="", variant="Holo"),
+        _row(sku="sku-vegeta", title="Vegeta: Saiyan Saga (Artbox '96) #n/a", set_total="", variant="Holo"),
+    ]
+    rows, skipped = build_variation_group("Dragon Ball Z Artbox '96", cards, _args())
+    assert skipped == []
+    children = rows[1:]
+    assert len(children) == 3
+    assert len({c["RelationshipDetails"] for c in children}) == 3
+
+
+def test_two_genuinely_identical_no_number_cards_are_still_deduped_by_name():
+    """The fallback keys on name instead of the placeholder number, but a
+    true duplicate (same name, same printing, no number) should still be
+    caught the same way a real numbered reprint is."""
+    cards = [
+        _row(sku="sku-a", title="Trunks #n/a", set_total="", variant="Holo"),
+        _row(sku="sku-b", title="Trunks #n/a", set_total="", variant="Holo"),
+    ]
+    rows, skipped = build_variation_group("Dragon Ball Z Artbox '96", cards, _args())
+    assert len(rows) == 2  # 1 parent + only the first
+    assert "sku-b" in skipped[0]
+
+
+def test_the_parent_picture_is_the_sets_logo_not_a_pool():
+    """Confirmed 2026-09-27 against eBay's own File Exchange docs (v3.5.2):
+    the item row's PicURL is one representative photo, not a pool of
+    every variation's picture -- an earlier fix that pooled them here was
+    wrong (see this function's docstring)."""
     cards = _cards(4, 21)
     cards[0]["set_logo_url"] = "https://example.test/obsidian-flames-logo.png"
     rows, _ = build_variation_group("Obsidian Flames", cards, _args())
@@ -383,3 +645,41 @@ def test_the_parent_picture_is_the_sets_logo_not_a_cards_photo():
 def test_the_parent_picture_falls_back_to_a_cards_photo_with_no_set_logo():
     rows, _ = build_variation_group("Obsidian Flames", _cards(4), _args())
     assert rows[0]["PicURL"] == "https://example.test/abra.png"
+
+
+def test_a_childs_picurl_is_keyed_by_its_own_mpn_value():
+    """The real, documented mechanism (File Exchange Advanced Template
+    Instructions v3.5.2, "Using relationship fields for variations",
+    pp.24-25): a variation row's PicURL must be "<its own trait
+    value>=<url>", the exact same value used in that row's own
+    RelationshipDetails -- a bare URL here is what a buyer's variation
+    picker has nothing to match, and the card's own photo never displays
+    once selected (the real cause of "the photos don't come up",
+    reported 2026-09-27)."""
+    cards = _cards(4, 21, set_total="99")
+    cards[0]["image_url"] = "https://example.test/card-4.png"
+    cards[1]["image_url"] = "https://example.test/card-21.png"
+    rows, _ = build_variation_group("Obsidian Flames", cards, _args())
+    children = rows[1:]
+    assert {c["PicURL"] for c in children} == {
+        "04 - Card4=https://example.test/card-4.png",
+        "21 - Card21=https://example.test/card-21.png",
+    }
+    for child in children:
+        mpn_value = child["RelationshipDetails"].removeprefix("MPN=")
+        assert child["PicURL"].startswith(f"{mpn_value}=")
+
+
+def test_two_variations_photos_never_collide_since_every_mpn_value_is_unique():
+    """"PicURL values for variations of a given item must use a single
+    trait name" (same doc) -- satisfied here since MPN is the only trait
+    this listing ever uses, and every child's own MPN value is already
+    guaranteed unique by the dedup guard above, so no two children ever
+    need to share one photo entry."""
+    cards = _cards(4, 21, 63, set_total="99")
+    for i, card in enumerate(cards):
+        card["image_url"] = f"https://example.test/card-{i}.png"
+    rows, _ = build_variation_group("Obsidian Flames", cards, _args())
+    children = rows[1:]
+    keys = [c["PicURL"].split("=", 1)[0] for c in children]
+    assert len(keys) == len(set(keys))

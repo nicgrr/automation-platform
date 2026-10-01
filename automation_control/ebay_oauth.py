@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from .config import Settings
@@ -97,6 +98,10 @@ class TokenCipher:
 
 def new_oauth_state(session: Session, *, now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
+    # OAuth states are ten-minute, single-use CSRF tokens.  Remove expired
+    # rows whenever a new flow begins so abandoned login attempts cannot
+    # accumulate indefinitely in the operational database.
+    session.execute(delete(OAuthState).where(OAuthState.expires_at <= now))
     value = secrets.token_urlsafe(32)
     session.add(OAuthState(state_hash=hashlib.sha256(value.encode()).hexdigest(), expires_at=now + timedelta(minutes=10)))
     session.commit()

@@ -13,12 +13,12 @@ from html import escape
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
 from .database import get_session
-from .models import CatalogItem, CatalogItemType, SealedProduct
+from .models import CatalogItem, CatalogItemType, InventoryItem, SealedProduct
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["sealed-economics"])
@@ -32,10 +32,19 @@ def _dec(value: str, default: str = "0") -> Decimal:
 
 
 @router.get("/sealed-products", response_class=HTMLResponse)
-def sealed_products_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+def sealed_products_page(owned: str = Query(""), user: str = Depends(require_dashboard_user),
+                         session: Session = Depends(get_session)) -> HTMLResponse:
     rows = session.execute(
         select(CatalogItem, SealedProduct).join(SealedProduct, SealedProduct.catalog_item_id == CatalogItem.id)
     ).all()
+    owned_by_item = dict(session.execute(
+        select(InventoryItem.catalog_item_id, func.sum(InventoryItem.quantity))
+        .join(SealedProduct, SealedProduct.catalog_item_id == InventoryItem.catalog_item_id)
+        .where(InventoryItem.quantity > 0)
+        .group_by(InventoryItem.catalog_item_id)
+    ).all())
+    if owned:
+        rows = [(item, sealed) for item, sealed in rows if owned_by_item.get(item.id, 0)]
     table_rows = "".join(
         "<tr>"
         f"<td><a href='/sealed-products/{escape(item.id)}/economics'>{escape(item.name)}</a></td>"
@@ -43,10 +52,15 @@ def sealed_products_page(user: str = Depends(require_dashboard_user), session: S
         f"<td>{sp.units_per_display or '—'} / display</td>"
         f"<td>{sp.displays_per_case or '—'} / case</td>"
         f"<td>{f'${sp.rrp:,.2f}' if sp.rrp else '—'}</td>"
+        f"<td><strong>{owned_by_item.get(item.id, 0)}</strong></td>"
         "</tr>"
         for item, sp in rows
-    ) or "<tr><td colspan=5>No sealed products yet.</td></tr>"
-    table = f"<div class='panel'><div class='table-wrap'><table><thead><tr><th>Product</th><th>Brand / type</th><th>Units/display</th><th>Displays/case</th><th>RRP</th></tr></thead><tbody>{table_rows}</tbody></table></div></div>"
+    ) or "<tr><td colspan=6>No owned sealed products yet.</td></tr>"
+    view_toggle = (
+        "<a class='btn ghost' href='/sealed-products'>Show full catalogue</a>" if owned
+        else "<a class='btn ghost' href='/sealed-products?owned=1'>Show owned only</a>"
+    )
+    table = f"<p>{view_toggle}</p><div class='panel'><div class='table-wrap'><table><thead><tr><th>Product</th><th>Brand / type</th><th>Units/display</th><th>Displays/case</th><th>RRP</th><th>Owned</th></tr></thead><tbody>{table_rows}</tbody></table></div></div>"
 
     form = (
         "<div class='panel'><h2>Add a sealed product</h2>"

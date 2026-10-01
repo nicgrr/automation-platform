@@ -31,13 +31,33 @@ def test_manifest_is_served_and_valid_json():
     assert data["name"] == "EzBay"
     assert data["display"] == "standalone"
     assert len(data["icons"]) == 2
+    assert data["share_target"]["action"] == "/market-watch/share"
+    assert data["share_target"]["params"]["url"] == "url"
 
 
 def test_icons_are_served_as_png():
-    for path in ["/static/icons/icon-192.png", "/static/icons/icon-512.png", "/static/icons/apple-touch-icon.png"]:
+    for path in [
+        "/static/icons/icon-192.png",
+        "/static/icons/icon-512.png",
+        "/static/icons/apple-touch-icon.png",
+        "/favicon.ico",
+        "/apple-touch-icon.png",
+        "/apple-touch-icon-precomposed.png",
+    ]:
         response = TestClient(app).get(path)
         assert response.status_code == 200, path
         assert response.headers["content-type"] == "image/png"
+
+
+def test_root_redirects_to_the_dashboard():
+    response = TestClient(app).get("/", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/dashboard"
+
+
+def test_private_app_does_not_publish_interactive_api_docs():
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert TestClient(app).get(path).status_code == 404
 
 
 def test_static_assets_do_not_require_login():

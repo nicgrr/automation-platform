@@ -204,13 +204,32 @@ def _process_accessory_photo(photo_path: Path, settings, session: Session, user:
             status=CardCaptureStatus.PENDING_REVIEW, **dict.fromkeys(CAPTURE_FIELDS),
         ))
 
-    session.add_all(records)
-    session.commit()
+    try:
+        session.add_all(records)
+        session.commit()
+    except Exception:
+        # A DB write failing here (contention with another writer, disk
+        # trouble) left the session's transaction dead -- roll it back
+        # before the caller does anything else with it, record_event's own
+        # commit included, or that fails too with a much more confusing
+        # error. This is what actually happened: the AI call itself failed
+        # cleanly (caught above, `blank_note` holds why), but writing even
+        # that fallback row hit "database is locked", was never caught, and
+        # surfaced as a raw 500 with no explanation and nothing in the
+        # audit log -- exactly the silent failure this exists to prevent.
+        session.rollback()
+        raise
+
     for record in records:
+        # outcome != "success" means this record IS blank_note -- an AI
+        # failure or a miss, not a real find -- so the reason belongs in
+        # the audit trail rather than an empty {}, which is what made this
+        # one take a service-log read to diagnose instead of a look at
+        # /settings or the events themselves.
         record_event(
             session, actor_type="user", actor_id=user, action="accessory.capture",
             resource_type="captured_accessory", resource_id=record.id, outcome=outcome,
-            correlation_id=str(uuid.uuid4()), details={},
+            correlation_id=str(uuid.uuid4()), details=blank_note if outcome != "success" else {},
         )
     return records
 
@@ -226,7 +245,13 @@ async def accessory_capture_submit(
         raise HTTPException(status_code=503, detail="accessory recognition is not configured (ANTHROPIC_API_KEY missing)")
 
     photo_path = _save_accessory_photo(await photo.read(), photo.content_type, settings)
-    records = _process_accessory_photo(photo_path, settings, session, user)
+    try:
+        records = _process_accessory_photo(photo_path, settings, session, user)
+    except Exception as exc:
+        # A raw 500 here is what the screenshot that prompted this showed:
+        # no explanation, and the photo already saved to disk with nothing
+        # pointing back at it. A controlled error at least says why.
+        raise HTTPException(status_code=500, detail=f"failed to save this capture: {exc}") from exc
     return RedirectResponse(f"/accessories/review/{records[0].id}", status_code=303)
 
 

@@ -9,7 +9,7 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    CardSet, CatalogItem, CatalogItemType, ShopListing, ShopListingStatus, TcgCard,
+    CardSet, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus, ShopListing, ShopListingStatus, TcgCard,
 )
 
 
@@ -81,6 +81,151 @@ def test_the_listing_shows_its_set(client, session):
     make_listing(session, "Charizard", set_id="sv1", set_name="Scarlet & Violet")
     body = client.get("/shop-listings").text
     assert "Scarlet &amp; Violet" in body
+
+
+def test_the_row_carries_a_mobile_meta_line_with_qty_price_and_status(client, session):
+    """Qty/Price/Status get their own columns on desktop but are hidden
+    below 680px (see .listing-table media query) -- this duplicate line
+    is what actually shows on a phone, so it has to carry real values."""
+    make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE, price="12.50")
+    body = client.get("/shop-listings?status=active").text
+    assert "listing-mobile-meta" in body
+    assert "12.50" in body
+
+
+def test_a_listing_with_no_image_gets_an_empty_thumbnail_placeholder(client, session):
+    make_listing(session, "Charizard")
+    body = client.get("/shop-listings").text
+    assert "listing-thumb-empty" in body
+
+
+def test_a_listing_with_an_image_shows_it_as_a_thumbnail(client, session):
+    listing_id = make_listing(session, "Charizard")
+    session.get(ShopListing, listing_id).image_url = "https://example.com/charizard.jpg"
+    session.commit()
+    body = client.get("/shop-listings").text
+    assert f"src='/shop-listings/{listing_id}/thumb'" in body
+    assert f"href='/shop-listings/{listing_id}/image'" in body
+
+
+def test_the_thumb_route_redirects_to_a_remote_image_url(client, session):
+    listing_id = make_listing(session, "Charizard")
+    session.get(ShopListing, listing_id).image_url = "https://example.com/charizard.jpg"
+    session.commit()
+    resp = client.get(f"/shop-listings/{listing_id}/thumb", follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "https://example.com/charizard.jpg"
+
+
+def test_the_image_route_redirects_to_a_remote_image_url(client, session):
+    listing_id = make_listing(session, "Charizard")
+    session.get(ShopListing, listing_id).image_url = "https://example.com/charizard.jpg"
+    session.commit()
+    resp = client.get(f"/shop-listings/{listing_id}/image", follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "https://example.com/charizard.jpg"
+
+
+def test_the_thumb_route_serves_a_local_cache_path(client, session, tmp_path):
+    from PIL import Image
+
+    listing_id = make_listing(session, "Charizard")
+    img_path = tmp_path / "ref.png"
+    Image.new("RGB", (10, 10)).save(img_path)
+    session.get(ShopListing, listing_id).image_url = str(img_path)
+    session.commit()
+    resp = client.get(f"/shop-listings/{listing_id}/thumb")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+
+
+def test_the_thumb_route_404s_when_the_local_file_is_missing(client, session):
+    listing_id = make_listing(session, "Charizard")
+    session.get(ShopListing, listing_id).image_url = "scan_ingest_data/cache/nope/1.png"
+    session.commit()
+    resp = client.get(f"/shop-listings/{listing_id}/thumb")
+    assert resp.status_code == 404
+
+
+def test_the_thumb_route_404s_when_there_is_no_image_at_all(client, session):
+    listing_id = make_listing(session, "Charizard")
+    resp = client.get(f"/shop-listings/{listing_id}/thumb")
+    assert resp.status_code == 404
+
+
+def make_listing_with_inventory(session, name, *, scan_image_path=None, image_url=None, **kwargs):
+    """A listing actually linked to a stock row -- for the real-photo vs
+    reference-art distinction, which only exists once inventory_item_id
+    is set (see _resolve_image)."""
+    listing_id = make_listing(session, name, **kwargs)
+    listing = session.get(ShopListing, listing_id)
+    listing.image_url = image_url
+    item = InventoryItem(catalog_item_id=listing.catalog_item_id, status=InventoryStatus.AVAILABLE,
+                         scan_image_path=scan_image_path)
+    session.add(item)
+    session.commit()
+    listing.inventory_item_id = item.id
+    session.commit()
+    return listing_id
+
+
+def test_a_listing_with_a_real_scan_is_labelled_your_photo(client, session, tmp_path):
+    from PIL import Image
+
+    img_path = tmp_path / "scan.jpg"
+    Image.new("RGB", (10, 10)).save(img_path)
+    listing_id = make_listing_with_inventory(session, "Charizard", scan_image_path=str(img_path),
+                                             image_url="https://example.com/reference.jpg")
+    body = client.get("/shop-listings").text
+    assert "Your photo" in body
+    assert "Reference art" not in body
+
+
+def test_a_listing_with_only_a_reference_image_is_labelled_as_such(client, session):
+    listing_id = make_listing_with_inventory(session, "Charizard", scan_image_path=None,
+                                             image_url="https://example.com/reference.jpg")
+    body = client.get("/shop-listings").text
+    assert "Reference art" in body
+    assert "Your photo" not in body
+
+
+def test_the_real_scan_wins_over_the_reference_image_at_the_image_routes(client, session, tmp_path):
+    from PIL import Image
+
+    img_path = tmp_path / "scan.jpg"
+    Image.new("RGB", (10, 10)).save(img_path)
+    listing_id = make_listing_with_inventory(session, "Charizard", scan_image_path=str(img_path),
+                                             image_url="https://example.com/reference.jpg")
+    resp = client.get(f"/shop-listings/{listing_id}/thumb")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+
+
+def test_a_withdrawn_listing_shows_why_it_was_withheld(client, session):
+    from automation_control.audit import record_event
+
+    listing_id = make_listing(session, "Charizard", status=ShopListingStatus.WITHDRAWN)
+    record_event(session, actor_type="user", actor_id="nic", action="listing.withhold_for_review",
+                resource_type="shop_listing", resource_id=listing_id, outcome="success",
+                correlation_id="c1", details={"reason": "Withheld pending a photo check."})
+    session.commit()
+    body = client.get("/shop-listings?status=withdrawn").text
+    assert "Withheld pending a photo check." in body
+
+
+def test_a_withdrawn_listing_with_no_recorded_reason_shows_none(client, session):
+    """A listing withdrawn by hand via the Withdraw button has no
+    listing.withhold_for_review audit row -- the reason area just
+    shouldn't render, not show a blank or placeholder line."""
+    make_listing(session, "Charizard", status=ShopListingStatus.WITHDRAWN)
+    body = client.get("/shop-listings?status=withdrawn").text
+    assert "class='listing-reason'" not in body
+
+
+def test_withdraw_asks_for_confirmation(client, session):
+    make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE)
+    body = client.get("/shop-listings?status=active").text
+    assert "onsubmit=\"return confirm('Withdraw this listing?');\"" in body
 
 
 def test_a_draft_has_an_activate_button(client, session):
@@ -177,6 +322,42 @@ def test_the_edit_form_shows_current_values(client, session):
     page = client.get(f"/shop-listings/{listing_id}/edit").text
     assert "value='Kappa #1'" in page
     assert "value='173.37'" in page
+
+
+def test_the_edit_form_shows_the_photo_when_there_is_one(client, session):
+    listing_id = make_listing(session, "Kappa")
+    session.get(ShopListing, listing_id).image_url = "https://example.com/kappa.jpg"
+    session.commit()
+    page = client.get(f"/shop-listings/{listing_id}/edit").text
+    assert f"src='/shop-listings/{listing_id}/thumb'" in page
+    assert "edit-photo-empty" not in page
+    assert "not a photo of your card" in page
+
+
+def test_the_edit_form_shows_a_placeholder_when_there_is_no_photo(client, session):
+    listing_id = make_listing(session, "Kappa")
+    page = client.get(f"/shop-listings/{listing_id}/edit").text
+    assert "edit-photo-empty" in page
+
+
+def test_the_edit_form_shows_the_current_description(client, session):
+    listing_id = make_listing(session, "Kappa")
+    session.get(ShopListing, listing_id).description = "A lovely reverse holo."
+    session.commit()
+    page = client.get(f"/shop-listings/{listing_id}/edit").text
+    assert "A lovely reverse holo." in page
+
+
+def test_saving_updates_the_description(client, session):
+    listing_id = make_listing(session, "Kappa", status=ShopListingStatus.ACTIVE, price="173.37")
+    resp = client.post(f"/shop-listings/{listing_id}/edit",
+                       data={"title": "Kappa", "price": "18.04", "quantity": "1", "condition": "",
+                             "description": "Corrected after a physical check."},
+                       follow_redirects=False)
+    assert resp.status_code == 303
+    session.expire_all()
+    listing = session.get(ShopListing, listing_id)
+    assert listing.description == "Corrected after a physical check."
 
 
 def test_saving_corrects_title_and_price(client, session):

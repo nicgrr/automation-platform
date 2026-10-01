@@ -98,23 +98,32 @@ def _reference_image_url(session: Session, item: CatalogItem | None) -> str | No
 
 def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None = None,
          show_tag: bool = True) -> str:
-    """Publisher reference art wins over the seller's own scan, for now.
-
-    Used to be the other way around -- a shopper assessing condition on an
-    ungraded single deserves to see the actual card, not a pristine studio
-    render -- but a chunk of the scanned photos turned out to be genuinely
-    saved upside down (a scan-ingest capture bug: the sheet's rotation is
-    corrected for card *identification* but not baked into the saved crop
-    itself), and a correct-looking stock photo beats a wrong-looking real
-    one. Own photos stay as the fallback for anything with no reference
-    image at all. Revert this once the capture pipeline is fixed and the
-    already-saved crops are reprocessed.
+    """The seller's own scan wins over publisher reference art, reverted
+    2026-09-29. Was flipped the other way around from 2026-09-XX: a chunk
+    of scanned photos had turned out to be genuinely saved upside down (a
+    manual-scan capture-path gap, since fixed in scan_ingest/session.py --
+    see run_session's per-sheet rotation detection), so a correct-looking
+    stock photo beat a wrong-looking real one for a while. A full backfill
+    (scripts/backfill_inventory_photo_rotation.py) checked every
+    already-committed scan photo against its own reference hash and found
+    zero still wrong -- confirmed 2026-09-29, spot-checked visually too --
+    so a shopper assessing condition on an ungraded single goes back to
+    seeing the actual card, not a pristine studio render. Reference art
+    stays the fallback for anything with no own photo at all.
 
     `show_tag=False` drops the label -- for a context where the photo
     isn't standing in for a specific physical item at all (a department
     tile's mood shot), the authenticity claim the tag makes has nothing
     to attach to and would just be confusing.
     """
+    from .photos import has_own_photo
+
+    if session is not None and has_own_photo(session, listing.id):
+        is_card = item is not None and item.item_type in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD)
+        label = "Actual card" if is_card else "Actual item"
+        tag = f"<span class='art-tag own'>{label}</span>" if show_tag else ""
+        return f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
+
     url = listing.image_url if _is_web_url(listing.image_url) else None
     if url is None and item is not None and _is_web_url(item.image_url):
         url = item.image_url
@@ -123,14 +132,6 @@ def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None
     if url:
         tag = "<span class='art-tag stock'>Stock image</span>" if show_tag else ""
         return f"<img src='{escape(url)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
-
-    from .photos import has_own_photo
-
-    if session is not None and has_own_photo(session, listing.id):
-        is_card = item is not None and item.item_type in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD)
-        label = "Actual card" if is_card else "Actual item"
-        tag = f"<span class='art-tag own'>{label}</span>" if show_tag else ""
-        return f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
     return "<span class='noart'>no image</span>"
 
 

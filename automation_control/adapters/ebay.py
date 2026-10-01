@@ -68,8 +68,18 @@ class EbaySandboxReadAdapter:
     async def get_seller(self) -> Any:
         return await self._get("/commerce/identity/v1/user/")
 
-    async def search_market(self, query: str, *, limit: int = 20, marketplace: str = "EBAY_AU") -> Any:
-        return await self._get("/buy/browse/v1/item_summary/search", params={"q": query, "limit": min(max(limit, 1), 200)}, headers={**self._headers(), "X-EBAY-C-MARKETPLACE-ID": marketplace})
+    async def search_market(self, query: str, *, limit: int = 20, marketplace: str = "EBAY_AU",
+                            item_location_country: str | None = None) -> Any:
+        params = {"q": query, "limit": min(max(limit, 1), 200)}
+        if item_location_country:
+            country = item_location_country.strip().upper()
+            if len(country) != 2 or not country.isalpha():
+                raise ValueError("item location country must be a two-letter ISO code")
+            params["filter"] = f"itemLocationCountry:{country}"
+        return await self._get(
+            "/buy/browse/v1/item_summary/search", params=params,
+            headers={**self._headers(), "X-EBAY-C-MARKETPLACE-ID": marketplace},
+        )
 
 
 def normalize_inventory(payload: dict, *, retrieved_at: datetime | None = None) -> list[dict]:
@@ -100,4 +110,15 @@ def normalize_inventory(payload: dict, *, retrieved_at: datetime | None = None) 
 
 def normalize_market(payload: dict, *, retrieved_at: datetime | None = None) -> list[dict]:
     retrieved_at = retrieved_at or datetime.now(UTC)
-    return [{"ebay_item_id": item.get("itemId"), "title": item.get("title"), "price": (item.get("price") or {}).get("value"), "currency": (item.get("price") or {}).get("currency"), "marketplace": item.get("itemLocation", {}).get("country"), "retrieved_at": retrieved_at} for item in payload.get("itemSummaries", [])]
+    return [{
+        "ebay_item_id": item.get("itemId"), "title": item.get("title"),
+        "price": (item.get("price") or {}).get("value"),
+        "currency": (item.get("price") or {}).get("currency"),
+        "shipping": ((item.get("shippingOptions") or [{}])[0].get("shippingCost") or {}).get("value", 0),
+        "marketplace": item.get("itemLocation", {}).get("country"),
+        "image_url": (item.get("image") or {}).get("imageUrl"),
+        "url": item.get("itemWebUrl"),
+        "seller": (item.get("seller") or {}).get("username"),
+        "condition": item.get("condition"), "retrieved_at": retrieved_at,
+        "raw": item,
+    } for item in payload.get("itemSummaries", [])]

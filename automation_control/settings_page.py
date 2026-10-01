@@ -32,6 +32,7 @@ from .config import Settings
 from .database import get_session
 from .ebay_oauth import configured, configured_for_writes
 from .models import EbayCredential
+from .release_info import application_revision, database_revision
 from .ui import brand_header, page
 
 router = APIRouter()
@@ -121,7 +122,29 @@ def _ebay_rows(settings: Settings, session: Session) -> tuple[list[Row], str | N
 
 def _integration_rows(settings: Settings) -> list[Row]:
     """Present or absent only -- never the value, not even masked."""
+    from .market_watch_service import COUNTRY_LABELS, allowed_country_codes
+
+    market_scope = " & ".join(
+        COUNTRY_LABELS.get(code, code) for code in allowed_country_codes(settings.market_allowed_countries)
+    )
+    imap_ready = bool(
+        settings.market_alert_imap_host
+        and settings.market_alert_imap_username
+        and settings.market_alert_imap_password
+    )
     return [
+        Row("Market search locations", GOOD, escape(market_scope),
+            "eBay API results and the market-watch dashboard are restricted to these seller locations"),
+        Row("Brave public-web discovery",
+            GOOD if settings.brave_search_api_key and settings.brave_search_storage_permitted else WARN,
+            ("configured with storage permission" if settings.brave_search_api_key and settings.brave_search_storage_permitted
+             else "key present; storage disabled" if settings.brave_search_api_key else "not configured"),
+            ("" if settings.brave_search_api_key and settings.brave_search_storage_permitted
+             else "public-web watches remain paused until both an API key and result-storage permission are configured")),
+        Row("Marketplace alert mailbox",
+            GOOD if imap_ready else WARN,
+            "configured" if imap_ready else "not configured",
+            "Gumtree/Buyee .eml files can still be uploaded manually" if not imap_ready else ""),
         Row("Anthropic (photo identification)", GOOD if settings.anthropic_api_key else BAD,
             "configured" if settings.anthropic_api_key else "not configured",
             "" if settings.anthropic_api_key else "capture and link-fill cannot identify anything"),
@@ -169,10 +192,27 @@ def settings_page(request: Request, user: str = Depends(require_dashboard_user),
                   session: Session = Depends(get_session)) -> HTMLResponse:
     settings: Settings = request.app.state.settings
     ebay_rows, action = _ebay_rows(settings, session)
+    app_revision, dirty = application_revision()
+    schema_revision = database_revision(session)
+    if dirty is True:
+        app_row = Row("Application revision", WARN, f"{app_revision} + local changes",
+                      "the running source cannot be reproduced from this commit alone")
+    elif dirty is False:
+        app_row = Row("Application revision", GOOD, app_revision)
+    else:
+        app_row = Row("Application revision", WARN, app_revision,
+                      "the Git working-tree state could not be read")
+    schema_row = (
+        Row("Database revision", GOOD, schema_revision)
+        if schema_revision else
+        Row("Database revision", WARN, "not baselined",
+            "the current schema predates Alembic and has no recorded revision")
+    )
 
     connect = (f"<a class='btn' href='/auth/ebay/start'>{escape(action)}</a>" if action else "")
     body = (
         brand_header("Settings")
+        + f"<div class='panel'><h2>Release</h2>{_table([app_row, schema_row])}</div>"
         + f"<div class='panel'><div class='set-head'><h2>eBay</h2>{connect}</div>{_table(ebay_rows)}</div>"
         + f"<div class='panel'><h2>Integrations</h2>"
           "<p class='subtitle'>Whether a credential is present. Keys are never displayed.</p>"
@@ -180,6 +220,9 @@ def settings_page(request: Request, user: str = Depends(require_dashboard_user),
         + f"<div class='panel'><div class='set-head'><h2>Background jobs</h2>"
           "<a class='btn ghost' href='/scan-ingest'>Logs</a></div>"
         + _table(_job_rows()) + "</div>"
+        + "<div class='panel'><div class='set-head'><div><h2>Data export</h2>"
+          "<p class='subtitle'>Download inventory and CRM records as CSV files.</p></div>"
+          "<a class='btn ghost' href='/export'>Open exports</a></div></div>"
         + f"<div class='panel'><h2>Storage</h2>{_table([
             Row('Captured photos', GOOD, settings.captured_cards_dir),
             Row('Scan watch folder', GOOD, settings.scan_watch_dir),
@@ -204,4 +247,7 @@ _STYLE = """<style>
 .set-pill.bad{background:var(--warning-bg);color:var(--warning)}
 .set-pill.warn{background:var(--surface-sunken);color:var(--text-dim)}
 .set-hint{display:block;margin-top:4px;color:var(--text-dim);font-size:12.5px;line-height:1.45}
+@media (max-width: 680px) {
+  .set-head{flex-wrap:wrap}
+}
 </style>"""

@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from automation_control.database import Base
 from automation_control.models import (
-    CardPrice, CatalogItem, CatalogItemType, InventoryItem, ShippingRate, ShippingZone,
-    ShopCostConfig, ShopListing, ShopListingStatus,
+    BulkLot, CardPrice, CardSet, CatalogItem, CatalogItemType, InventoryItem, ShippingRate, ShippingZone,
+    ShopCostConfig, ShopListing, ShopListingStatus, TcgCard,
 )
 from scripts.list_for_sale import main
 
@@ -132,6 +132,28 @@ def test_dry_run_writes_nothing(session):
     add_inventory(session, "Common", price="1.00")
     main(["--min-price", "0", "--dry-run"])
     assert session.scalars(select(ShopListing)).all() == []
+
+
+# --- a lot-covered cheap single is still listed here, on purpose --------
+
+def test_a_cheap_single_from_a_lot_covered_set_is_still_listed(session):
+    """Regression guard for 2026-09-21: this script briefly skipped these
+    entirely to avoid a website double-sell, which starved
+    export_ebay_bulk_listing.py's build_variation_rows of anything to
+    route into an eBay "pick your card" listing, since that pipeline reads
+    the ShopListing this creates and only then decides single vs.
+    variation. Reverted the same day once real inventory (150+ "151"
+    commons) showed only a handful reaching the eBay export instead of
+    all of them."""
+    session.add(CardSet(id="sv3", name="Obsidian Flames"))
+    session.add(BulkLot(title="Obsidian Flames — bulk lot (30 cards)", set_id="sv3", card_count=30,
+                        price=Decimal("20"), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE))
+    item_id = add_inventory(session, "Common4", price="1.50")
+    session.add(TcgCard(catalog_item_id=item_id, game="pokemon", set_id="sv3", number="4"))
+    session.commit()
+
+    main(["--min-price", "0", "--activate"])
+    assert [l.title for l in session.scalars(select(ShopListing)).all()] == ["Common4"]
 
 
 def test_draft_by_default_active_only_when_requested(session):

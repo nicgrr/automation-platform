@@ -1,8 +1,23 @@
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from anthropic import APIConnectionError
 
-from automation_control.card_recognition import ExtractedCard, ExtractedCards, ExtractedListing, ExtractedListingItem, RecognitionError, RotationCheck, _image_block, detect_rotation, extract_card_details, extract_listing_items
+from automation_control.card_recognition import (
+    ExtractedCard,
+    ExtractedCardDetailsScreenshot,
+    ExtractedCards,
+    ExtractedListing,
+    ExtractedListingItem,
+    RecognitionError,
+    RotationCheck,
+    _image_block,
+    detect_rotation,
+    extract_card_details,
+    extract_card_details_screenshot,
+    extract_listing_items,
+)
 
 
 def test_image_block_base64_encodes_file(tmp_path):
@@ -36,6 +51,36 @@ def test_extract_card_details_sends_two_images_and_prompt(tmp_path):
         assert call_kwargs["output_format"] is ExtractedCards
         content = call_kwargs["messages"][0]["content"]
         assert [block["type"] for block in content] == ["image", "image", "text"]
+
+
+def test_details_screenshot_reads_the_ungraded_price_not_ad_or_graded_prices(tmp_path):
+    screenshot = tmp_path / "pricecharting.jpg"
+    screenshot.write_bytes(b"screenshot-bytes")
+    extracted = ExtractedCardDetailsScreenshot(
+        card_name="SS3 Gogeta, Marvelous Might",
+        set_name="Vicious Rejuvenation",
+        card_number="BT12-136",
+        rarity="",
+        language="",
+        ungraded_price="1.06",
+        currency="AUD",
+        source_site="pricecharting.com",
+        unreadable_fields=["rarity", "language"],
+    )
+    fake_response = MagicMock(parsed_output=extracted)
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value.messages.parse.return_value = fake_response
+
+        result = extract_card_details_screenshot(screenshot, api_key="fake-key")
+
+    assert result == extracted
+    call = MockAnthropic.return_value.messages.parse.call_args.kwargs
+    assert call["output_format"] is ExtractedCardDetailsScreenshot
+    prompt = call["messages"][0]["content"][1]["text"]
+    assert "UNGRADED/RAW" in prompt
+    assert "NEVER substitute" in prompt
+    assert "advertisement" in prompt
 
 
 def test_extraction_prompts_ask_for_a_foil_observation(tmp_path):
@@ -123,6 +168,19 @@ def test_extract_card_details_propagates_api_errors(tmp_path):
             raise AssertionError("should have raised")
         except RuntimeError as exc:
             assert str(exc) == "network error"
+
+
+def test_provider_api_errors_become_recognition_errors(tmp_path):
+    front = tmp_path / "front.jpg"
+    front.write_bytes(b"front-bytes")
+
+    with patch("automation_control.card_recognition.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value.messages.parse.side_effect = APIConnectionError(
+            request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        )
+
+        with pytest.raises(RecognitionError, match="provider request failed"):
+            extract_card_details(front, None, api_key="fake-key")
 
 
 def test_extract_card_details_raises_recognition_error_on_unparseable_response(tmp_path):

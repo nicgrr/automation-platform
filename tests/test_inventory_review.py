@@ -113,6 +113,15 @@ def test_category_landing_shows_a_tile_per_group_not_the_sets_themselves(client,
     assert "Steam Siege" not in resp.text  # the set itself, one tap further in
 
 
+def test_category_landing_offers_one_all_cards_view(client, session):
+    _seed(session, name="Dewott")
+
+    resp = client.get("/inventory")
+
+    assert "href='/inventory/cards'" in resp.text
+    assert "All cards" in resp.text
+
+
 def test_category_landing_links_out_to_collectibles_and_misc(client, session):
     _seed(session, name="Dewott")
     resp = client.get("/inventory")
@@ -233,6 +242,37 @@ def test_set_page_sort_by_quantity_puts_most_copies_first(client, session):
     _seed(session, card_id="xy11-2", number="2", name="Bulk", quantity=20)
     resp = client.get(SET_PAGE, params={"sort": "quantity_desc"})
     assert resp.text.index("Bulk") < resp.text.index("Single")
+
+
+def test_set_page_offers_expanded_sorting(client, session):
+    _seed(session)
+
+    resp = client.get(SET_PAGE)
+
+    for value in (
+        "number_desc", "name", "name_desc", "value_desc", "value_asc",
+        "quantity_desc", "recent", "rarity",
+    ):
+        assert f"option value='{value}'" in resp.text
+
+
+def test_set_page_can_sort_number_high_to_low(client, session):
+    _seed(session, card_id="xy11-2", number="2", name="Two")
+    _seed(session, card_id="xy11-10", number="10", name="Ten")
+
+    resp = client.get(SET_PAGE, params={"sort": "number_desc"})
+
+    assert resp.text.index("Ten") < resp.text.index("Two")
+
+
+def test_set_page_value_ascending_sinks_unpriced_cards(client, session):
+    _seed(session, card_id="xy11-1", number="1", name="Priced low", price=Decimal("1.00"))
+    _seed(session, card_id="xy11-2", number="2", name="Priced high", price=Decimal("9.00"))
+    _seed(session, card_id="xy11-3", number="3", name="Unknown value", price=None)
+
+    resp = client.get(SET_PAGE, params={"sort": "value_asc"})
+
+    assert resp.text.index("Priced low") < resp.text.index("Priced high") < resp.text.index("Unknown value")
 
 
 def test_set_page_default_sort_is_numeric_not_lexicographic(client, session):
@@ -437,6 +477,7 @@ def test_set_page_defaults_to_owned_only(client, session):
     assert "Owned" in resp.text
     assert "NotOwned" not in resp.text
     assert "Show all cards" in resp.text  # the toggle offers the opposite view
+    assert "class='chip active'" in resp.text
 
 
 def test_set_page_owned_only_0_shows_everything(client, session):
@@ -449,6 +490,49 @@ def test_set_page_owned_only_0_shows_everything(client, session):
     resp = client.get(SET_PAGE, params={"owned_only": "0"})
     assert "Owned" in resp.text and "NotOwned" in resp.text
     assert "Owned only" in resp.text  # the toggle offers to switch back
+
+
+# --- every owned card across all sets -------------------------------------
+
+def test_all_cards_view_combines_sets(client, session):
+    _seed(session, card_id="xy11-31", set_id="xy11", set_name="Steam Siege", name="Dewott")
+    _seed(session, card_id="xy12-1", number="1", set_id="xy12", set_name="Evolutions", name="Charizard")
+
+    resp = client.get("/inventory/cards")
+
+    assert resp.status_code == 200
+    assert "Dewott" in resp.text and "Charizard" in resp.text
+    assert "Steam Siege" in resp.text and "Evolutions" in resp.text
+    assert "Find any card, set or number" in resp.text
+
+
+def test_all_cards_view_filters_by_game_group(client, session):
+    _seed(session, card_id="poke-1", set_id="poke", set_name="Pokemon Set", name="Pikachu")
+    _seed(session, card_id="op-1", set_id="op", set_name="One Piece Set", name="Luffy")
+    session.get(CardSet, "op").game = "one_piece"
+    session.commit()
+
+    resp = client.get("/inventory/cards", params={"group": "one_piece"})
+
+    assert "Luffy" in resp.text
+    assert "Pikachu" not in resp.text
+
+
+def test_all_cards_view_sorts_across_sets_by_value(client, session):
+    _seed(session, card_id="cheap-1", set_id="cheap", set_name="Cheap Set", name="Cheap", price=Decimal("1.00"))
+    _seed(session, card_id="dear-1", set_id="dear", set_name="Dear Set", name="Expensive", price=Decimal("50.00"))
+
+    resp = client.get("/inventory/cards", params={"sort": "value_desc"})
+
+    assert resp.text.index("Expensive") < resp.text.index("Cheap")
+
+
+def test_group_set_grid_links_to_its_all_cards_filter(client, session):
+    _seed(session)
+
+    resp = client.get("/inventory", params={"group": "pokemon"})
+
+    assert "href='/inventory/cards?group=pokemon'" in resp.text
 
 
 def test_set_page_splits_a_card_into_its_printings(client, session):
@@ -557,6 +641,18 @@ def test_owned_card_offers_quantity_controls(client, session, tmp_path):
     assert "value='remove'" in resp.text
 
 
+def test_remove_asks_for_confirmation_but_the_quantity_buttons_do_not(client, session, tmp_path):
+    """The confirm must be scoped to the Remove button's own onclick, not
+    the shared form's onsubmit -- the same form holds the +/- buttons,
+    which must never be interrupted by a confirm dialog."""
+    _seed(session, card_id="xy11-31", number="31", name="Dewott", quantity=2)
+    resp = client.get(SET_PAGE)
+    assert "onclick=\"return confirm('Remove all copies of this card?');\"" in resp.text
+    # the +/- buttons in the same form carry no onclick/onsubmit at all
+    assert "<button name='action' value='dec' aria-label='One fewer'>" in resp.text
+    assert "<button name='action' value='add' aria-label='One more'>" in resp.text
+
+
 def test_unowned_card_offers_add_only(client, session, tmp_path):
     _seed(session, card_id="xy11-1", number="1", name="Owned")
     session.add(CatalogCard(id="xy11-2", set_id="xy11", number="2", name="NotOwned"))
@@ -652,6 +748,180 @@ def test_adjust_rejects_unknown_card_and_action(client, session, tmp_path):
                                                   "action": "add"}, follow_redirects=False).status_code == 404
     assert client.post("/inventory/adjust", data={"card_id": "xy11-31", "variant": "normal",
                                                   "action": "explode"}, follow_redirects=False).status_code == 400
+
+
+# --- /edit-details: Rarity/Cost/Condition, never which card a holding is ---
+
+def test_set_page_offers_edit_details_for_an_owned_card(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.get(SET_PAGE)
+    assert "Edit details" in resp.text
+    assert "action='/inventory/edit-details'" in resp.text
+
+
+def test_edit_details_updates_rarity_on_the_catalogue_card(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    session.get(CatalogCard, "xy11-31").rarity = "Common"
+    session.commit()
+
+    resp = client.post("/inventory/edit-details",
+                       data={"card_id": "xy11-31", "variant": "normal", "rarity": "Uncommon",
+                             "back": SET_PAGE}, follow_redirects=False)
+
+    assert resp.status_code == 303
+    session.expire_all()
+    assert session.get(CatalogCard, "xy11-31").rarity == "Uncommon"
+
+
+def test_edit_details_adds_a_manual_price(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1, price=None)
+
+    client.post("/inventory/edit-details", data={"card_id": "xy11-31", "variant": "normal",
+                                                  "cost": "9.99", "back": SET_PAGE}, follow_redirects=False)
+
+    price = session.scalars(select(CardPrice).where(CardPrice.card_id == "xy11-31")).one()
+    assert price.source == "manual"
+    assert Decimal(str(price.price)) == Decimal("9.99")
+
+
+def test_edit_details_rejects_a_zero_or_negative_price(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/edit-details", data={"card_id": "xy11-31", "variant": "normal",
+                                                        "cost": "0", "back": SET_PAGE}, follow_redirects=False)
+    assert resp.status_code == 400
+
+
+def test_edit_details_updates_condition_when_exactly_one_item_is_held(client, session, tmp_path):
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    client.post("/inventory/edit-details", data={"card_id": "xy11-31", "variant": "normal",
+                                                  "condition": "Lightly Played", "back": SET_PAGE},
+               follow_redirects=False)
+    session.expire_all()
+    assert session.get(InventoryItem, item.id).condition == "Lightly Played"
+
+
+def test_edit_details_refuses_condition_when_several_are_held(client, session, tmp_path):
+    """Same ambiguity guard as /adjust: guessing which physical copy is
+    meant would silently edit the wrong one."""
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    session.add(InventoryItem(card_id="xy11-31", variant=CardVariant.NORMAL, condition="Played", quantity=1))
+    session.commit()
+
+    resp = client.post("/inventory/edit-details", data={"card_id": "xy11-31", "variant": "normal",
+                                                        "condition": "Damaged", "back": SET_PAGE},
+                       follow_redirects=False)
+
+    assert resp.status_code == 400
+    assert "2 conditions" in resp.json()["detail"]
+
+
+def test_edit_details_never_touches_which_card_a_holding_is(client, session, tmp_path):
+    """This module's one hard boundary: no field here can repoint an
+    InventoryItem/CatalogCard's identity -- only rarity/cost/condition."""
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    client.post("/inventory/edit-details", data={"card_id": "xy11-31", "variant": "normal",
+                                                  "rarity": "Rare", "back": SET_PAGE}, follow_redirects=False)
+    session.expire_all()
+    assert session.get(InventoryItem, item.id).card_id == "xy11-31"
+
+
+def test_edit_details_will_not_redirect_off_site(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/edit-details",
+                       data={"card_id": "xy11-31", "variant": "normal", "rarity": "Rare",
+                             "back": "https://example.com/phish"}, follow_redirects=False)
+    assert resp.headers["location"] == "/inventory"
+
+
+def test_edit_details_rejects_unknown_card(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/edit-details", data={"card_id": "nope", "variant": "normal", "rarity": "Rare"},
+                       follow_redirects=False)
+    assert resp.status_code == 404
+
+
+def test_edit_details_is_audited(client, session, tmp_path):
+    from automation_control.models import AuditEvent
+
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    client.post("/inventory/edit-details", data={"card_id": "xy11-31", "variant": "normal",
+                                                  "rarity": "Rare", "back": SET_PAGE}, follow_redirects=False)
+
+    event = session.scalars(select(AuditEvent).where(AuditEvent.action == "inventory.edit_details")).one()
+    assert event.details["changed"]["rarity"] == {"from": None, "to": "Rare"}
+
+
+# --- set-location: shared by shop_orders.py and ebay_sales.py's pack -------
+# assistants (see automation_control/card_locate.py) --------------------
+
+def test_setting_a_location_creates_it_and_assigns_the_item(client, session):
+    from automation_control.models import StorageLocation
+
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/set-location",
+                       data={"inventory_item_id": item.id, "location": "Binder A", "back": "/shop-orders/ord-1/pack-sheet"},
+                       follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/shop-orders/ord-1/pack-sheet"
+
+    loc = session.query(StorageLocation).filter_by(name="Binder A").one()
+    session.refresh(item)
+    assert item.storage_location_id == loc.id
+
+
+def test_setting_a_location_twice_reuses_the_same_row(client, session):
+    from automation_control.models import StorageLocation
+
+    item1 = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    item2 = _seed(session, card_id="xy11-32", number="32", quantity=1)
+
+    client.post("/inventory/set-location", data={"inventory_item_id": item1.id, "location": "Binder A"})
+    client.post("/inventory/set-location", data={"inventory_item_id": item2.id, "location": "Binder A"})
+
+    assert session.query(StorageLocation).filter_by(name="Binder A").count() == 1
+
+
+def test_clearing_a_location_sets_it_back_to_none(client, session):
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    client.post("/inventory/set-location", data={"inventory_item_id": item.id, "location": "Binder A"})
+    client.post("/inventory/set-location", data={"inventory_item_id": item.id, "location": ""})
+    session.refresh(item)
+    assert item.storage_location_id is None
+
+
+def test_setting_a_location_is_audited(client, session):
+    from automation_control.models import AuditEvent
+
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    client.post("/inventory/set-location", data={"inventory_item_id": item.id, "location": "Binder A"})
+
+    event = session.scalars(select(AuditEvent).where(AuditEvent.action == "inventory.set_location")).one()
+    assert event.resource_id == item.id
+    assert event.details["location"] == "Binder A"
+
+
+def test_setting_a_location_for_an_unknown_item_404s(client, session):
+    resp = client.post("/inventory/set-location", data={"inventory_item_id": "does-not-exist", "location": "Binder A"})
+    assert resp.status_code == 404
+
+
+def test_setting_a_location_will_not_redirect_off_site(client, session):
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/set-location",
+                       data={"inventory_item_id": item.id, "location": "Binder A", "back": "https://evil.example/"},
+                       follow_redirects=False)
+    assert resp.headers["location"] == "/inventory"
+
+
+def test_setting_a_location_allows_the_ebay_sales_page_to_redirect_back(client, session):
+    """/inventory (the module owning this route) and /shop-orders (the
+    website pack assistant) are the callers wired in already; /ebay-sales
+    is the eBay pack assistant's own page and must be allowed too."""
+    item = _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/set-location",
+                       data={"inventory_item_id": item.id, "location": "Binder A", "back": "/ebay-sales"},
+                       follow_redirects=False)
+    assert resp.headers["location"] == "/ebay-sales"
 
 
 # --- eBay active-listing prices --------------------------------------------

@@ -63,6 +63,21 @@ def test_the_page_renders(client):
     assert "Settings" in resp.text
 
 
+def test_release_identity_is_visible(client, monkeypatch):
+    import automation_control.settings_page as mod
+
+    monkeypatch.setattr(mod, "application_revision", lambda: ("abc123def456", True))
+    monkeypatch.setattr(mod, "database_revision", lambda session: None)
+    app.state.settings = _settings()
+
+    page = client.get("/settings").text
+
+    assert "Application revision" in page
+    assert "abc123def456 + local changes" in page
+    assert "Database revision" in page
+    assert "not baselined" in page
+
+
 def test_no_credential_value_is_ever_rendered(client):
     """Not even masked: a truncated key still leaks its length and prefix,
     and nothing this page answers needs the value."""
@@ -83,6 +98,23 @@ def test_a_missing_credential_says_what_stops_working(client):
     app.state.settings = _settings(anthropic_api_key=None)
     page = client.get("/settings").text
     assert "cannot identify anything" in page
+
+
+def test_market_discovery_integrations_show_configuration_without_secrets(client):
+    app.state.settings = _settings(
+        brave_search_api_key=SECRET,
+        brave_search_storage_permitted=True,
+        market_alert_imap_host="imap.example.test",
+        market_alert_imap_username="alerts@example.test",
+        market_alert_imap_password=SECRET,
+    )
+
+    page = client.get("/settings").text
+
+    assert "Brave public-web discovery" in page
+    assert "configured with storage permission" in page
+    assert "Marketplace alert mailbox" in page
+    assert SECRET not in page
 
 
 def test_an_environment_mismatch_is_called_out_with_a_reconnect(client, session):

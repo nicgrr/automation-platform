@@ -11,7 +11,7 @@ from automation_control.config import Settings
 from automation_control.database import Base
 from automation_control.models import (
     BulkLot, CatalogItem, CatalogItemType, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus,
-    ShopListing, ShopListingStatus,
+    InventoryItem, InventoryStatus, ShopListing, ShopListingStatus,
 )
 
 
@@ -120,6 +120,31 @@ def test_applies_a_new_order_and_decrements_the_listing(monkeypatch, Session):
         assert credential.last_order_sync_at is not None
 
 
+def test_an_applied_order_also_marks_the_physical_card_sold(monkeypatch, Session):
+    """Real incident, 2026-09-28: an applied eBay order used to only ever
+    touch the ShopListing. The physical InventoryItem behind it stayed
+    marked AVAILABLE forever, so nothing reading real stock (the dashboard
+    count, a re-scan, a second listing) had any way to know it was sold."""
+    _seed_listing(Session, quantity=3)
+    with Session() as session:
+        item = InventoryItem(id="inv-1", catalog_item_id="item-listing-1", quantity=3, status=InventoryStatus.AVAILABLE)
+        session.add(item)
+        listing = session.get(ShopListing, "listing-1")
+        listing.inventory_item_id = "inv-1"
+        session.commit()
+
+    orders = {"orders": [{"orderId": "ord-1", "lineItems": [{"sku": "listing-1", "quantity": 2}]}]}
+    _patch_common(monkeypatch, Session, orders)
+
+    result = script.main([])
+    assert result == 0
+
+    with Session() as session:
+        item = session.get(InventoryItem, "inv-1")
+        assert item.quantity == 1
+        assert item.status == InventoryStatus.AVAILABLE
+
+
 def test_running_twice_never_double_decrements(monkeypatch, Session):
     _seed_listing(Session, quantity=3)
     orders = {"orders": [{"orderId": "ord-1", "lineItems": [{"sku": "listing-1", "quantity": 2}]}]}
@@ -131,6 +156,38 @@ def test_running_twice_never_double_decrements(monkeypatch, Session):
     with Session() as session:
         listing = session.get(ShopListing, "listing-1")
         assert listing.quantity == 1  # not 0 -- the second run's line was skipped, already applied
+
+
+def test_a_multi_item_order_applies_every_line(monkeypatch, Session):
+    """Real production incident (order 20-15191-43304, a 5-card '151 -
+    Complete Your Master Set' variation sale): EbayImportedOrder.ebay_order_id
+    was `unique=True` on its own, so the second line item on the same
+    order raised IntegrityError and crashed the run, leaving every line
+    after the first un-applied and the listing still ACTIVE. The natural
+    key is (ebay_order_id, sku) -- this pins that a multi-line order
+    applies every one of its lines, not just the first."""
+    _seed_listing(Session, listing_id="listing-1", quantity=2)
+    _seed_listing(Session, listing_id="listing-2", quantity=1)
+    _seed_listing(Session, listing_id="listing-3", quantity=1)
+    orders = {"orders": [{"orderId": "ord-multi", "lineItems": [
+        {"sku": "listing-1", "quantity": 1},
+        {"sku": "listing-2", "quantity": 1},
+        {"sku": "listing-3", "quantity": 1},
+    ]}]}
+    _patch_common(monkeypatch, Session, orders)
+
+    result = script.main([])
+    assert result == 0
+
+    with Session() as session:
+        assert session.get(ShopListing, "listing-1").quantity == 1
+        assert session.get(ShopListing, "listing-2").quantity == 0
+        assert session.get(ShopListing, "listing-3").quantity == 0
+        records = session.scalars(
+            select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == "ord-multi")
+        ).all()
+        assert len(records) == 3
+        assert all(r.applied_at is not None for r in records)
 
 
 def test_dry_run_writes_nothing(monkeypatch, Session):

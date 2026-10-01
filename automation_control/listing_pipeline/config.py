@@ -49,6 +49,12 @@ class ClassificationConfig(BaseModel):
     # approving, so this only sets the *default* the human starts from.
     bulk_price_threshold_aud: Decimal
     max_lot_size: int = 8
+    # Some sellers want low-value cards combined into lots; Nic sells the
+    # physical cards as singles.  Keep that business choice explicit rather
+    # than encoding it as an artificial $0 threshold.  True remains the
+    # compatibility default for older config files; EzBay's live config sets
+    # it to false.
+    bundling_enabled: bool = True
 
 
 class PipelineConfig(BaseModel):

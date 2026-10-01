@@ -14,6 +14,7 @@ state, so the rules about what may be written live in one place:
 
 import re
 import shutil
+import stat
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,6 +71,23 @@ def _condition_slug(condition: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", condition.strip().lower()).strip("-") or "unknown"
 
 
+def _make_group_writable(path: Path) -> None:
+    """Let both the scanner/manual operator and the EzBay web user read it.
+
+    The media directories are setgid to the shared ``ezbay`` group, but a
+    manual command can run under umask 0077 and still create mode-600 files.
+    That leaves a valid inventory photo on disk which the web service cannot
+    render. Preserve every existing permission and add only group read/write.
+    An existing cross-user file may not be chmod-able by the current writer;
+    if it was writable in the first place it already had the required group
+    bit, so that case is safe to leave alone.
+    """
+    try:
+        path.chmod(stat.S_IMODE(path.stat().st_mode) | stat.S_IRGRP | stat.S_IWGRP)
+    except PermissionError:
+        pass
+
+
 def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str, variant: CardVariant, condition: str) -> Path:
     """Copy a crop into permanent media storage under a predictable name,
     so a listing can pull it straight from the inventory row later.
@@ -89,6 +107,7 @@ def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str,
     # by a different system user (the background service vs. a manual
     # reprocess or a web review), and only its contents need replacing.
     shutil.copyfile(source, destination)
+    _make_group_writable(destination)
     return destination
 
 

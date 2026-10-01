@@ -93,7 +93,7 @@ def _photo_audit_pending(session: Session, settings) -> int | None:
 def queue_counts(session: Session, settings) -> dict[str, int | None]:
     """Keyed by the route each count belongs to, so callers can look a
     count up by href without keeping a second mapping in sync."""
-    return {
+    counts = {
         "/review": _scan_crops(settings),
         "/foil-review": _foil_pending(session, settings),
         "/inventory-audit": _photo_audit_pending(session, settings),
@@ -123,6 +123,21 @@ def queue_counts(session: Session, settings) -> dict[str, int | None]:
             .where(PendingListing.status == ListingBuildStatus.DRAFT)
         ),
     }
+    review_routes = (
+        "/review", "/foil-review", "/inventory-audit", "/collectibles/review",
+        "/accessories/review", "/cards/review", "/cards/pricing",
+    )
+    known_total = sum(counts[href] or 0 for href in review_routes)
+    # Unknown cache-backed queues must not erase known work. When the known
+    # queues are clear but one cache has never been built, None remains the
+    # honest aggregate (the drawer simply shows no badge, rather than a false
+    # zero). The Review Centre itself explains which scan is still required.
+    counts["/review-centre"] = (
+        known_total if known_total
+        else None if any(counts[href] is None for href in review_routes)
+        else 0
+    )
+    return counts
 
 
 @router.get("/nav/counts")

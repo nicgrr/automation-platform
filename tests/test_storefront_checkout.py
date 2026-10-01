@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from automation_control.config import Settings
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    BulkLot, CatalogItem, CatalogItemType, ShippingRate, ShippingZone,
+    BulkLot, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, ShopOrder, ShopOrderItem, ShopOrderStatus,
 )
 from storefront import checkout
@@ -269,6 +269,29 @@ def test_selling_the_last_one_marks_it_sold_out(client, session, monkeypatch):
     session.refresh(listing)
     assert listing.quantity == 0
     assert listing.status == ShopListingStatus.SOLD_OUT
+
+
+def test_a_real_sale_also_marks_the_physical_card_sold(client, session, monkeypatch):
+    """Real incident, 2026-09-28: a checkout used to leave the physical
+    InventoryItem behind a sold-out listing marked AVAILABLE forever --
+    nothing downstream (the dashboard count, a re-scan, a second listing
+    built from stock) had any way to know the card was actually gone."""
+    monkeypatch.setattr(checkout, "stripe_secret", lambda: "sk_test_fake")
+    item = InventoryItem(catalog_item_id="c1", quantity=1, status=InventoryStatus.AVAILABLE)
+    session.add(item)
+    session.commit()
+    listing = _listing(session, quantity=1)
+    listing.inventory_item_id = item.id
+    session.commit()
+    order = _checkout_with_a_stripe_session(client, session, listing)
+
+    with patch.object(checkout, "fetch_checkout_session",
+                      new=AsyncMock(return_value={"payment_status": "paid"})):
+        client.get(f"/checkout/complete?ref={order.reference}")
+
+    session.refresh(item)
+    assert item.quantity == 0
+    assert item.status == InventoryStatus.SOLD
 
 
 def test_completion_without_stripe_leaves_the_order_unpaid(client, session):

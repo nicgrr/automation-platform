@@ -39,14 +39,19 @@ remove. See GRAMS_PER_CARD/LOT_PACKAGING_GRAMS below for the basis.
 Image URL follows the exact same fallback chain the storefront itself
 uses for display (storefront.common._art) -- listing's own image_url,
 then the catalog item's, then the pokemontcg.io-hosted reference image
-for a single card, or the set's own logo for a lot -- all of which are
-real, already-public URLs. Deliberately never falls back to a scanned
-"own photo": storefront.common._art's own docstring records a live bug
-where a batch of those were saved upside down, so a correct stock photo
-beats a wrong-looking real one here too. A row with no image on any of
-those sources is skipped, not exported with a broken or unreachable
-link -- this app is Tailscale-only, so a locally-hosted scan photo's URL
-couldn't be fetched by eBay's own servers even if it were used.
+for a single card -- all of which are real, already-public URLs, checked
+against _EBAY_UNSAFE_IMAGE_EXTENSIONS so a stock photo File Exchange will
+actually reject (a .webp, confirmed 2026-09-25) is treated the same as
+no photo at all rather than shipped and silently failing on eBay's side.
+
+Only once every one of those comes up empty does this fall back to the
+seller's own scanned photo (single_image_url -> _own_scan_photo_url),
+pushed to Cloudflare R2 for a public URL when r2.is_configured -- until
+2026-09-25 this app was Tailscale-only with nowhere public to put one, so
+a scan's local path could never have been fetched by eBay's own servers
+regardless of how it was used. A row with no image on any of those
+sources -- including this last one -- is skipped, not exported with a
+broken or unreachable link.
 
     # see what would be exported, write nothing
     .venv/bin/python -m scripts.export_ebay_bulk_listing --dry-run
@@ -65,10 +70,18 @@ import csv
 import sys
 from decimal import ROUND_HALF_UP, Decimal
 
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
+
 from sqlalchemy import select
 
+from automation_control.adapters.r2 import R2UploadError, ensure_uploaded, is_configured as r2_is_configured
+from automation_control.classification import load_pipeline_config
+from automation_control.config import get_settings
 from automation_control.database import SessionLocal
-from automation_control.models import BulkLot, CardSet, CatalogItem, InventoryItem, ShopListing, ShopListingStatus, TcgCard
+from automation_control.models import (
+    BulkLot, CardSet, CatalogCard, CatalogItem, InventoryItem, ShopListing, ShopListingStatus, TcgCard,
+)
 from storefront.common import _is_web_url, _reference_image_url
 
 DEFAULT_LOT_MAX_CARDS = 20
@@ -86,7 +99,7 @@ LOT_PACKAGING_GRAMS = 80
 # toploadered card plus its envelope and stiffener.
 SINGLE_CARD_WEIGHT_GRAMS = 15
 
-FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total", "variant", "set_logo_url"]
+FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total", "variant", "set_logo_url", "game", "language"]
 
 # Nic's request 2026-09-22: list Dragon Ball cards and rare-or-better
 # Pokemon cards 13% over market to cover eBay's own cut (matches eBay
@@ -97,6 +110,20 @@ FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "
 # listing's real, unmodified price (its own tests assert that), since
 # other callers (the standalone CLI, personal_collection.py's price
 # lookups) shouldn't have this baked in silently.
+# eBay's own hard platform rule for a FixedPrice listing, confirmed by a
+# real rejection (2026-09-26, ErrorCode 73): "The price in the listing is
+# either invalid or below the minimum price of 1.0." Two real cards --
+# both freshly hand-priced from genuine but very low market data (a $0.13
+# USD alt-art, a $0.27 USD promo) -- cleared list_for_sale.py's own
+# profit-floor/2x-market-cap tension (see that script's own MAX_MARKUP
+# comment) at $0.26 and $0.54 AUD, both real, both under $1, both
+# rejected. list_for_sale.py's floor is a website/profit concern; this is
+# a separate, absolute eBay platform constraint that has to be enforced
+# here regardless of what a card is otherwise worth, so it belongs in the
+# export layer rather than in general pricing logic that also feeds the
+# website (which has no such minimum).
+EBAY_MIN_FIXED_PRICE = Decimal("1.00")
+
 EBAY_FEE_MARKUP_PCT = Decimal("13")
 DRAGON_BALL_GAMES = {
     "dragon_ball_fusion_world", "dragon_ball_super", "dragon_ball_z",
@@ -122,6 +149,23 @@ def _apply_ebay_fee_markup(rows: list[dict]) -> None:
     for row in rows:
         if _needs_ebay_fee_markup(row):
             row["price"] = f"{(Decimal(row['price']) * multiplier).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+
+
+def _enforce_ebay_min_price(rows: list[dict]) -> int:
+    """In place: any row still under EBAY_MIN_FIXED_PRICE (a real card,
+    correctly priced by every other rule this codebase has, that's just
+    genuinely worth very little) gets raised to it -- eBay will reject a
+    FixedPrice listing under $1 outright, so this is the one place that
+    absolute floor has to hold regardless of the row's actual source
+    (single, lot, or variation child -- applied once here rather than
+    duplicated in each builder). Returns how many rows were raised, for
+    main()'s own reporting."""
+    raised = 0
+    for row in rows:
+        if Decimal(row["price"]) < EBAY_MIN_FIXED_PRICE:
+            row["price"] = f"{EBAY_MIN_FIXED_PRICE:.2f}"
+            raised += 1
+    return raised
 
 
 def single_set_name(session, item: CatalogItem | None) -> str:
@@ -158,6 +202,32 @@ def single_rarity(session, item: CatalogItem | None) -> str:
     return (tcg.rarity or "") if tcg else ""
 
 
+def single_language(session, item: CatalogItem | None) -> str:
+    """TcgCard.language, defaulting to "English" -- the same default the
+    column itself has, so a card with no TcgCard row at all still reads as
+    the ordinary case rather than blank.
+
+    This is the field that would have caught 2026-09-26's real incident
+    before a customer paid for one: a physically Japanese-printed Dragon
+    Ball Fusion World card, sold and pictured as the English release,
+    because its whole reference catalogue is TCGplayer (a US marketplace)
+    -- language defaults to English on import regardless of which print
+    was actually scanned in, unless something explicitly corrects it.
+    Surfaced two ways from here: build_set_grouped_rows below folds it
+    into the grouping key so a set with cards in both languages becomes
+    two honest listings instead of one that silently mixes them, and
+    convert_to_ebay_template.py's convert_row sends it on as the eBay
+    category's own real "Language" item specific (C:Language -- a
+    recognised aspect on this category's actual downloaded template, with
+    "Japanese" a valid value alongside "English") so it's something a
+    buyer can actually see, not just something this app privately knows.
+    """
+    if item is None:
+        return "English"
+    tcg = session.get(TcgCard, item.id)
+    return (tcg.language or "English") if tcg else "English"
+
+
 def single_variant(session, listing: ShopListing) -> str:
     """Which printing this specific listing's copy actually is (Normal /
     Holo / Reverse Holo / ...), e.g. for a variation listing's buyer-facing
@@ -171,6 +241,45 @@ def single_variant(session, listing: ShopListing) -> str:
     return item.variant.value.replace("_", " ").title() if item else ""
 
 
+# eBay's own docs list WebP/AVIF/HEIC/TIFF as supported image formats, but
+# that's for the newer Media/Inventory API -- File Exchange's bulk-upload
+# validator checks a URL by its file extension, not the bytes behind it,
+# and rejects those formats outright even when the URL serves a perfectly
+# good, correctly sized image. Confirmed 2026-09-25: a Dragon Ball Super
+# Divers listing failed with ErrorCode 37 ("PictureURL is invalid or
+# missing") on all 4 of its .webp-named variation photos, each one
+# downloaded and opened clean -- a real 600x874 PNG at that address.
+#
+# A denylist of the confirmed-bad extensions, not an allowlist of
+# confirmed-good ones: an allowlist (tried first, 2026-09-25) rejected
+# every images.scrydex.com URL too (Mega Evolution-era Pokemon cards'
+# image host) -- those serve real JPGs at extensionless paths like
+# ".../me5-62/small", which an allowlist has no way to recognise as safe.
+# 661 real cached images use that host; a denylist lets all of them
+# through (along with any other extensionless-but-real image host) while
+# still catching the exact .webp files that started this.
+_EBAY_UNSAFE_IMAGE_EXTENSIONS = {".webp", ".avif", ".heic", ".heif", ".tiff", ".tif", ".svg"}
+
+
+def _ebay_safe_image_url(url: str | None) -> str | None:
+    """`url` if File Exchange will actually accept it as a PicURL, else
+    None -- checked by extension, matching how eBay's own validator
+    behaves rather than what its format documentation claims. A URL with
+    no extension at all is assumed safe (see _EBAY_UNSAFE_IMAGE_EXTENSIONS'
+    own docstring for why an allowlist doesn't work here).
+
+    Deliberately separate from storefront.common._is_web_url, which this
+    still calls first: a .webp displays fine in a browser, so the
+    storefront's own product photos are untouched by this -- it's an
+    eBay File-Exchange-specific rejection, not a general "is this a real
+    image" check.
+    """
+    if not _is_web_url(url):
+        return None
+    suffix = PurePosixPath(urlsplit(url).path).suffix.lower()
+    return None if suffix in _EBAY_UNSAFE_IMAGE_EXTENSIONS else url
+
+
 def single_set_logo_url(session, item: CatalogItem | None) -> str:
     """The set's own logo image, for a variation listing's parent picture
     -- a buyer picking a card from a whole set should see the set they're
@@ -181,15 +290,79 @@ def single_set_logo_url(session, item: CatalogItem | None) -> str:
     if tcg is None or not tcg.set_id:
         return ""
     card_set = session.get(CardSet, tcg.set_id)
-    return card_set.logo_url or "" if card_set else ""
+    return (_ebay_safe_image_url(card_set.logo_url) or "") if card_set else ""
+
+
+def _own_scan_photo_url(session, listing: ShopListing) -> str | None:
+    """The seller's own scanned photo, pushed to R2 for a public URL --
+    last resort, only reached once every stock-photo source above has
+    come up empty.
+
+    This app is Tailscale-only (confirmed 2026-09-25), so a scan's local
+    path was never something eBay's servers could fetch on their own --
+    that's the reason this fallback didn't exist before, not a quality
+    concern. R2 turns "own photo, unreachable" into "own photo, real
+    URL", which only matters for the handful of cards (Japanese prints,
+    Dragon Ball -- see _EBAY_UNSAFE_IMAGE_EXTENSIONS' own history) that
+    have no usable stock photo anywhere else.
+
+    Returns None -- same as every other source above -- rather than
+    raising, whenever R2 isn't configured yet, upload fails, or there's
+    no scan on file at all. A skip with a clear reason beats a build that
+    dies partway through over one photo.
+    """
+    if not listing.inventory_item_id:
+        return None
+    settings = get_settings()
+    if not r2_is_configured(settings):
+        return None
+    inventory_item = session.get(InventoryItem, listing.inventory_item_id)
+    if inventory_item is None or not inventory_item.scan_image_path:
+        return None
+    local_path = Path(inventory_item.scan_image_path)
+
+    try:
+        if not local_path.exists():
+            return None
+        return ensure_uploaded(
+            local_path, f"scan/{inventory_item.id}{local_path.suffix.lower()}",
+            endpoint_url=settings.r2_endpoint_url, access_key_id=settings.r2_access_key_id,
+            secret_access_key=settings.r2_secret_access_key, bucket_name=settings.r2_bucket_name,
+            public_base_url=load_pipeline_config().images.base_url,
+        )
+    except (R2UploadError, OSError) as exc:
+        # Printed, not raised: a build that's otherwise fine must not die
+        # over one photo. Real incident (2026-09-26): a directory one of
+        # these scans lived in had no group-read/execute permission for
+        # the account this service runs as, and .exists() alone raised
+        # PermissionError -- outside this function's old try block,
+        # taking down the whole /ebay-export page for every listing, not
+        # just this one. OSError (PermissionError's own base class) is
+        # caught here for exactly that: a filesystem problem on one photo
+        # must never be worse than "no photo for this one, everything
+        # else still built". journalctl -u ezbay.service (web path) or
+        # this script's own stdout (CLI path) is where to look afterward.
+        print(f"R2 upload failed for {listing.title} ({listing.id}): {exc}", file=sys.stderr)
+        return None
 
 
 def single_image_url(session, listing: ShopListing, item: CatalogItem | None) -> str | None:
-    if _is_web_url(listing.image_url):
-        return listing.image_url
-    if item is not None and _is_web_url(item.image_url):
-        return item.image_url
-    return _reference_image_url(session, item)
+    # Each candidate that fails the eBay-safety check is treated exactly
+    # like it was never a URL at all, falling through to the next source
+    # -- so a listing whose own image_url happens to be a .webp still
+    # picks up a safe one from the catalog item or the reference cache
+    # when one exists there, rather than giving up immediately.
+    url = _ebay_safe_image_url(listing.image_url)
+    if url:
+        return url
+    if item is not None:
+        url = _ebay_safe_image_url(item.image_url)
+        if url:
+            return url
+    url = _ebay_safe_image_url(_reference_image_url(session, item))
+    if url:
+        return url
+    return _own_scan_photo_url(session, listing)
 
 
 def lot_shipping_policy(card_count: int, lot_max_cards: int, letter_policy: str, parcel_policy: str) -> str:
@@ -278,31 +451,61 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
             "variant": single_variant(session, listing),
             "set_logo_url": single_set_logo_url(session, item),
             "game": tcg.game,
+            "language": single_language(session, item),
         })
     return rows, skipped
 
 
+def _set_group_key(set_name: str, language: str) -> str:
+    """The dict key build_set_grouped_rows groups under, and downstream
+    (convert_to_ebay_template.py's _parent_sku/build_variation_group) the
+    literal string both the parent SKU slug and the buyer-facing title
+    ("<key> - Complete Your Master Set") are built from -- so folding
+    language in here, rather than adding a separate field those functions
+    would need to know about too, gets a set that exists in both
+    languages split into two honestly-titled listings ("Cross Force" /
+    "Cross Force (Japanese)") for free, with no other call site needing
+    to change. English stays bare rather than "Cross Force (English)" --
+    it's the overwhelming majority of this catalogue, and every existing
+    title, sku, and test predates this field.
+    """
+    return set_name if language == "English" else f"{set_name} ({language})"
+
+
 def build_set_grouped_rows(session, *, status: ShopListingStatus, letter_policy: str,
                             min_set_size: int = 2) -> tuple[list[dict], dict[str, list[dict]], list[str]]:
-    """Every active listing, grouped by set: a set with `min_set_size` or
-    more active listings becomes one "pick your card" variation listing
-    (see convert_to_ebay_template.py's build_variation_group), a smaller
-    set's cards stay individual singles. No price ceiling and no Bulk
-    Master lot dependency, unlike build_variation_rows -- Nic's own
-    request 2026-09-22 was "every set I own becomes one listing", not
-    just the cheap commons a lot already covers (that's still what
-    build_variation_rows is for -- this is a second, independent grouping
-    the /ebay-export page picks between, not a replacement for it).
+    """Every active listing, grouped by set (and, since 2026-09-27, by
+    language within it -- see _set_group_key): a set with `min_set_size`
+    or more active listings *in the same language* becomes one "pick your
+    card" variation listing (see convert_to_ebay_template.py's
+    build_variation_group), a smaller set's cards stay individual singles.
+    No price ceiling and no Bulk Master lot dependency, unlike
+    build_variation_rows -- Nic's own request 2026-09-22 was "every set I
+    own becomes one listing", not just the cheap commons a lot already
+    covers (that's still what build_variation_rows is for -- this is a
+    second, independent grouping the /ebay-export page picks between, not
+    a replacement for it).
+
+    The language split closes a real incident (2026-09-26): a Dragon Ball
+    Fusion World set mixing English and Japanese prints of the same card
+    numbers was being folded into one listing under the English stock
+    photo, silently misrepresenting whichever variation happened to be
+    the Japanese copy. eBay's own variation model doesn't allow a second
+    item specific to vary between children of one listing the way the
+    picked variation trait (MPN) does -- Language has to be the same
+    across every child of a single listing, so the honest fix is two
+    listings, not one with an extra column.
 
     Returns (singles, variation_groups, skipped) -- variation_groups is
-    {set_name: [row, ...]}, singles is every row whose set didn't reach
-    min_set_size. Every price is the listing's own real price, EXCEPT a
-    Dragon Ball card or a rare-or-better Pokemon card, which gets
-    EBAY_FEE_MARKUP_PCT added on top of its full market value (see
-    _needs_ebay_fee_markup) -- both are Nic's explicit choices (2026-09-22):
-    full market value once expensive cards are included in this grouping
-    at all, and a fee-covering markup on the ones actually worth
-    protecting the margin on.
+    {group_key: [row, ...]} (group_key is _set_group_key's output, not
+    necessarily the bare set name), singles is every row whose
+    (set, language) didn't reach min_set_size. Every price is the
+    listing's own real price, EXCEPT a Dragon Ball card or a
+    rare-or-better Pokemon card, which gets EBAY_FEE_MARKUP_PCT added on
+    top of its full market value (see _needs_ebay_fee_markup) -- both are
+    Nic's explicit choices (2026-09-22): full market value once expensive
+    cards are included in this grouping at all, and a fee-covering markup
+    on the ones actually worth protecting the margin on.
     """
     all_rows, skipped = build_single_rows(session, status=status, letter_policy=letter_policy,
                                           lot_overlap_max_price=None)
@@ -310,7 +513,8 @@ def build_set_grouped_rows(session, *, status: ShopListingStatus, letter_policy:
 
     by_set: dict[str, list[dict]] = {}
     for row in all_rows:
-        by_set.setdefault(row["set_name"] or "(no set)", []).append(row)
+        key = _set_group_key(row["set_name"], row["language"]) if row["set_name"] else "(no set)"
+        by_set.setdefault(key, []).append(row)
 
     singles: list[dict] = []
     variation_groups: dict[str, list[dict]] = {}
@@ -386,8 +590,46 @@ def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: s
             "set_total": single_set_total(session, item),
             "variant": variant,
             "set_logo_url": single_set_logo_url(session, item),
+            "language": single_language(session, item),
         })
     return rows, skipped
+
+
+def _lot_cover_photo_url(session, lot: BulkLot) -> str | None:
+    """A lot with no image_url of its own (a hand-catalogued set with no
+    real stock photo anywhere, unlike a tcgplayer/cardotaku-sourced set
+    which usually has at least one member card's real image_url) still
+    has something worth showing: one member card's own scanned photo,
+    uploaded to R2 for a public URL -- the same last-resort a single
+    already gets via _own_scan_photo_url, just picked from any card in
+    the set rather than from the lot's own inventory_item_id, which
+    BulkLot doesn't have (a lot isn't tied to one physical holding)."""
+    settings = get_settings()
+    if not r2_is_configured(settings) or not lot.set_id:
+        return None
+    card = session.scalar(
+        select(CatalogCard).where(CatalogCard.set_id == lot.set_id, CatalogCard.local_image_path.isnot(None))
+    )
+    if card is None:
+        return None
+    local_path = Path(card.local_image_path)
+
+    try:
+        if not local_path.exists():
+            return None
+        return ensure_uploaded(
+            local_path, f"lot-cover/{lot.id}{local_path.suffix.lower()}",
+            endpoint_url=settings.r2_endpoint_url, access_key_id=settings.r2_access_key_id,
+            secret_access_key=settings.r2_secret_access_key, bucket_name=settings.r2_bucket_name,
+            public_base_url=load_pipeline_config().images.base_url,
+        )
+    except (R2UploadError, OSError) as exc:
+        # See _own_scan_photo_url's identical guard for the real incident
+        # (2026-09-26) this closes: a directory permission problem on one
+        # card's scan crashed the whole /ebay-export page via an
+        # unguarded .exists() call, not just skipped this one lot's cover.
+        print(f"R2 upload failed for lot cover {lot.title} ({lot.id}): {exc}", file=sys.stderr)
+        return None
 
 
 def build_lot_rows(session, *, status: ShopListingStatus, lot_max_cards: int,
@@ -398,7 +640,8 @@ def build_lot_rows(session, *, status: ShopListingStatus, lot_max_cards: int,
 
     rows, skipped = [], []
     for lot in lots:
-        if not _is_web_url(lot.image_url):
+        url = _ebay_safe_image_url(lot.image_url) or _lot_cover_photo_url(session, lot)
+        if not url:
             skipped.append(f"{lot.title} ({lot.id}) -- no publicly-hosted image on file")
             continue
         rows.append({
@@ -410,11 +653,20 @@ def build_lot_rows(session, *, status: ShopListingStatus, lot_max_cards: int,
             "currency": lot.currency,
             "quantity": lot.quantity,
             "weight_grams": lot.card_count * GRAMS_PER_CARD + LOT_PACKAGING_GRAMS,
-            "image_url": lot.image_url,
+            "image_url": url,
             "shipping_policy": lot_shipping_policy(lot.card_count, lot_max_cards, letter_policy, parcel_policy),
             "set_name": lot.card_set.name if lot.card_set else "",
             "rarity": "",
             "set_total": "",
+            "game": lot.game,
+            # A lot is a random assortment across a whole set, not tied to
+            # any one TcgCard row -- unlike a single or a variation child,
+            # it was never the thing 2026-09-26's incident was about (a
+            # specific, individually-priced card shown as the wrong
+            # print). Left blank rather than guessed; convert_row's own
+            # "English" default is exactly as accurate here as it was
+            # before this field existed.
+            "language": "",
         })
     return rows, skipped
 
@@ -476,6 +728,8 @@ def main(argv: list[str] | None = None) -> int:
                 rows += r
                 skipped += s
 
+    raised_to_min = _enforce_ebay_min_price(rows)
+
     if args.dry_run:
         print(f"would export {len(rows)} row(s):")
         for row in rows:
@@ -486,6 +740,10 @@ def main(argv: list[str] | None = None) -> int:
             writer.writeheader()
             writer.writerows(rows)
         print(f"wrote {len(rows)} row(s) to {args.out}")
+
+    if raised_to_min:
+        print(f"\n{raised_to_min} row(s) were priced under eBay's ${EBAY_MIN_FIXED_PRICE} minimum "
+              f"and raised to it -- a real, correctly-priced card that's just genuinely worth very little.")
 
     if skipped:
         print(f"\nskipped {len(skipped)} row(s) -- see reason per row:")

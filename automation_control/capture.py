@@ -130,7 +130,10 @@ def _process_photo(front_path: Path, back_path: Path | None, settings, session: 
         raise
 
     for record in records:
-        record_event(session, actor_type="user", actor_id=user, action="card.capture", resource_type="captured_card", resource_id=record.id, outcome=outcome, correlation_id=_correlation_id(), details={})
+        # outcome != "success" means this record IS blank_note -- an AI
+        # failure or a miss, not a real find -- so the reason belongs in
+        # the audit trail rather than an empty {}.
+        record_event(session, actor_type="user", actor_id=user, action="card.capture", resource_type="captured_card", resource_id=record.id, outcome=outcome, correlation_id=_correlation_id(), details=blank_note if outcome != "success" else {})
     return records
 
 

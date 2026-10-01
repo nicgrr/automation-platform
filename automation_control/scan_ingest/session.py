@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from ..models import CardSet, CardVariant, CatalogCard, ScanSession, ScanSessionStatus
 from . import catalog
-from .commit import CommitRefused, commit_card, inventory_totals
+from .commit import CommitRefused, _make_group_writable, commit_card, inventory_totals
 from .detect import detect_cards
 from .foil import assess_foil
 from .pricing import (
@@ -164,6 +164,7 @@ def _set_aside_for_review(
     # and the web review all write into this shared folder as different
     # users, and only the contents need replacing.
     shutil.copyfile(crop_path, destination)
+    _make_group_writable(destination)
     return destination
 
 
@@ -749,10 +750,9 @@ def _run_session_auto(
     handful of sets ahead of time and then just scan through piles without
     reconfiguring anything in between.
 
-    A sheet that doesn't confidently match any cached set is left in the
-    watch folder rather than guessed at -- same "never auto-commit a
-    low-confidence match" contract the rest of this module holds to, just
-    applied one level up (which set, not just which card).
+    A sheet that doesn't confidently match any cached set is split into the
+    manual review queue and archived.  That keeps the scanner moving without
+    weakening the "never auto-commit a low-confidence match" contract.
     """
     watch_dir = Path(settings.scan_watch_dir)
     watch_dir.mkdir(parents=True, exist_ok=True)
@@ -783,12 +783,19 @@ def _run_session_auto(
                 match = detect_sheet_set_and_rotation(probe.crop_paths, catalogs, max_phash_distance=settings.scan_phash_max_distance)
 
         if match is None:
+            media_dir = Path(settings.scan_media_dir)
+            for index, crop_path in enumerate(probe.crop_paths, start=1):
+                _set_aside_for_review(
+                    crop_path, media_dir, sheet_path.name, index, label="unrouted"
+                )
+            archived_to = _archive_sheet(
+                sheet_path, Path(settings.scan_archive_dir), "unrouted"
+            )
             prompter.notify(
                 f"\nSheet {sheet_path.name}: {probe.count} card(s) detected, but none confidently match any "
-                "cached set. Left in the watch folder -- cache the right set (scan-ingest cache-set) or check "
-                "for a bad scan, then it'll be picked up again."
+                f"cached set. Queued {len(probe.crop_paths)} crop(s) for manual review and archived the scan "
+                f"at {archived_to}; scanning can continue."
             )
-            seen.add(sheet_path)
             sheets_done += 1
             continue
 
@@ -894,10 +901,30 @@ def run_session(
             prompter.notify("\nNo new sheet appeared.")
             break
 
+        # Per-sheet rotation, same detection the fully-automatic path
+        # (_run_session_auto) already uses -- scoped to just this one
+        # already-known set rather than searching every cached set, since
+        # the operator already told us which set this is via --set-id.
+        # Closes a real gap: a manual session previously took one fixed
+        # --rotate for its entire run, so a pile scanned sideways/upside
+        # down without remembering that flag saved wrong-orientation crops
+        # (the root cause storefront/common.py's own-photo workaround
+        # exists for). Falls back to the operator-supplied value -- never
+        # to unrouted review -- since the set itself isn't in question here.
+        rotation = post_rotation_degrees
+        probe_dir = Path(settings.scan_media_dir) / "work" / "_probe" / sheet_path.stem
+        probe = detect_cards(sheet_path, probe_dir, always_save_overlay=False)
+        if probe.cards:
+            match = detect_sheet_set_and_rotation(
+                probe.crop_paths, {set_id: references}, max_phash_distance=settings.scan_phash_max_distance
+            )
+            if match is not None:
+                _, rotation = match
+
         outcome = process_sheet(
             db, sheet_path, scan_session, references, settings, prompter,
             set_total=card_set.printed_total, variant=variant, condition=condition,
-            expected_count=expected_count, post_rotation_degrees=post_rotation_degrees, user=user,
+            expected_count=expected_count, post_rotation_degrees=rotation, user=user,
             price_source=price_source, unattended=unattended,
         )
         if outcome.archived_to is None:
