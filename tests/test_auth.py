@@ -10,6 +10,8 @@ import time
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from automation_control.api import app
 from automation_control.auth import (
@@ -25,6 +27,7 @@ from automation_control.auth import (
     require_dashboard_user,
     verify_session,
 )
+from automation_control.database import Base, get_session
 
 KEY = "test-signing-key"
 
@@ -228,9 +231,17 @@ def test_different_clients_are_tracked_independently():
 # isolation, specifically to catch that class of failure again.
 
 @pytest.fixture
-def client():
+def client(tmp_path):
     app.state.settings.session_signing_key = KEY
-    return TestClient(app)
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'auth.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        app.dependency_overrides[get_session] = lambda: session
+        yield TestClient(app)
+        app.dependency_overrides.clear()
 
 
 def _set_cookie(client, age_seconds: int) -> str:

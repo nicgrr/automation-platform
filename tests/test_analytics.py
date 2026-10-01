@@ -10,8 +10,9 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus,
-    Marketplace, PotentialPurchase, PotentialPurchaseStatus, Sale,
+    CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType,
+    InventoryItem, InventoryStatus, MarketListing, Marketplace,
+    PotentialPurchaseStatus, Sale, TcgCard,
 )
 
 
@@ -65,6 +66,25 @@ def test_recent_available_stock_is_not_flagged_as_dead(client, session):
     assert "Fuecoco" not in response.text
 
 
+def test_inventory_value_uses_canonical_identity_without_legacy_card_link(client, session):
+    session.add(CatalogItem(id="op-1", item_type=CatalogItemType.TCG_CARD, name="Zoro"))
+    session.add(TcgCard(catalog_item_id="op-1", game="one_piece", number="1"))
+    session.add(InventoryItem(
+        id="inv-op", card_id=None, catalog_item_id="op-1",
+        variant=CardVariant.NORMAL, quantity=2, status=InventoryStatus.AVAILABLE,
+    ))
+    session.add(CardPrice(
+        catalog_item_id="op-1", variant=CardVariant.NORMAL,
+        source="test", price=Decimal("5.00"), currency="AUD",
+    ))
+    session.commit()
+
+    response = client.get("/analytics")
+
+    assert "Inventory market value" in response.text
+    assert "$10.00" in response.text
+
+
 def test_monthly_revenue_only_counts_sales_from_this_month(client, session):
     session.add(Sale(id="s1", gross_amount=Decimal("100"), sold_at=datetime.now(UTC)))
     session.add(Sale(id="s2", gross_amount=Decimal("50"), sold_at=datetime.now(UTC) - timedelta(days=90)))
@@ -89,15 +109,24 @@ def test_best_channel_picks_the_highest_grossing_marketplace(client, session):
     assert "$200.00" in response.text
 
 
-def test_potential_stock_value_only_counts_open_pipeline_statuses(client, session):
-    session.add(PotentialPurchase(id="p1", description="A", market_value=Decimal("100"), status=PotentialPurchaseStatus.WATCHING))
-    session.add(PotentialPurchase(id="p2", description="B", market_value=Decimal("999"), status=PotentialPurchaseStatus.DECLINED))
+def test_candidate_landed_cost_only_counts_open_pipeline_statuses(client, session):
+    session.add(MarketListing(
+        id="p1", source="test", external_id="1", title="A", url="https://example.test/1",
+        price=Decimal("100"), shipping=Decimal("0"), currency="AUD",
+        landed_aud=Decimal("100"), candidate_status=PotentialPurchaseStatus.WATCHING,
+    ))
+    session.add(MarketListing(
+        id="p2", source="test", external_id="2", title="B", url="https://example.test/2",
+        price=Decimal("999"), shipping=Decimal("0"), currency="AUD",
+        landed_aud=Decimal("999"), candidate_status=PotentialPurchaseStatus.DECLINED,
+    ))
     session.commit()
 
     response = client.get("/analytics")
 
     assert "$100.00" in response.text
     assert "$999.00" not in response.text
+    assert "Candidate landed cost" in response.text
 
 
 def test_analytics_requires_login():

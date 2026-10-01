@@ -24,6 +24,13 @@ competing with Research as a top-level destination. The approved photo-capture
 handoff was also production-audited: all promoted rows retain valid canonical
 catalogue and inventory links, while ambiguous captures stay visible and blocked.
 
+Potential Stock is now one workflow inside Market Watch rather than a second,
+empty manual-entry board. Any discovered listing can be tracked through Watching,
+Contact Seller, Offer, Accepted, Purchased or closed statuses, with target/maximum
+prices and notes retained across market refreshes. Dashboard and analytics consume
+these canonical candidates. The empty legacy table remains for the observation
+window but its form no longer creates duplicate records.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

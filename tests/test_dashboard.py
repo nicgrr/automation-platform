@@ -12,7 +12,7 @@ from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
     CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem,
-    Marketplace, PotentialPurchase, PotentialPurchaseStatus, Sale, TcgCard,
+    MarketListing, Marketplace, PotentialPurchaseStatus, Sale, TcgCard,
 )
 
 
@@ -49,15 +49,26 @@ def test_recent_sale_appears_in_the_widget(client, session):
     assert "$42.50" in response.text
 
 
-def test_top_potential_buy_ranked_by_margin_appears(client, session):
-    session.add(PotentialPurchase(id="p1", description="12 Sonny Angels", market_value=Decimal("450"), asking_price=Decimal("300"), status=PotentialPurchaseStatus.WATCHING))
-    session.add(PotentialPurchase(id="p2", description="Declined lot", market_value=Decimal("999"), asking_price=Decimal("1"), status=PotentialPurchaseStatus.DECLINED))
+def test_open_market_watch_candidate_appears(client, session):
+    session.add(MarketListing(
+        id="p1", source="facebook", external_id="1", title="12 Sonny Angels",
+        url="https://example.test/1", price=Decimal("300"), shipping=Decimal("0"),
+        currency="AUD", landed_aud=Decimal("300"), country="AU",
+        candidate_status=PotentialPurchaseStatus.WATCHING,
+    ))
+    session.add(MarketListing(
+        id="p2", source="facebook", external_id="2", title="Declined lot",
+        url="https://example.test/2", price=Decimal("1"), shipping=Decimal("0"),
+        currency="AUD", landed_aud=Decimal("1"), country="AU",
+        candidate_status=PotentialPurchaseStatus.DECLINED,
+    ))
     session.commit()
 
     response = client.get("/dashboard")
 
     assert "12 Sonny Angels" in response.text
     assert "Declined lot" not in response.text  # not an open pipeline status
+    assert "Purchase Candidates" in response.text
 
 
 def test_inventory_priced_gauge_reflects_real_coverage(client, session):

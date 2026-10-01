@@ -36,6 +36,7 @@ from .models import (
     MarketListing,
     MarketListingMatch,
     MarketWatchTerm,
+    PotentialPurchaseStatus,
 )
 from .market_watch_service import (
     COUNTRY_LABELS,
@@ -64,6 +65,13 @@ KIND_LABELS = {
 UNMATCHED_SET = "Unmatched / needs review"
 AUTOMATED_SOURCES = {"ebay", "public_web"}
 MANUAL_SOURCE_DOMAINS = MARKET_SOURCE_DOMAINS
+CANDIDATE_STATUSES = tuple(PotentialPurchaseStatus)
+OPEN_CANDIDATE_STATUSES = {
+    PotentialPurchaseStatus.WATCHING,
+    PotentialPurchaseStatus.CONTACT_SELLER,
+    PotentialPurchaseStatus.OFFER_SENT,
+    PotentialPurchaseStatus.COUNTER_OFFER,
+}
 
 
 def listing_set(item: MarketListing) -> str:
@@ -100,12 +108,39 @@ def _listing_card(item: MarketListing) -> str:
     )
     confidence = (item.raw or {}).get("location_confidence")
     location_note = "<small class='location-note'>Region inferred from public search; confirm before buying.</small>" if confidence == "search_region" else ""
+    if item.candidate_status is None:
+        candidate = (
+            f"<form class='candidate-quick' method='post' action='/market-watch/listings/{item.id}/candidate'>"
+            f"<input type='hidden' name='status' value='{PotentialPurchaseStatus.WATCHING.value}'>"
+            "<button class='ghost' type='submit'>Track as purchase candidate</button></form>"
+        )
+    else:
+        status_label = item.candidate_status.value.replace("_", " ").title()
+        status_kind = ("ok" if item.candidate_status == PotentialPurchaseStatus.PURCHASED else
+                       "warn" if item.candidate_status in OPEN_CANDIDATE_STATUSES else "neutral")
+        status_options = "".join(
+            f"<option value='{status.value}'{' selected' if status == item.candidate_status else ''}>"
+            f"{escape(status.value.replace('_', ' ').title())}</option>"
+            for status in CANDIDATE_STATUSES
+        )
+        target = f"{item.target_price_aud:.2f}" if item.target_price_aud is not None else ""
+        maximum = f"{item.max_price_aud:.2f}" if item.max_price_aud is not None else ""
+        candidate = (
+            f"<div class='candidate-state'>{pill(status_label, status_kind)}</div>"
+            "<details class='candidate-edit'><summary>Update purchase candidate</summary>"
+            f"<form method='post' action='/market-watch/listings/{item.id}/candidate'>"
+            f"<label>Status<select name='status'>{status_options}<option value=''>Stop tracking</option></select></label>"
+            f"<label>Target price AUD<input name='target_price_aud' type='number' min='0.01' step='0.01' value='{target}'></label>"
+            f"<label>Maximum price AUD<input name='max_price_aud' type='number' min='0.01' step='0.01' value='{maximum}'></label>"
+            f"<label>Notes<textarea name='candidate_notes' maxlength='2000'>{escape(item.candidate_notes or '')}</textarea></label>"
+            "<button type='submit'>Save candidate</button></form></details>"
+        )
     return (
         "<article class='mw-card'>" + art + "<div class='mw-copy'>"
         f"<div>{pill(escape(source_label(item.source)), 'info')} {pill(KIND_LABELS[kind], 'neutral')}</div>"
         f"<h3>{escape(item.title)}</h3>{price}{location_note}"
         f"<a class='btn' href='{escape(item.url)}' target='_blank' rel='noopener'>Open listing</a>"
-        "</div></article>"
+        f"{candidate}</div></article>"
     )
 
 
@@ -205,7 +240,8 @@ def _watch_card(watch: MarketWatchTerm) -> str:
 
 @router.get("/market-watch", response_class=HTMLResponse)
 def market_watch(request: Request, source: str = Query(""), kind: str = Query(""), set_name: str = Query(""),
-                 country: str = Query(""), watch_id: str = Query(""),
+                 country: str = Query(""), watch_id: str = Query(""), view: str = Query(""),
+                 candidate_status: str = Query(""),
                  notice: str = Query(""), error: str = Query(""),
                  user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     settings = request.app.state.settings
@@ -213,9 +249,20 @@ def market_watch(request: Request, source: str = Query(""), kind: str = Query(""
     country = country.upper()
     if country not in allowed:
         country = ""
-    stmt = select(MarketListing).where(
-        MarketListing.active.is_(True), MarketListing.country.in_(allowed),
-    )
+    if view not in {"", "candidates"}:
+        view = ""
+    try:
+        selected_candidate_status = PotentialPurchaseStatus(candidate_status) if candidate_status else None
+    except ValueError:
+        selected_candidate_status = None
+        candidate_status = ""
+    stmt = select(MarketListing).where(MarketListing.country.in_(allowed))
+    if view == "candidates":
+        stmt = stmt.where(MarketListing.candidate_status.is_not(None))
+    else:
+        stmt = stmt.where(MarketListing.active.is_(True))
+    if selected_candidate_status:
+        stmt = stmt.where(MarketListing.candidate_status == selected_candidate_status)
     if watch_id:
         stmt = stmt.join(
             MarketListingMatch,
@@ -233,6 +280,11 @@ def market_watch(request: Request, source: str = Query(""), kind: str = Query(""
         .where(MarketListing.active.is_(True), MarketListing.country.in_(allowed))
         .group_by(MarketListing.source)
     ).all()
+    candidate_count = session.scalar(
+        select(func.count()).select_from(MarketListing).where(
+            MarketListing.country.in_(allowed), MarketListing.candidate_status.is_not(None),
+        )
+    ) or 0
     catalogue_rows = session.scalar(select(func.count()).select_from(CollectibleProduct)) or 0
     watches = session.scalars(select(MarketWatchTerm).order_by(MarketWatchTerm.active.desc(), MarketWatchTerm.name)).all()
     matches = session.execute(
@@ -281,6 +333,11 @@ def market_watch(request: Request, source: str = Query(""), kind: str = Query(""
     country_options = "".join(
         f"<option value='{code}'{' selected' if code == country else ''}>{escape(COUNTRY_LABELS.get(code, code))}</option>"
         for code in allowed
+    )
+    candidate_status_options = "".join(
+        f"<option value='{status.value}'{' selected' if status.value == candidate_status else ''}>"
+        f"{escape(status.value.replace('_', ' ').title())}</option>"
+        for status in CANDIDATE_STATUSES
     )
     manual_country_options = "".join(
         f"<option value='{code}'>{escape(COUNTRY_LABELS.get(code, code))}</option>" for code in allowed
@@ -353,12 +410,17 @@ def market_watch(request: Request, source: str = Query(""), kind: str = Query(""
     )
     body = brand_header("Collectible market watch") + notices + watch_panel + (
         "<div class='mw-stats'>"
-        f"<div><strong>{len(listings)}</strong><span>live matches shown</span></div>"
+        f"<div><strong>{len(listings)}</strong><span>{'candidates' if view == 'candidates' else 'live matches'} shown</span></div>"
+        f"<div><strong>{candidate_count}</strong><span>purchase candidates</span></div>"
         f"<div><strong>{escape(allowed_label)}</strong><span>seller locations only</span></div>"
         f"<div><strong>{catalogue_rows}</strong><span>collectible catalogue rows</span></div>"
         f"<div><strong>{'Ready' if settings.telegram_bot_token and settings.telegram_chat_id else 'Needs setup'}</strong><span>Telegram</span></div>"
         f"<div><strong>{'Ready' if settings.discord_webhook_url else 'Needs setup'}</strong><span>Discord</span></div></div>"
-        "<form class='panel filters' method='get'><label>Marketplace<select name='source'><option value=''>All</option>"
+        "<form class='panel filters' method='get'><label>View<select name='view'>"
+        f"<option value=''{' selected' if not view else ''}>Live discoveries</option>"
+        f"<option value='candidates'{' selected' if view == 'candidates' else ''}>Purchase candidates ({candidate_count})</option>"
+        "</select></label><label>Candidate status<select name='candidate_status'><option value=''>All statuses</option>"
+        + candidate_status_options + "</select></label><label>Marketplace<select name='source'><option value=''>All</option>"
         + source_options + "</select></label><label>Seller location<select name='country'><option value=''>Australia &amp; Japan</option>"
         + country_options + "</select></label><label>Watch<select name='watch_id'><option value=''>All watches</option>"
         + watch_options + "</select></label><label>Group<select name='set_name'><option value=''>All groups</option>"
@@ -371,6 +433,61 @@ def market_watch(request: Request, source: str = Query(""), kind: str = Query(""
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Collectible market watch", body))
+
+
+def _optional_positive_money(value: str, label: str) -> Decimal | None:
+    if not value.strip():
+        return None
+    amount = Decimal(value)
+    if amount <= 0:
+        raise ValueError(f"{label} must be positive.")
+    return amount
+
+
+@router.post("/market-watch/listings/{listing_id}/candidate")
+def update_market_candidate(
+    listing_id: str,
+    status: str = Form(""),
+    target_price_aud: str = Form(""),
+    max_price_aud: str = Form(""),
+    candidate_notes: str = Form(""),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    listing = session.get(MarketListing, listing_id)
+    if listing is None:
+        return RedirectResponse("/market-watch?error=Listing+not+found", status_code=303)
+    try:
+        selected = PotentialPurchaseStatus(status) if status else None
+        target = _optional_positive_money(target_price_aud, "Target price")
+        maximum = _optional_positive_money(max_price_aud, "Maximum price")
+        if target is not None and maximum is not None and target > maximum:
+            raise ValueError("Target price cannot be greater than maximum price.")
+        notes = candidate_notes.strip()
+        if len(notes) > 2000:
+            raise ValueError("Candidate notes must be 2,000 characters or fewer.")
+    except (InvalidOperation, ValueError) as exc:
+        return RedirectResponse(
+            "/market-watch?" + urlencode({"view": "candidates", "error": str(exc)}),
+            status_code=303,
+        )
+
+    listing.candidate_status = selected
+    listing.target_price_aud = target if selected else None
+    listing.max_price_aud = maximum if selected else None
+    listing.candidate_notes = notes or None if selected else None
+    listing.candidate_updated_at = datetime.now(UTC)
+    record_event(
+        session, actor_type="user", actor_id=user, action="market_watch.candidate_updated",
+        resource_type="market_listing", resource_id=listing.id, outcome="success",
+        correlation_id=listing.id,
+        details={"candidate_status": selected.value if selected else None},
+    )
+    session.commit()
+    notice = "Purchase candidate updated" if selected else "Listing removed from purchase candidates"
+    return RedirectResponse(
+        "/market-watch?" + urlencode({"view": "candidates", "notice": notice}), status_code=303,
+    )
 
 
 @router.post("/market-watch/refresh")
@@ -702,5 +819,7 @@ _STYLE = """<style>
 .inbox-panel{margin-top:18px}.inbox-panel form{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:10px 0}.inbox-panel form label{margin:0}.share-card{max-width:680px}.share-card form{margin-top:14px}
 .warning{border-left:4px solid #f59e0b}.market-actions{display:flex;margin:0 0 14px}.market-actions form{margin:0}.manual-add{margin-top:18px}.manual-add form{max-width:620px;margin-top:14px}
 .manual-money{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.ok-note{border-left:4px solid var(--success)}.bad-note{border-left:4px solid var(--danger)}
+.candidate-quick{margin-top:12px;max-width:none}.candidate-quick button{width:100%}.candidate-state{margin-top:12px}
+.candidate-edit{margin-top:8px}.candidate-edit form{margin-top:10px;max-width:none}.candidate-edit textarea{min-height:72px}
 @media(max-width:680px){.mw-prices{grid-template-columns:repeat(2,minmax(0,1fr))}.mw-grid{grid-template-columns:1fr}.manual-money{grid-template-columns:1fr}.watch-head{display:block}.watch-head form{margin-top:10px}.watch-grid{grid-template-columns:1fr}.inbox-panel form{align-items:stretch;flex-direction:column}}
 </style>"""

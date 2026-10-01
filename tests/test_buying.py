@@ -9,7 +9,9 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.buying import traffic_light
 from automation_control.database import Base, get_session
-from automation_control.models import BuyThresholdConfig, PotentialPurchaseStatus, PurchaseLotStatus
+from automation_control.models import (
+    BuyThresholdConfig, PotentialPurchase, PotentialPurchaseStatus, PurchaseLotStatus,
+)
 
 
 @pytest.fixture
@@ -77,7 +79,7 @@ def test_purchase_lot_lifecycle(client):
     assert updated.status_code == 303
 
 
-def test_potential_stock_watchlist_add_and_advance(client):
+def test_potential_stock_compatibility_route_points_to_market_watch(client, session):
     create = client.post(
         "/potential-stock",
         data={"description": "12 Sonny Angels", "seller": "", "source": "", "url": "",
@@ -85,19 +87,12 @@ def test_potential_stock_watchlist_add_and_advance(client):
         follow_redirects=False,
     )
     assert create.status_code == 303
+    assert create.headers["location"].startswith("/market-watch?view=candidates")
+    assert session.query(PotentialPurchase).count() == 0
 
-    board = client.get("/potential-stock")
-    assert "12 Sonny Angels" in board.text
-    assert "Watching (1)" in board.text
-
-    import re
-    detail_url = re.search(r"/potential-stock/([\w-]+)", board.text).group(0)
-    advance = client.post(f"{detail_url}/status", data={"status": PotentialPurchaseStatus.OFFER_SENT.value}, follow_redirects=False)
-    assert advance.status_code == 303
-
-    board2 = client.get("/potential-stock")
-    assert "Offer Sent (1)" in board2.text
-    assert "Watching (0)" in board2.text
+    board = client.get("/potential-stock", follow_redirects=False)
+    assert board.status_code == 303
+    assert board.headers["location"] == "/market-watch?view=candidates"
 
 
 def test_buying_pages_require_login():
@@ -114,10 +109,9 @@ def test_buying_calculator_has_quick_price_widget_wired_to_market_price(client):
     assert "data-price-field='market_price'" in response.text
 
 
-def test_potential_stock_has_quick_price_widget_wired_to_description_and_market_value(client):
-    response = client.get("/potential-stock")
-    assert "data-name-field='description'" in response.text
-    assert "data-price-field='market_value'" in response.text
+def test_potential_stock_no_longer_renders_a_second_candidate_form(client):
+    response = client.get("/potential-stock", follow_redirects=False)
+    assert response.status_code == 303
 
 
 def test_purchase_lot_detail_has_quick_price_widget(client):

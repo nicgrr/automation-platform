@@ -1396,6 +1396,17 @@ class MarketListing(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     raw: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # Purchase-candidate workflow. NULL means this is only a discovered
+    # market result; setting a status promotes it into the owner's buying
+    # pipeline without copying the listing into a second table.
+    candidate_status: Mapped[PotentialPurchaseStatus | None] = mapped_column(
+        Enum(PotentialPurchaseStatus), index=True,
+    )
+    target_price_aud: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    max_price_aud: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    candidate_notes: Mapped[str | None] = mapped_column(Text)
+    candidate_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     catalog_item: Mapped[CatalogItem | None] = relationship()
 
 

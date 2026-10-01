@@ -11,7 +11,10 @@ from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.market_watch import UNMATCHED_SET, grouped_market, listing_set
 from automation_control.market_watch_service import classify_item_kind, landed_cost_aud, upsert_listing
-from automation_control.models import MarketAlertImport, MarketListing, MarketListingMatch, MarketWatchTerm
+from automation_control.models import (
+    MarketAlertImport, MarketListing, MarketListingMatch, MarketWatchTerm,
+    PotentialPurchaseStatus,
+)
 
 
 @pytest.fixture
@@ -52,6 +55,95 @@ def test_upsert_deduplicates_market_listing(session):
     assert created and not created_again and first.id == again.id
     assert session.query(MarketListing).count() == 1
     assert again.landed_aud == Decimal("11.00")
+
+
+def test_market_listing_becomes_and_updates_a_purchase_candidate(client, session):
+    listing, _ = upsert_listing(
+        session, source="ebay", external_id="candidate-1", title="Sonny Angel candidate",
+        url="https://example.test/candidate-1", price="40", shipping="5",
+        currency="AUD", country="AU",
+    )
+    session.commit()
+
+    response = client.post(
+        f"/market-watch/listings/{listing.id}/candidate",
+        data={
+            "status": PotentialPurchaseStatus.CONTACT_SELLER.value,
+            "target_price_aud": "35", "max_price_aud": "42",
+            "candidate_notes": "Ask whether the box is sealed.",
+        },
+        follow_redirects=False,
+    )
+    session.refresh(listing)
+
+    assert response.status_code == 303
+    assert "view=candidates" in response.headers["location"]
+    assert listing.candidate_status == PotentialPurchaseStatus.CONTACT_SELLER
+    assert listing.target_price_aud == Decimal("35.00")
+    assert listing.max_price_aud == Decimal("42.00")
+    assert listing.candidate_notes == "Ask whether the box is sealed."
+    page = client.get("/market-watch?view=candidates")
+    assert "Sonny Angel candidate" in page.text
+    assert "Contact Seller" in page.text
+
+
+def test_candidate_fields_survive_market_refresh(session):
+    listing, _ = upsert_listing(
+        session, source="ebay", external_id="candidate-2", title="Original candidate",
+        url="https://example.test/candidate-2", price="40", currency="AUD", country="AU",
+    )
+    listing.candidate_status = PotentialPurchaseStatus.WATCHING
+    listing.max_price_aud = Decimal("35")
+    session.flush()
+
+    refreshed, created = upsert_listing(
+        session, source="ebay", external_id="candidate-2", title="Refreshed candidate",
+        url="https://example.test/candidate-2", price="38", currency="AUD", country="AU",
+    )
+
+    assert created is False
+    assert refreshed.candidate_status == PotentialPurchaseStatus.WATCHING
+    assert refreshed.max_price_aud == Decimal("35")
+
+
+def test_invalid_candidate_prices_do_not_change_listing(client, session):
+    listing, _ = upsert_listing(
+        session, source="ebay", external_id="candidate-3", title="Candidate",
+        url="https://example.test/candidate-3", price="40", currency="AUD", country="AU",
+    )
+    session.commit()
+
+    response = client.post(
+        f"/market-watch/listings/{listing.id}/candidate",
+        data={"status": "watching", "target_price_aud": "50", "max_price_aud": "40"},
+        follow_redirects=False,
+    )
+    session.refresh(listing)
+
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]
+    assert listing.candidate_status is None
+
+
+def test_candidate_can_be_removed_without_deleting_market_listing(client, session):
+    listing, _ = upsert_listing(
+        session, source="ebay", external_id="candidate-4", title="Candidate",
+        url="https://example.test/candidate-4", price="40", currency="AUD", country="AU",
+    )
+    listing.candidate_status = PotentialPurchaseStatus.WATCHING
+    listing.candidate_notes = "Temporary"
+    session.commit()
+
+    response = client.post(
+        f"/market-watch/listings/{listing.id}/candidate", data={"status": ""},
+        follow_redirects=False,
+    )
+    session.refresh(listing)
+
+    assert response.status_code == 303
+    assert listing.candidate_status is None
+    assert listing.candidate_notes is None
+    assert session.get(MarketListing, listing.id) is listing
 
 
 def test_dashboard_shows_images_and_landed_cost(session):

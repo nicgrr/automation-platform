@@ -22,7 +22,7 @@ from .database import get_session
 from .inventory_review import _aud, _latest_ebay_prices, _latest_prices
 from .models import (
     AuditEvent, CollectibleProduct, InventoryItem, InventoryStatus, Marketplace,
-    PotentialPurchase, PotentialPurchaseStatus, RetailerProgram, Sale, TcgCard,
+    MarketListing, PotentialPurchaseStatus, RetailerProgram, Sale, TcgCard,
 )
 from .nav_counts import queue_counts
 from .ui import ADMIN_NAV, page
@@ -209,13 +209,12 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         channel_totals[name] = channel_totals.get(name, 0.0) + float(s.gross_amount)
     recent_sales = all_sales[:6]
 
-    # -- top potential buys, ranked by expected margin --
-    open_potentials = [
-        p for p in session.scalars(select(PotentialPurchase)).all()
-        if p.status in OPEN_POTENTIAL_STATUSES and p.market_value
-    ]
-    open_potentials.sort(key=lambda p: float(p.market_value - (p.asking_price or p.market_value)), reverse=True)
-    top_potentials = open_potentials[:5]
+    # -- market-watch listings deliberately promoted into the buying pipeline --
+    open_candidates = list(session.scalars(
+        select(MarketListing).where(MarketListing.candidate_status.in_(OPEN_POTENTIAL_STATUSES))
+        .order_by(MarketListing.candidate_updated_at.desc(), MarketListing.last_seen_at.desc())
+        .limit(5)
+    ))
 
     # -- Gameology Guild goal ---------------------------------------------
     # Read from the same service as the full tracker so its spend, fund and
@@ -260,9 +259,8 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
 
     # -- widgets that only appear once they have something to say --------
     #
-    # Sales and potential buys are recorded by hand on /sales and
-    # /potential-stock, which have never been used (see HIDDEN_NAV in
-    # ui.py). An empty-state message is the right thing for a widget whose
+    # Sales are recorded by hand on /sales, which has never been used (see
+    # HIDDEN_NAV in ui.py). An empty-state message is the right thing for a widget whose
     # data comes and goes; it is the wrong thing for one that has never
     # had any, because it reads as a broken feature rather than an unused
     # one. These three render the moment their first row exists.
@@ -277,13 +275,13 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     )
 
     buy_rows = "".join(
-        f"<tr><td>{escape(p.description)}</td><td>${p.market_value:,.2f}</td>"
-        f"<td>{f'${p.asking_price:,.2f}' if p.asking_price else '—'}</td></tr>"
-        for p in top_potentials
-    ) or "<tr><td colspan=3 class='chart-empty'>No open potential buys.</td></tr>"
+        f"<tr><td>{escape(candidate.title)}</td><td>${candidate.landed_aud:,.2f}</td>"
+        f"<td>{escape(candidate.candidate_status.value.replace('_', ' ').title())}</td></tr>"
+        for candidate in open_candidates
+    ) or "<tr><td colspan=3 class='chart-empty'>No open purchase candidates.</td></tr>"
     buys_widget = (
-        "<div class='widget'><div class='widget-head'><h3>Top Potential Buys</h3><a href='/potential-stock' class='widget-link'>View all</a></div>"
-        f"<table class='widget-table'><thead><tr><th>Item</th><th>Market</th><th>Asking</th></tr></thead><tbody>{buy_rows}</tbody></table></div>"
+        "<div class='widget'><div class='widget-head'><h3>Purchase Candidates</h3><a href='/market-watch?view=candidates' class='widget-link'>View all</a></div>"
+        f"<table class='widget-table'><thead><tr><th>Listing</th><th>Landed</th><th>Status</th></tr></thead><tbody>{buy_rows}</tbody></table></div>"
     )
 
     market_value_widget = (
@@ -355,7 +353,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         guild_widget,
         gauge_widget,
         sales_widget if recent_sales else "",
-        buys_widget if top_potentials else "",
+        buys_widget if open_candidates else "",
         market_value_widget,
         channel_widget if channel_items else "",
         ageing_widget,

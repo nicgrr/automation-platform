@@ -61,7 +61,8 @@ reliability and rollback improve before business workflows or schemas are remove
 - [x] Organise primary navigation as Add Stock, Review, Inventory, Sell and Research.
 - [x] Nest specialist tools beneath Inventory and Research.
 - [x] Move Retailer Goals beneath Research/Market Tools.
-- [ ] Merge Potential Stock into Market Watch candidate statuses.
+- [x] Merge Potential Stock into Market Watch candidate statuses; the empty legacy
+  table and detail routes remain during the observation window, but accept no new rows.
 - [ ] Make `shop_listings` the canonical sellable draft and retire
   `pending_listings` after dependency checks.
 - [ ] Validate direct eBay publishing end to end; retain CSV as fallback and for

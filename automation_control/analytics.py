@@ -28,7 +28,7 @@ from .auth import require_dashboard_user
 from .database import get_session
 from .inventory_review import _aud, _latest_prices
 from .models import (
-    Goal, InventoryItem, InventoryStatus, Marketplace, PotentialPurchase,
+    Goal, InventoryItem, InventoryStatus, MarketListing, Marketplace,
     PotentialPurchaseStatus, PurchaseLot, PurchaseLotStatus, Sale,
 )
 from .ui import brand_header, page, pill
@@ -47,7 +47,7 @@ TIED_UP_STATUSES = {InventoryStatus.AVAILABLE, InventoryStatus.LISTED, Inventory
 def analytics_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
     now = datetime.now(UTC)
     items = session.scalars(select(InventoryItem)).all()
-    prices = _latest_prices(session, {i.card_id for i in items})
+    prices = _latest_prices(session, {i.catalog_item_id for i in items})
 
     market_value = 0.0
     cost_basis_total = 0.0
@@ -55,7 +55,7 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
     ageing = {"0-30": 0, "31-60": 0, "61-90": 0, "90+": 0}
     dead_stock = []
     for i in items:
-        price = prices.get((i.card_id, i.variant))
+        price = prices.get((i.catalog_item_id, i.variant))
         value = _aud(price, i.quantity) or 0.0
         market_value += value
         basis = float(i.allocated_cost_basis or 0) * i.quantity
@@ -93,14 +93,18 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         channel_totals[name] = channel_totals.get(name, 0.0) + float(s.gross_amount)
     best_channel = max(channel_totals, key=channel_totals.get) if channel_totals else None
 
-    potential_purchases = session.scalars(select(PotentialPurchase)).all()
-    potential_value = sum(
-        float(p.market_value or 0) for p in potential_purchases if p.status in OPEN_POTENTIAL_STATUSES
+    purchase_candidates = session.scalars(select(MarketListing).where(
+        MarketListing.candidate_status.is_not(None)
+    )).all()
+    candidate_landed_cost = sum(
+        float(candidate.landed_aud or 0)
+        for candidate in purchase_candidates
+        if candidate.candidate_status in OPEN_POTENTIAL_STATUSES
     )
     open_offers = session.scalar(select(func.count()).select_from(PurchaseLot).where(PurchaseLot.status == PurchaseLotStatus.OFFER_SENT)) or 0
     open_offers += sum(
-        1 for p in potential_purchases
-        if p.status in (PotentialPurchaseStatus.OFFER_SENT, PotentialPurchaseStatus.COUNTER_OFFER)
+        1 for candidate in purchase_candidates
+        if candidate.candidate_status in (PotentialPurchaseStatus.OFFER_SENT, PotentialPurchaseStatus.COUNTER_OFFER)
     )
 
     goals = session.scalars(select(Goal).where(Goal.achieved_at.is_(None)).order_by(Goal.created_at)).all()
@@ -118,7 +122,7 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         + stat("Monthly revenue", f"${monthly_revenue:,.2f}")
         + stat("Monthly profit", f"${monthly_profit:,.2f}")
         + stat("Realized profit (all-time)", f"${realized_profit:,.2f}")
-        + stat("Potential stock value", f"${potential_value:,.2f}")
+        + stat("Candidate landed cost", f"${candidate_landed_cost:,.2f}")
         + stat("Open offers", str(open_offers))
         + "</div>"
     )

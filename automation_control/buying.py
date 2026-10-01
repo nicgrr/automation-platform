@@ -292,50 +292,10 @@ def update_purchase_lot_status(
 
 @router.get("/potential-stock", response_class=HTMLResponse)
 def potential_stock_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    items = session.scalars(select(PotentialPurchase).order_by(PotentialPurchase.discovered_at.desc())).all()
-    config = _default_thresholds(session)
-
-    columns: dict[PotentialPurchaseStatus, list[str]] = {s: [] for s in PotentialPurchaseStatus}
-    for it in items:
-        acquisition_pct = (it.target_price / it.market_value * 100) if (it.target_price and it.market_value) else None
-        kind, label = traffic_light(acquisition_pct, config)
-        card = (
-            "<div class='watch-card'>"
-            f"<div class='watch-name'>{escape(it.description)}</div>"
-            f"<div class='muted'>{escape(it.seller or '')}</div>"
-            f"<div class='watch-prices'>ask ${it.asking_price or 0:,.2f} &middot; market ${it.market_value or 0:,.2f}</div>"
-            f"<div>{pill(label, kind)}</div>"
-            f"<a class='chip' href='/potential-stock/{escape(it.id)}'>Update</a>"
-            "</div>"
-        )
-        columns[it.status].append(card)
-
-    board = "".join(
-        f"<div class='watch-col'><h3>{s.value.replace('_', ' ').title()} ({len(columns[s])})</h3>{''.join(columns[s]) or '<p class=\"muted\">—</p>'}</div>"
-        for s in PotentialPurchaseStatus
-    )
-
-    form = (
-        "<div class='panel'><h2>Add to watchlist</h2>"
-        + quick_price_widget("market_value", "description")
-        + "<form method='post' action='/potential-stock' class='calc-form'>"
-        "<label>Description<input name='description' required></label>"
-        "<label>Seller<input name='seller'></label>"
-        "<label>Source<input name='source' placeholder='Facebook Marketplace'></label>"
-        "<label>URL<input name='url'></label>"
-        "<label>Asking price<input name='asking_price' type='number' step='0.01'></label>"
-        "<label>Market value<input name='market_value' type='number' step='0.01'></label>"
-        f"<label>Target price ({config.green_max_pct}% of market)<input name='target_price' type='number' step='0.01'></label>"
-        "<button type='submit'>Add</button>"
-        "</form></div>"
-    )
-
-    body = (
-        brand_header("Potential stock")
-        + f"<div class='watch-board'>{board}</div>"
-        + form + _STYLE
-    )
-    return HTMLResponse(page("EzBay — Potential stock", body))
+    # Kept as a compatibility route during the observation window. The
+    # old table was empty in production; all new candidates now live on
+    # their discovered MarketListing instead of being copied here.
+    return RedirectResponse("/market-watch?view=candidates", status_code=303)
 
 
 @router.post("/potential-stock")
@@ -344,14 +304,10 @@ def create_potential_purchase(
     asking_price: str = Form(""), market_value: str = Form(""), target_price: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
-    session.add(PotentialPurchase(
-        id=str(uuid.uuid4()), description=description, seller=seller or None, source=source or None, url=url or None,
-        asking_price=_dec(asking_price) if asking_price.strip() else None,
-        market_value=_dec(market_value) if market_value.strip() else None,
-        target_price=_dec(target_price) if target_price.strip() else None,
-    ))
-    session.commit()
-    return RedirectResponse("/potential-stock", status_code=303)
+    return RedirectResponse(
+        "/market-watch?view=candidates&error=Add+the+marketplace+listing+first%2C+then+track+it+as+a+candidate",
+        status_code=303,
+    )
 
 
 @router.get("/potential-stock/{item_id}", response_class=HTMLResponse)

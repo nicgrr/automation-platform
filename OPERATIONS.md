@@ -175,6 +175,8 @@ scripts under `scripts/migrations/` are pre-Alembic history and must not be used
 new schema work. Production was baselined at `20261001_01` on 1 October 2026.
 Revision `20261002_03` makes inventory catalogue identity mandatory and unique;
 the legacy `card_id` link remains temporarily for scan-reference compatibility.
+Revision `20261002_04` adds purchase-candidate status and decision fields directly
+to Market Watch listings; it preserves the empty legacy potential-purchases table.
 
 ## Rate-limit-sensitive: pokemonpricetracker.com
 

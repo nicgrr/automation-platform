@@ -8,11 +8,11 @@ from scripts import release_rollback_drill
 from scripts.restore_drill import PROJECT_ROOT
 
 
-def _blank_database_at_head(path):
+def _blank_database_at_revision(path, revision):
     environment = os.environ.copy()
     environment["AUTOMATION_DATABASE_URL"] = f"sqlite:///{path}"
     subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", revision],
         cwd=PROJECT_ROOT,
         env=environment,
         capture_output=True,
@@ -23,7 +23,7 @@ def _blank_database_at_head(path):
 
 def test_tagged_release_boots_against_its_matching_snapshot(tmp_path):
     snapshot = tmp_path / "snapshot.sqlite"
-    _blank_database_at_head(snapshot)
+    _blank_database_at_revision(snapshot, "20261002_03")
 
     result = release_rollback_drill.run("ezbay-v2026.10.02.2", snapshot)
 
