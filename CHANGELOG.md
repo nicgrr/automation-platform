@@ -17,6 +17,13 @@ exports a historical release tag into temporary storage, pairs it with the named
 pre-release database snapshot, and exercises the historical application's real
 schema gate and health endpoint without changing the live checkout or database.
 
+The primary drawer now follows the five daily workflows: Add stock, Review,
+Inventory, Sell and Research. Specialist destinations remain in their workflow
+hubs and command palette; Retailer Goals now lives inside Market Tools instead of
+competing with Research as a top-level destination. The approved photo-capture
+handoff was also production-audited: all promoted rows retain valid canonical
+catalogue and inventory links, while ambiguous captures stay visible and blocked.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

@@ -89,11 +89,19 @@ def test_labels_are_unique():
     assert len(labels) == len(set(labels)), "two nav entries share a label"
 
 
-def test_drawer_is_the_condensed_eleven_destination_map():
-    assert sum(len(links) for _title, links, _collapsed in ADMIN_NAV) == 11
+def test_drawer_is_the_condensed_ten_destination_map():
+    assert sum(len(links) for _title, links, _collapsed in ADMIN_NAV) == 10
     assert [title for title, _links, _collapsed in ADMIN_NAV] == [
-        "Home", "Stock", "Selling", "Buying & research", "System",
+        "Home", "Add stock", "Review", "Inventory", "Sell", "Research", "System",
     ]
+
+
+def test_retailer_goals_is_nested_under_market_tools(client):
+    drawer = {h for _t, links, _c in ADMIN_NAV for h, _l in links}
+    assert "/retailer-goals" not in drawer
+    response = client.get("/market-tools")
+    assert response.status_code == 200
+    assert "href='/retailer-goals'" in response.text
 
 
 def test_count_badges_only_on_routes_that_are_counted(session, tmp_path):

@@ -196,6 +196,7 @@ def market_tools(request: Request, user: str = Depends(require_dashboard_user),
             _section("Plan a purchase", "Calculate affordability, costs and timing before buying manually.", [
                 _card("/buying-calculator", "Buying calculator", "Calculate fees, break-even, margin and maximum buy price."),
                 _card("/release-calendar", "Release calendar", "Track preorder dates, deadlines, releases, quantities and costs.", status=f"{releases} releases"),
+                _card("/retailer-goals", "Retailer Goals", "Track retailer loyalty milestones, eligible spend and purchase recommendations."),
             ]),
         ],
     )

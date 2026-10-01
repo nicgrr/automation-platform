@@ -240,7 +240,8 @@ body.nav-open .sidenav{transform:none}
 # The drawer is intentionally a map of workflows, not a catalogue of every
 # route EzBay happens to expose. The old version listed 39 destinations at
 # once; seven review queues, seven capture variants and fourteen selling / buying
-# tools all competed at the same visual level. ADMIN_NAV is now the short map.
+# tools all competed at the same visual level. ADMIN_NAV is now the short map
+# of the owner's five daily workflows, with Dashboard and System around them.
 # TOOL_NAV below remains the complete map used by Ctrl-K and the workflow hubs,
 # so condensing the drawer never makes a tool undiscoverable or breaks a saved
 # direct URL.
@@ -249,18 +250,21 @@ ADMIN_NAV = [
         ("/dashboard", "Dashboard"),
         ("/analytics", "Analytics"),
     ], False),
-    ("Stock", [
+    ("Add stock", [
         ("/scan-add", "Scan & add"),
+    ], False),
+    ("Review", [
         ("/review-centre", "Review centre"),
+    ], False),
+    ("Inventory", [
         ("/inventory", "Inventory"),
         ("/personal-collection", "Personal collection"),
     ], False),
-    ("Selling", [
+    ("Sell", [
         ("/ebay", "eBay"),
         ("/nl-vault", "NL Vault shop"),
     ], False),
-    ("Buying & research", [
-        ("/retailer-goals", "Retailer Goals"),
+    ("Research", [
         ("/market-tools", "Market tools"),
     ], False),
     ("System", [
@@ -320,6 +324,7 @@ TOOL_NAV = [
         ("/deal-check", "Deal check"),
         ("/buying-calculator", "Buying calculator"),
         ("/release-calendar", "Release calendar"),
+        ("/retailer-goals", "Retailer Goals"),
     ], False),
     ("Data", [
         ("/export", "Export data"),
@@ -346,8 +351,7 @@ NAV_ACTIVE_PREFIXES = {
     "/personal-collection": ("/personal-collection",),
     "/ebay": ("/ebay", "/listings/review", "/ebay-listings", "/ebay-sales", "/ebay-export"),
     "/nl-vault": ("/nl-vault", "/shop-listings", "/shop-pricing", "/shop-orders", "/contact-messages"),
-    "/retailer-goals": ("/retailer-goals",),
-    "/market-tools": ("/market-tools", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar"),
+    "/market-tools": ("/market-tools", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar", "/retailer-goals"),
     "/settings": ("/settings", "/export"),
 }
 
@@ -384,7 +388,7 @@ HIDDEN_NAV = [
 # inside nav_counts.py so the two halves of the contract -- what the server
 # counts, and what the drawer shows -- are visible together.
 # Only /review-centre is actually in ADMIN_NAV (the drawer was condensed
-# from ~39 links down to today's 11 -- see ADMIN_NAV's own comment); the
+# from ~39 links down to today's 10 -- see ADMIN_NAV's own comment); the
 # other seven review-queue routes this set used to list are never passed
 # to _nav_link at all, so a badge span for them could never exist in the
 # DOM to begin with. Harmless as dead weight (queue_counts() below still

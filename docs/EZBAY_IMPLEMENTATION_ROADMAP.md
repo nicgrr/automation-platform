@@ -51,15 +51,16 @@ reliability and rollback improve before business workflows or schemas are remove
 - [x] Generalise the historical `CardPrice.card_id` name to catalogue-item identity
   (`catalog_item_id` is canonical in application code; the physical column and a
   compatibility synonym remain for the observation window).
-- [ ] Route approved card/photo captures into canonical catalogue and inventory.
+- [x] Route approved card/photo captures into canonical catalogue and inventory;
+  unsafe or ambiguous captures remain visible without changing stock.
 - [ ] Preserve legacy fields until verification is complete; remove them only in a
   later backed-up release.
 
 ## Phase 3 — workflow consolidation
 
-- [ ] Organise primary navigation as Add Stock, Review, Inventory, Sell and Research.
-- [ ] Nest specialist tools beneath Inventory and Research.
-- [ ] Move Retailer Goals beneath Research/Market Tools.
+- [x] Organise primary navigation as Add Stock, Review, Inventory, Sell and Research.
+- [x] Nest specialist tools beneath Inventory and Research.
+- [x] Move Retailer Goals beneath Research/Market Tools.
 - [ ] Merge Potential Stock into Market Watch candidate statuses.
 - [ ] Make `shop_listings` the canonical sellable draft and retire
   `pending_listings` after dependency checks.

@@ -110,7 +110,7 @@ def _storefront_readiness_html(settings) -> str:
 
 
 def _quicklinks_html(counts: dict[str, int | None], storefront_url: str) -> str:
-    """The same eleven workflow entrances shown in the shared drawer."""
+    """The same ten workflow entrances shown in the shared drawer."""
     columns = []
     for title, links, collapsed in ADMIN_NAV:
         if collapsed:
