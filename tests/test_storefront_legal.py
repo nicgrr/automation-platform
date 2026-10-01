@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base, get_session
+from automation_control.config import Settings
 from storefront.app import create_app
 
 
@@ -56,3 +57,23 @@ def test_legal_pages_use_the_normal_shop_chrome(client):
     body = client.get("/privacy").text
     assert "class='topbar'" in body
     assert "NL Vault — trading cards" in body
+
+
+def test_approved_configured_legal_pages_replace_placeholders_and_allow_indexing(client, monkeypatch):
+    import storefront.legal as legal
+
+    monkeypatch.setattr(legal, "get_settings", lambda: Settings(
+        storefront_business_name="Example Pty Ltd",
+        storefront_business_abn="00 000 000 000",
+        storefront_contact_email="shop@example.test",
+        storefront_gst_statement="Prices include GST",
+        storefront_retention_period="7 years",
+        storefront_legal_approved=True,
+    ))
+
+    body = client.get("/terms").text
+    assert "Example Pty Ltd" in body
+    assert "00 000 000 000" in body
+    assert "shop@example.test" in body
+    assert "[BUSINESS_NAME]" not in body
+    assert "noindex" not in body

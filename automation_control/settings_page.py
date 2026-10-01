@@ -33,6 +33,7 @@ from .database import get_session
 from .ebay_oauth import configured, configured_for_writes
 from .models import EbayCredential
 from .release_info import application_revision, database_revision, expected_database_revision
+from .storefront_readiness import storefront_readiness_issues
 from .ui import brand_header, page
 
 router = APIRouter()
@@ -157,9 +158,14 @@ def _integration_rows(settings: Settings) -> list[Row]:
         Row("pokemontcg.io", GOOD if settings.pokemontcg_api_key else WARN,
             "configured" if settings.pokemontcg_api_key else "anonymous",
             "" if settings.pokemontcg_api_key else "works without a key, at a lower rate limit"),
-        Row("Stripe (shop checkout)", GOOD if settings.stripe_secret_key else WARN,
-            "configured" if settings.stripe_secret_key else "not configured",
-            "" if settings.stripe_secret_key else "the storefront cannot take payment"),
+        Row("Stripe (shop checkout)",
+            GOOD if all((settings.stripe_secret_key, settings.stripe_publishable_key,
+                         settings.stripe_webhook_secret)) else WARN,
+            "configured" if all((settings.stripe_secret_key, settings.stripe_publishable_key,
+                                 settings.stripe_webhook_secret)) else "incomplete",
+            "" if all((settings.stripe_secret_key, settings.stripe_publishable_key,
+                       settings.stripe_webhook_secret))
+            else "secret, publishable and webhook credentials are all required"),
     ]
 
 
@@ -195,6 +201,7 @@ def settings_page(request: Request, user: str = Depends(require_dashboard_user),
     app_revision, dirty = application_revision()
     schema_revision = database_revision(session)
     expected_schema_revision = expected_database_revision()
+    storefront_issues = storefront_readiness_issues(settings)
     if dirty is True:
         app_row = Row("Application revision", WARN, f"{app_revision} + local changes",
                       "the running source cannot be reproduced from this commit alone")
@@ -221,6 +228,11 @@ def settings_page(request: Request, user: str = Depends(require_dashboard_user),
         + f"<div class='panel'><h2>Integrations</h2>"
           "<p class='subtitle'>Whether a credential is present. Keys are never displayed.</p>"
         + _table(_integration_rows(settings)) + "</div>"
+        + f"<div class='panel'><h2>NL Vault launch readiness</h2>{_table([Row(
+            'Launch gate', WARN if storefront_issues else GOOD,
+            f'{len(storefront_issues)} item(s) remaining' if storefront_issues else 'ready',
+            '; '.join(storefront_issues),
+        )])}</div>"
         + f"<div class='panel'><div class='set-head'><h2>Background jobs</h2>"
           "<a class='btn ghost' href='/scan-ingest'>Logs</a></div>"
         + _table(_job_rows()) + "</div>"

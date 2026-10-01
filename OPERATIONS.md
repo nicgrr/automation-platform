@@ -5,11 +5,12 @@
 | Unit | What it does |
 |---|---|
 | `ezbay.service` | The web app (`automation_control.api:app`) on `127.0.0.1:8080`, via Tailscale as `homeserver.tailefaa51.ts.net` |
+| `nl-vault.service` | Private NL Vault storefront on `127.0.0.1:8090`, via Tailscale port `8444`; public launch is separately gated in the dashboard |
 | `scan-ingest.service` | Watches for scanned sheets, detects/identifies/commits cards continuously |
 | `scanbd.service` | Polls the flatbed scanner's button; known to leak memory and occasionally misfire — see `scanbd-restart.timer` |
 
 ```bash
-sudo systemctl status ezbay scan-ingest scanbd
+sudo systemctl status ezbay nl-vault scan-ingest scanbd
 sudo journalctl -u ezbay -f
 ```
 
@@ -67,6 +68,34 @@ restic -r <repo> restore <snapshot-id> --target /tmp/restore --include /home/nic
 Repository location and password are in `/etc/restic-onedrive/` — not printed here
 per the "never print secrets" rule; confirmed to exist, not read.
 
+### Restore drill
+
+The last non-destructive drill passed on 2026-10-01 using
+`backups/automation-pre-pricing-policy-20261001T1643.sqlite`. The snapshot was
+copied beneath `/tmp`, passed `PRAGMA integrity_check` and
+`PRAGMA foreign_key_check`, upgraded from `20261001_01` to `20261001_02`, and
+passed those checks again. Catalogue, inventory, price and shop-listing counts
+were preserved (`64911`, `2140`, `97131`, `2127`), and a FastAPI health request
+against the restored copy returned HTTP 200.
+
+Repeat without touching production:
+
+```bash
+cd /home/nic/automation-platform
+drill_dir="$(mktemp -d /tmp/ezbay-restore-drill.XXXXXX)"
+restored_db="$drill_dir/restored.sqlite"
+cp backups/<snapshot>.sqlite "$restored_db"
+sqlite3 "$restored_db" 'PRAGMA integrity_check; SELECT count(*) FROM pragma_foreign_key_check;'
+AUTOMATION_DATABASE_URL="sqlite:///$restored_db" .venv/bin/alembic upgrade head
+AUTOMATION_DATABASE_URL="sqlite:///$restored_db" .venv/bin/alembic current
+sqlite3 "$restored_db" 'PRAGMA integrity_check; SELECT count(*) FROM pragma_foreign_key_check;'
+```
+
+The expected results are `ok`, zero violations and the current Alembic head.
+Use the application startup check against the temporary URL before accepting a
+drill as complete. Temporary drill copies contain real business data and must
+remain local; allow `/tmp` housekeeping to remove them.
+
 ## Deploying a release
 
 ```bash
@@ -83,12 +112,25 @@ sqlite3 automation.db ".backup '/home/nic/backups/automation-pre-release-$(date 
 sudo systemctl restart ezbay                  # for API/dashboard changes
 sudo systemctl restart scan-ingest            # for scan_ingest pipeline changes
 curl --fail http://127.0.0.1:8080/health
+curl --fail http://127.0.0.1:8090/health
 ```
 
 Deploy only committed, tagged revisions. Settings shows both the Git revision and
 database revision currently in use. If smoke checks fail, stop writers, restore the
 pre-release database only when the release included a data migration, return to the
 previous tag and restart both services.
+
+The tracked storefront unit is installed with:
+
+```bash
+sudo install -m 0644 docs/systemd/nl-vault.service /etc/systemd/system/nl-vault.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now nl-vault.service
+```
+
+Running the private service does not mean the shop is ready for public launch. The
+dashboard launch gate remains visible until all Stripe credentials, verified legal
+business facts and explicit legal-review approval are configured.
 
 ## Running a schema migration
 

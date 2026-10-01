@@ -16,7 +16,7 @@ from html import escape
 
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from automation_control.database import get_session
@@ -35,6 +35,13 @@ from .common import (
 )
 
 router = APIRouter()
+
+
+@router.get("/health")
+def health(session: Session = Depends(get_session)) -> dict[str, str]:
+    """Unauthenticated liveness check: no catalogue or business data."""
+    session.execute(text("SELECT 1"))
+    return {"status": "ok"}
 
 # --- browsing ---------------------------------------------------------------
 

@@ -32,6 +32,16 @@ catalogued printings are explicitly `manual_only`, while four genuinely stale
 supported prices remain visible as work. Application startup now refuses an
 unversioned or mismatched database instead of trying to repair it with
 `create_all()`, and Settings reports the expected-versus-current revision.
+A non-destructive restore drill then proved the pre-migration backup could be
+upgraded to the current head with all core counts preserved, clean integrity and
+foreign keys, and a healthy application startup.
+
+NL Vault now has a tracked, restartable systemd service, a database-backed health
+endpoint and dashboard monitoring of both the process and HTTP response. Its public
+launch gate separately names every missing Stripe and legal prerequisite; legal
+pages read confirmed facts from configuration, retain obvious placeholders while
+incomplete, and remain `noindex` until the owner explicitly marks the reviewed text
+approved. Running the private shop can no longer be mistaken for launch readiness.
 
 ## 2026-09-24 — Generic collectible discovery and alert inbox
 

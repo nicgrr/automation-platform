@@ -83,7 +83,8 @@ def test_no_credential_value_is_ever_rendered(client):
     and nothing this page answers needs the value."""
     app.state.settings = _settings(anthropic_api_key=SECRET, apify_token=SECRET,
                                    pokemonpricetracker_api_key=SECRET,
-                                   ebay_client_secret=SECRET, stripe_secret_key=SECRET)
+                                   ebay_client_secret=SECRET, stripe_secret_key=SECRET,
+                                   stripe_publishable_key=SECRET, stripe_webhook_secret=SECRET)
 
     page = client.get("/settings").text
 

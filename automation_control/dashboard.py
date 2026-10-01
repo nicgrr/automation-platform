@@ -69,6 +69,20 @@ def _jobs_html() -> str:
             "<p class='jobs-foot'>Logs are in <code>scan_ingest_data/logs/</code>.</p></div>")
 
 
+def _storefront_readiness_html(settings) -> str:
+    from .storefront_readiness import storefront_readiness_issues
+
+    issues = storefront_readiness_issues(settings)
+    if not issues:
+        return ""
+    rows = "".join(f"<li>{escape(issue)}</li>" for issue in issues)
+    return (
+        "<div class='jobs jobs-bad'><p class='jobs-head'>NL Vault is private but not launch-ready</p>"
+        f"<ul>{rows}</ul><p class='jobs-foot'><a href='/settings'>Open Settings</a>. "
+        "Checkout and public launch remain blocked until every item is resolved.</p></div>"
+    )
+
+
 def _quicklinks_html(counts: dict[str, int | None], storefront_url: str) -> str:
     """The same eleven workflow entrances shown in the shared drawer."""
     columns = []
@@ -328,6 +342,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     <p>A live view of inventory, sales, and purchasing &middot; as of {now:%Y-%m-%d %H:%M} UTC</p>
   </div>
   {_jobs_html()}
+  {_storefront_readiness_html(settings)}
   <div class="widget-grid">{grid}</div>
 
   {_quicklinks_html(counts, storefront_url)}"""

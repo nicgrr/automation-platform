@@ -14,6 +14,7 @@ from automation_control.job_health import FAILED, OK, OVERDUE, RUNNING, UNKNOWN,
 
 TIMED = Job("x.service", "x.timer", "Price backfill", "prices go stale")
 ALWAYS_ON = Job("y.service", None, "Scan ingest", "sheets pile up")
+HTTP_SERVICE = Job("z.service", None, "Shop", "shop unavailable", "http://127.0.0.1/health")
 NOW = datetime(2026, 9, 14, 16, 0, 0)
 
 
@@ -129,6 +130,22 @@ def test_an_always_on_service_that_is_up_is_ok(monkeypatch):
     assert status_for(ALWAYS_ON, NOW).state == OK
 
 
+def test_an_active_service_with_a_broken_http_probe_is_failed(monkeypatch):
+    _install(monkeypatch, {"z.service": {"Result": "success", "ActiveState": "active",
+                                         "ExecMainStatus": "0"}})
+    monkeypatch.setattr(job_health, "_http_problem", lambda _url: "health check returned HTTP 500")
+    status = status_for(HTTP_SERVICE, NOW)
+    assert status.state == FAILED
+    assert status.detail == "health check returned HTTP 500"
+
+
+def test_an_active_service_with_a_healthy_http_probe_is_ok(monkeypatch):
+    _install(monkeypatch, {"z.service": {"Result": "success", "ActiveState": "active",
+                                         "ExecMainStatus": "0"}})
+    monkeypatch.setattr(job_health, "_http_problem", lambda _url: None)
+    assert status_for(HTTP_SERVICE, NOW).state == OK
+
+
 def test_an_unreadable_unit_is_unknown_not_a_crash(monkeypatch):
     """No systemd, a renamed unit or a hung query must not take the
     dashboard down with it."""
@@ -174,6 +191,7 @@ def test_collectible_market_watch_is_one_of_the_monitored_jobs():
     "Encrypted backup",
     "Backup integrity check",
     "Backup maintenance",
+    "NL Vault storefront",
 ])
 def test_operational_dependencies_are_monitored(label):
     from automation_control.job_health import JOBS

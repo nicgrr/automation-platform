@@ -87,6 +87,16 @@ class Settings(BaseSettings):
     # Created in the Stripe dashboard once the webhook endpoint has a real
     # public URL to register -- unset, the endpoint just 503s.
     stripe_webhook_secret: str | None = None
+    # Public-shop identity and reviewed legal wording. These stay empty on
+    # purpose: inventing an ABN, entity name or tax status would be worse
+    # than visibly blocking launch. `storefront_legal_approved` is the
+    # owner's explicit sign-off after the completed text has been reviewed.
+    storefront_business_name: str | None = None
+    storefront_business_abn: str | None = None
+    storefront_contact_email: str | None = None
+    storefront_gst_statement: str | None = None
+    storefront_retention_period: str | None = None
+    storefront_legal_approved: bool = False
     anthropic_api_key: str | None = None
     # Reverse image search for a captured collectible photo (see
     # reverse_image_search.py) -- a real Google Lens actor run on Apify's

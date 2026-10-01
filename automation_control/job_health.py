@@ -30,7 +30,9 @@ Read-only throughout, the same way scan_ingest_status.py already queries
 `systemctl is-active`. Nothing here can start, stop or restart anything.
 """
 
+import json
 import subprocess
+from urllib import request as urllib_request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -55,6 +57,7 @@ class Job:
     timer: str | None  # its .timer, when it's scheduled rather than always-on
     label: str
     what: str          # what breaks, in the reader's terms, when this stops
+    health_url: str | None = None
 
 
 JOBS = (
@@ -85,6 +88,9 @@ JOBS = (
         "backup repository corruption can remain undetected"),
     Job("restic-maintenance.service", "restic-maintenance.timer", "Backup maintenance",
         "backup retention and repository maintenance stop running"),
+    Job("nl-vault.service", None, "NL Vault storefront",
+        "the shop is unavailable even if its Tailscale proxy is still listening",
+        "http://127.0.0.1:8090/health"),
 )
 
 
@@ -187,7 +193,26 @@ def status_for(job: Job, now: datetime | None = None) -> JobStatus:
     elif active != "active":
         return JobStatus(job, FAILED, last_run, None, exit_code, f"not running ({active or 'unknown'})")
 
+    if job.health_url:
+        problem = _http_problem(job.health_url)
+        if problem:
+            return JobStatus(job, FAILED, last_run, next_run, exit_code, problem)
+
     return JobStatus(job, OK, last_run, next_run, exit_code)
+
+
+def _http_problem(url: str) -> str | None:
+    """Return a dashboard-safe problem, or None for a healthy JSON probe."""
+    try:
+        with urllib_request.urlopen(url, timeout=QUERY_TIMEOUT_SECONDS) as response:
+            if response.status != 200:
+                return f"health check returned HTTP {response.status}"
+            payload = json.loads(response.read(1024))
+            if payload.get("status") != "ok":
+                return "health check did not report ok"
+    except Exception:
+        return "health check could not reach the service"
+    return None
 
 
 def _ago(delta: timedelta) -> str:

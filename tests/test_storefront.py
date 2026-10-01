@@ -51,6 +51,12 @@ def _lot(session, *, cards=185, price="105.47", status=ShopListingStatus.ACTIVE)
 
 # --- the isolation that matters most ---------------------------------------
 
+def test_health_checks_database_without_exposing_shop_data(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_storefront_exposes_no_admin_routes(client):
     """The whole reason the shop is a separate app: a public visitor must
     not be able to reach inventory, scanning, or credentials, by

@@ -30,10 +30,11 @@ reliability and rollback improve before business workflows or schemas are remove
 
 - [x] Treat unreadable/unknown job state as attention-worthy.
 - [x] Add inventory-audit, scanner-button, scanner-recovery and backup jobs to health.
-- [ ] Add storefront HTTP/configuration health once its service is deployed.
-- [ ] Make job problems persistent and prominent on the dashboard until recovered.
+- [x] Add storefront HTTP/configuration health once its service is deployed.
+- [x] Make job problems persistent and prominent on the dashboard until recovered.
 - [ ] Add backup age and last successful restore-drill status.
-- [ ] Perform and document a restore into a temporary database.
+- [x] Perform and document a restore into a temporary database (integrity and
+  foreign keys clean, migration to head succeeded, restored app health HTTP 200).
 - [x] Classify the seven stale/missing-price holdings as supported-stale or
   explicitly unsupported (four supported-stale; three manual-only with reasons).
 
@@ -66,7 +67,7 @@ reliability and rollback improve before business workflows or schemas are remove
 - [ ] Complete NL Vault legal/business details.
 - [ ] Exercise checkout, webhook, reservation, stock decrement, fulfilment,
   cancellation and refund in a controlled transaction.
-- [ ] Add storefront health to the dashboard before public launch.
+- [x] Add storefront health to the dashboard before public launch.
 - [ ] Prepare Whatnot inventory, show, sale and customer integration and rehearse a
   show workflow before first use.
 - [ ] Integrate retailer purchases with purchase lots and inventory.
