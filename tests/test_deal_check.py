@@ -40,7 +40,7 @@ def client(session):
 def _seed_priced_pokemon_card(session, catalog_item_id="pikachu-58", price=100):
     session.add(CatalogItem(id=catalog_item_id, item_type=CatalogItemType.TCG_CARD, name="Pikachu"))
     session.add(TcgCard(catalog_item_id=catalog_item_id, game="pokemon", set_code="BASE", number="58"))
-    session.add(CardPrice(card_id=catalog_item_id, variant=CardVariant.NORMAL, source="test", price=price, currency="AUD"))
+    session.add(CardPrice(catalog_item_id=catalog_item_id, variant=CardVariant.NORMAL, source="test", price=price, currency="AUD"))
     session.commit()
 
 
@@ -201,7 +201,7 @@ def test_sealed_product_matches_by_title_and_falls_back_to_rrp(client, session):
 def test_sealed_product_prefers_a_real_market_price_over_rrp(client, session):
     _seed_sealed_product(session, "sv6pt5-etb", "Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",
                           rrp=Decimal("84.95"))
-    session.add(CardPrice(card_id="sv6pt5-etb", variant=CardVariant.NORMAL, source="test", price=110, currency="AUD"))
+    session.add(CardPrice(catalog_item_id="sv6pt5-etb", variant=CardVariant.NORMAL, source="test", price=110, currency="AUD"))
     session.commit()
     fake = ExtractedListingItem(
         description="Pokemon Scarlet & Violet 6.5 Shrouded Fable Elite Trainer Box",

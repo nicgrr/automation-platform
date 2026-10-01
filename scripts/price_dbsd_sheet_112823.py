@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
                 written += 3
                 continue
             for source, value in (("ebay_active_low", low), ("ebay_active_median", median), ("ebay_active_high", high)):
-                session.add(CardPrice(card_id=card_id, variant=None, source=source,
+                session.add(CardPrice(catalog_item_id=card_id, variant=None, source=source,
                                       price=Decimal(value), currency="AUD", fetched_at=now))
                 written += 1
 

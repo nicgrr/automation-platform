@@ -43,6 +43,12 @@ pages read confirmed facts from configuration, retain obvious placeholders while
 incomplete, and remain `noindex` until the owner explicitly marks the reviewed text
 approved. Running the private shop can no longer be mistaken for launch readiness.
 
+Pricing code now uses `CardPrice.catalog_item_id`, matching the generic catalogue
+foreign key that the field has represented for Pokémon, One Piece, Dragon Ball,
+sealed stock and collectibles. The physical `card_id` column and an ORM synonym
+remain during the compatibility window, avoiding a risky 97,000-row table rebuild
+while removing the misleading name from active readers and writers.
+
 ## 2026-09-24 — Generic collectible discovery and alert inbox
 
 Expanded the Sonny Angel market page into a generic AU/JP collectible watch

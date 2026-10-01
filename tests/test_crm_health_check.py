@@ -32,7 +32,7 @@ def make_inventory(session, *, card_id, catalog_item_id=None, status=InventorySt
 
 
 def make_price(session, *, card_id, fetched_at):
-    price = CardPrice(card_id=card_id, source="test", price="5.00", fetched_at=fetched_at)
+    price = CardPrice(catalog_item_id=card_id, source="test", price="5.00", fetched_at=fetched_at)
     session.add(price)
     session.commit()
     return price

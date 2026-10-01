@@ -216,7 +216,7 @@ def _targets(session, *, price_all: bool, game: str | None, limit: int,
     # and the same rows were refreshed forever.
     last_priced = (
         select(func.max(CardPrice.fetched_at))
-        .where(CardPrice.card_id == CatalogItem.id, CardPrice.source == EBAY_ACTIVE_LOW_SOURCE)
+        .where(CardPrice.catalog_item_id == CatalogItem.id, CardPrice.source == EBAY_ACTIVE_LOW_SOURCE)
         .correlate(CatalogItem)
         .scalar_subquery()
     )

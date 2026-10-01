@@ -461,7 +461,7 @@ def _collectible(session, name, *, brand="Sonny Angel", series=None, secret=Fals
                                    is_secret=secret))
     for source, value in (("ebay_active_low", low), ("ebay_active_median", median)):
         if value is not None:
-            session.add(CardPrice(card_id=item_id, variant=None, source=source,
+            session.add(CardPrice(catalog_item_id=item_id, variant=None, source=source,
                                   price=Decimal(str(value)), currency="AUD"))
     if owned:
         session.add(InventoryItem(catalog_item_id=item_id, card_id=None, quantity=owned))
@@ -617,9 +617,9 @@ def test_the_newest_ebay_price_wins(client, session):
     from automation_control.models import CardPrice
 
     item_id = _collectible(session, "Repriced", median=100.00)
-    old = session.scalars(select(CardPrice).where(CardPrice.card_id == item_id)).first()
+    old = session.scalars(select(CardPrice).where(CardPrice.catalog_item_id == item_id)).first()
     old.fetched_at = datetime.now(UTC) - timedelta(days=2)
-    session.add(CardPrice(card_id=item_id, variant=None, source="ebay_active_median",
+    session.add(CardPrice(catalog_item_id=item_id, variant=None, source="ebay_active_median",
                           price=Decimal("250.00"), currency="AUD"))
     session.commit()
 

@@ -83,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.dry_run:
                 written += 1
                 continue
-            session.add(CardPrice(card_id=card_id, variant=None, source=source,
+            session.add(CardPrice(catalog_item_id=card_id, variant=None, source=source,
                                   price=Decimal(price), currency="USD", fetched_at=now))
             written += 1
 

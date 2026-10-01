@@ -81,7 +81,7 @@ def _match_catalogue(session: Session, extracted) -> tuple[CatalogItem, Collecti
 def _latest(session: Session, item_id: str, source: str) -> Decimal | None:
     row = session.scalars(
         select(CardPrice)
-        .where(CardPrice.card_id == item_id, CardPrice.source == source)
+        .where(CardPrice.catalog_item_id == item_id, CardPrice.source == source)
         .order_by(CardPrice.fetched_at.desc()).limit(1)
     ).first()
     return Decimal(str(row.price)) if row else None

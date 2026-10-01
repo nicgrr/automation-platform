@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         ).all()
         already_priced = set(
             session.execute(
-                select(CardPrice.card_id, CardPrice.variant).where(CardPrice.source == POKEMONPRICETRACKER_SOURCE_NAME).distinct()
+                select(CardPrice.catalog_item_id, CardPrice.variant).where(CardPrice.source == POKEMONPRICETRACKER_SOURCE_NAME).distinct()
             ).all()
         )
 
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
                     if quote is None:
                         no_quote.append(f"{card.name} #{card.number} ({set_label}, {variant.value})")
                         continue
-                    session.add(CardPrice(card_id=card.id, variant=variant, source=quote.source, price=quote.price, currency=quote.currency))
+                    session.add(CardPrice(catalog_item_id=card.id, variant=variant, source=quote.source, price=quote.price, currency=quote.currency))
                     priced_count += 1
                 session.commit()
 

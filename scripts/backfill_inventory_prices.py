@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         for item in items:
             existing = session.scalars(
                 select(CardPrice).where(
-                    CardPrice.card_id == item.card_id,
+                    CardPrice.catalog_item_id == item.card_id,
                     CardPrice.variant == item.variant,
                 )
             ).first()

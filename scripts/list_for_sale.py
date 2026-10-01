@@ -76,7 +76,7 @@ def best_price(session: Session, catalog_item_id: str) -> tuple[Decimal, str] | 
     first, newest within a source. Returns None when nothing is known --
     the caller skips rather than inventing a number."""
     rows = session.scalars(
-        select(CardPrice).where(CardPrice.card_id == catalog_item_id).order_by(CardPrice.fetched_at.desc())
+        select(CardPrice).where(CardPrice.catalog_item_id == catalog_item_id).order_by(CardPrice.fetched_at.desc())
     ).all()
     if not rows:
         return None

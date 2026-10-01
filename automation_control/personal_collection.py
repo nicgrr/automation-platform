@@ -74,7 +74,7 @@ PREFERRED_SOURCES = ["manual", "ebay_active_low", "optcgapi_market", "pokemonpri
 
 def _best_price(session: Session, catalog_item_id: str) -> tuple[Decimal, str] | None:
     rows = session.scalars(
-        select(CardPrice).where(CardPrice.card_id == catalog_item_id).order_by(CardPrice.fetched_at.desc())
+        select(CardPrice).where(CardPrice.catalog_item_id == catalog_item_id).order_by(CardPrice.fetched_at.desc())
     ).all()
     if not rows:
         return None
@@ -94,8 +94,8 @@ def _best_prices(session: Session, catalog_item_ids: list[str]) -> dict[str, Dec
     if not catalog_item_ids:
         return {}
     rows = session.execute(
-        select(CardPrice.card_id, CardPrice.source, CardPrice.price)
-        .where(CardPrice.card_id.in_(catalog_item_ids), CardPrice.price > 0)
+        select(CardPrice.catalog_item_id, CardPrice.source, CardPrice.price)
+        .where(CardPrice.catalog_item_id.in_(catalog_item_ids), CardPrice.price > 0)
         .order_by(CardPrice.fetched_at.desc())
     ).all()
     by_item: dict[str, list[tuple[str, Decimal]]] = {}

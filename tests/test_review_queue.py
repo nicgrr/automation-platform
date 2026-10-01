@@ -158,7 +158,7 @@ def test_queue_shows_the_matcher_s_suggestion(client, media, session, tmp_path):
 def test_queue_shows_name_set_rarity_and_cost_for_the_top_match(client, media, session, tmp_path):
     """The matched record is a real editor, prefilled from the catalogue."""
     _cache_card(session, tmp_path, set_id="xy11", number="31", name="Dewott", seed=7, rarity="Uncommon")
-    session.add(CardPrice(card_id="xy11-31", source="ebay_active_low", price="4.20", currency="AUD"))
+    session.add(CardPrice(catalog_item_id="xy11-31", source="ebay_active_low", price="4.20", currency="AUD"))
     session.commit()
     _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
 
@@ -718,14 +718,14 @@ def test_accept_with_a_cost_override_adds_a_manual_price(client, media, session,
                                         "set_id": "xy11", "number": "31", "cost": "9.99"},
                follow_redirects=False)
 
-    price = session.scalars(select(CardPrice).where(CardPrice.card_id == "xy11-31")).one()
+    price = session.scalars(select(CardPrice).where(CardPrice.catalog_item_id == "xy11-31")).one()
     assert price.source == "manual"
     assert Decimal(str(price.price)) == Decimal("9.99")
 
 
 def test_accept_leaving_cost_unchanged_does_not_add_a_redundant_manual_row(client, media, session, tmp_path):
     _cache_card(session, tmp_path, number="31", name="Dewott", seed=7)
-    session.add(CardPrice(card_id="xy11-31", source="manual", price="9.99", currency="AUD"))
+    session.add(CardPrice(catalog_item_id="xy11-31", source="manual", price="9.99", currency="AUD"))
     session.commit()
     crop = _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
 
@@ -733,7 +733,7 @@ def test_accept_leaving_cost_unchanged_does_not_add_a_redundant_manual_row(clien
                                         "set_id": "xy11", "number": "31", "cost": "9.99"},
                follow_redirects=False)
 
-    assert session.scalars(select(CardPrice).where(CardPrice.card_id == "xy11-31")).all().__len__() == 1
+    assert session.scalars(select(CardPrice).where(CardPrice.catalog_item_id == "xy11-31")).all().__len__() == 1
 
 
 def test_accept_with_no_rarity_or_cost_fields_leaves_the_catalogue_untouched(client, media, session, tmp_path):
@@ -744,7 +744,7 @@ def test_accept_with_no_rarity_or_cost_fields_leaves_the_catalogue_untouched(cli
                                         "set_id": "xy11", "number": "31"}, follow_redirects=False)
 
     assert session.get(CatalogCard, "xy11-31").rarity == "Common"
-    assert session.scalars(select(CardPrice).where(CardPrice.card_id == "xy11-31")).all() == []
+    assert session.scalars(select(CardPrice).where(CardPrice.catalog_item_id == "xy11-31")).all() == []
 
 
 def test_accept_rejects_a_number_not_in_the_set(client, media, session, tmp_path):
@@ -937,7 +937,7 @@ def test_review_edits_sync_the_scan_and_crm_catalogues(client, media, session, t
     assert session.get(CatalogItem, "xy11-31").name == "Dewott"
     assert session.get(TcgCard, "xy11-31").rarity == "Uncommon"
     assert session.get(TcgCard, "xy11-31").language == "Japanese"
-    price = session.scalars(select(CardPrice).where(CardPrice.card_id == "xy11-31")).one()
+    price = session.scalars(select(CardPrice).where(CardPrice.catalog_item_id == "xy11-31")).one()
     assert Decimal(str(price.price)) == Decimal("12.50")
 
 

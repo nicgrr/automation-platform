@@ -130,8 +130,8 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     # personal_collection.py) -- a sales-facing coverage metric measuring
     # what's actually for sale shouldn't be diluted by what isn't.
     items = session.scalars(select(InventoryItem).where(InventoryItem.status != InventoryStatus.PERSONAL_COLLECTION)).all()
-    # CardPrice.card_id actually lives in the generic catalog_item_id
-    # id-space (see CardPrice's own docstring and every recent importer --
+    # CardPrice.catalog_item_id lives in the generic catalogue id-space
+    # (see CardPrice's own docstring and every recent importer --
     # One Piece, Personal Collection, collectibles all price by
     # catalog_item_id), not InventoryItem.card_id, which is a Pokemon-only
     # legacy field left null for anything imported through the newer

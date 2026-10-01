@@ -719,7 +719,7 @@ def test_the_page_shows_the_ebay_signal_gap(client, session):
 
     _held_card(session, "xy11-1")
     _held_card(session, "xy11-2")
-    session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL,
+    session.add(CardPrice(catalog_item_id="xy11-1", variant=CardVariant.NORMAL,
                           source="ebay_active_low", price=Decimal("5.00"), currency="AUD"))
     session.commit()
 
@@ -787,7 +787,7 @@ def test_a_card_priced_by_either_source_is_not_in_the_unpriced_list(client, sess
 
     _held_card(session, "xy11-1")
     _held_card(session, "xy11-2")
-    session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL,
+    session.add(CardPrice(catalog_item_id="xy11-1", variant=CardVariant.NORMAL,
                           source="ebay_active_low", price=Decimal("5.00"), currency="AUD"))
     session.commit()
 
@@ -802,7 +802,7 @@ def test_every_held_card_priced_shows_the_all_clear_message(client, session):
     session.commit()
 
     from automation_control.models import CardVariant, CardPrice
-    session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL,
+    session.add(CardPrice(catalog_item_id="xy11-1", variant=CardVariant.NORMAL,
                           source="ebay_active_low", price=Decimal("5.00"), currency="AUD"))
     session.commit()
 

@@ -25,7 +25,7 @@ def _seed(Session, *, price=Decimal("5.00"), market=Decimal("2.00"), item_type=C
                                    payment_pct=Decimal("1.75"), payment_fixed=Decimal("0.30"),
                                    target_margin_pct=Decimal("0")))
         session.add(CatalogItem(id="item-1", item_type=item_type, name="Test Card"))
-        session.add(CardPrice(card_id="item-1", variant=CardVariant.NORMAL, source="ebay_active_low",
+        session.add(CardPrice(catalog_item_id="item-1", variant=CardVariant.NORMAL, source="ebay_active_low",
                               price=market, currency="AUD"))
         session.add(ShopListing(id="listing-1", catalog_item_id="item-1", title="Test Card",
                                 price=price, currency="AUD", status=ShopListingStatus.ACTIVE))

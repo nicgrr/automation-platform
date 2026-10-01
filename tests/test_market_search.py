@@ -92,7 +92,7 @@ def test_configured_search_shows_results_and_sandbox_note(client, configured_set
 def test_search_shows_your_own_catalog_price_alongside_ebay_results(client, session, configured_settings):
     session.add(CardSet(id="base1", name="Base Set"))
     session.add(CatalogCard(id="base1-4", set_id="base1", number="4", name="Charizard"))
-    session.add(CardPrice(card_id="base1-4", variant=CardVariant.NORMAL, source="test", price=250, currency="AUD"))
+    session.add(CardPrice(catalog_item_id="base1-4", variant=CardVariant.NORMAL, source="test", price=250, currency="AUD"))
     session.commit()
 
     with patch("automation_control.ebay_oauth.EbayOAuthClient.application_token", new=AsyncMock(return_value={"access_token": "app-token"})), \

@@ -79,7 +79,7 @@ def test_stops_the_whole_run_on_a_hard_rate_limit_instead_of_looping_through_eve
 def test_skips_cards_already_priced_by_this_source(monkeypatch, session_factory):
     _seed(session_factory, [("xy11-1", "1")])
     with session_factory() as session:
-        session.add(CardPrice(card_id="xy11-1", variant=CardVariant.NORMAL, source="pokemonpricetracker_market", price=Decimal("1.00"), currency="USD"))
+        session.add(CardPrice(catalog_item_id="xy11-1", variant=CardVariant.NORMAL, source="pokemonpricetracker_market", price=Decimal("1.00"), currency="USD"))
         session.commit()
 
     monkeypatch.setattr(backfill_mod, "SessionLocal", session_factory)
@@ -115,6 +115,6 @@ def test_a_collectible_in_inventory_does_not_crash_the_run(monkeypatch, session_
     assert backfill_mod.main(["--max-cards", "5"]) == 0
 
     with session_factory() as session:
-        priced = session.scalars(select(CardPrice.card_id)).all()
+        priced = session.scalars(select(CardPrice.catalog_item_id)).all()
     # The card is priced; the collectible is simply not this script's job.
     assert priced == ["xy11-1"]

@@ -30,8 +30,8 @@ def stale_priced_available_items(session, *, days: int = STALE_PRICE_DAYS) -> in
     (of any source) newer than `days` -- includes items with no price at
     all."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
-    # CardPrice.card_id is a historical column name; its foreign key and
-    # identifier space are CatalogItem.  Using InventoryItem.card_id here
+    # CardPrice.catalog_item_id maps the historical physical `card_id`
+    # column, whose foreign key and identifier space are CatalogItem. Using InventoryItem.card_id here
     # collapses every non-TCG collectible (where card_id is NULL) into one
     # fake item and misses its real price rows.
     available_item_ids = set(session.scalars(
@@ -46,8 +46,8 @@ def stale_priced_available_items(session, *, days: int = STALE_PRICE_DAYS) -> in
     if not available_item_ids:
         return 0
     fresh_item_ids = set(session.scalars(
-        select(CardPrice.card_id)
-        .where(CardPrice.card_id.in_(available_item_ids), CardPrice.fetched_at >= cutoff)
+        select(CardPrice.catalog_item_id)
+        .where(CardPrice.catalog_item_id.in_(available_item_ids), CardPrice.fetched_at >= cutoff)
         .distinct()
     ))
     return len(available_item_ids - fresh_item_ids)

@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
 
         now = datetime.now(UTC)
         for source, value in PRICES.items():
-            session.add(CardPrice(card_id=NEW_ID, variant=None, source=source, price=Decimal(value), currency="AUD", fetched_at=now))
+            session.add(CardPrice(catalog_item_id=NEW_ID, variant=None, source=source, price=Decimal(value), currency="AUD", fetched_at=now))
 
         session.delete(session.get(TcgCard, AD_HOC_ITEM_ID))
         session.delete(session.get(CatalogItem, AD_HOC_ITEM_ID))

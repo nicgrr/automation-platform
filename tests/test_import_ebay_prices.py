@@ -300,9 +300,9 @@ def test_targets_are_ordered_never_priced_first_then_stalest(engine):
             session.add(TcgCard(catalog_item_id=cid, game="one_piece", set_code="OP13", number=cid))
             session.add(InventoryItem(card_id=None, catalog_item_id=cid,
                                       variant=CardVariant.NORMAL, quantity=1))
-        session.add(CardPrice(card_id="a", variant=CardVariant.NORMAL, source="ebay_active_low",
+        session.add(CardPrice(catalog_item_id="a", variant=CardVariant.NORMAL, source="ebay_active_low",
                               price=Decimal("1"), currency="AUD", fetched_at=now))
-        session.add(CardPrice(card_id="b", variant=CardVariant.NORMAL, source="ebay_active_low",
+        session.add(CardPrice(catalog_item_id="b", variant=CardVariant.NORMAL, source="ebay_active_low",
                               price=Decimal("1"), currency="AUD", fetched_at=now - timedelta(days=9)))
         session.commit()
 
@@ -321,9 +321,9 @@ def test_a_limit_takes_the_stalest_not_an_arbitrary_slice(engine):
             session.add(TcgCard(catalog_item_id=cid, game="one_piece", set_code="OP13", number=cid))
             session.add(InventoryItem(card_id=None, catalog_item_id=cid,
                                       variant=CardVariant.NORMAL, quantity=1))
-        session.add(CardPrice(card_id="a", variant=CardVariant.NORMAL, source="ebay_active_low",
+        session.add(CardPrice(catalog_item_id="a", variant=CardVariant.NORMAL, source="ebay_active_low",
                               price=Decimal("1"), currency="AUD", fetched_at=now))
-        session.add(CardPrice(card_id="b", variant=CardVariant.NORMAL, source="ebay_active_low",
+        session.add(CardPrice(catalog_item_id="b", variant=CardVariant.NORMAL, source="ebay_active_low",
                               price=Decimal("1"), currency="AUD", fetched_at=now - timedelta(days=30)))
         session.commit()
 

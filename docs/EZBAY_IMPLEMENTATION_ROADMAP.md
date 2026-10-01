@@ -44,7 +44,9 @@ reliability and rollback improve before business workflows or schemas are remove
   (`20261001_01`; blank-database build and production drift check both clean).
 - [x] Fail safely and visibly on application/database revision mismatch.
 - [ ] Make `catalog_item_id` canonical in every inventory reader and writer.
-- [ ] Generalise the historical `CardPrice.card_id` name to catalogue-item identity.
+- [x] Generalise the historical `CardPrice.card_id` name to catalogue-item identity
+  (`catalog_item_id` is canonical in application code; the physical column and a
+  compatibility synonym remain for the observation window).
 - [ ] Route approved card/photo captures into canonical catalogue and inventory.
 - [ ] Preserve legacy fields until verification is complete; remove them only in a
   later backed-up release.

@@ -82,12 +82,12 @@ def _ebay_prices(session: Session, item_ids: set[str]) -> dict[str, dict[str, Ca
         return {}
     rows = session.scalars(
         select(CardPrice)
-        .where(CardPrice.card_id.in_(item_ids), CardPrice.source.in_([EBAY_LOW, EBAY_MEDIAN]))
+        .where(CardPrice.catalog_item_id.in_(item_ids), CardPrice.source.in_([EBAY_LOW, EBAY_MEDIAN]))
         .order_by(CardPrice.fetched_at.desc())
     )
     latest: dict[str, dict[str, CardPrice]] = {}
     for row in rows:
-        bucket = latest.setdefault(row.card_id, {})
+        bucket = latest.setdefault(row.catalog_item_id, {})
         if row.source not in bucket:  # ordered newest-first, so first wins
             bucket[row.source] = row
     return latest

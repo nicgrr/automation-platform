@@ -37,7 +37,7 @@ def seed_series(session, series="Fruit Series", secret=True, median="421.09", lo
     session.add(CollectibleProduct(catalog_item_id=item_id, brand="Sonny Angel",
                                    series=series, is_secret=secret))
     for source, value in (("ebay_active_median", median), ("ebay_active_low", low)):
-        session.add(CardPrice(card_id=item_id, variant=None, source=source,
+        session.add(CardPrice(catalog_item_id=item_id, variant=None, source=source,
                               price=Decimal(value), currency="AUD"))
     session.commit()
     return item_id

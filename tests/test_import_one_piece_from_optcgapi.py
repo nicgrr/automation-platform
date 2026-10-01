@@ -90,7 +90,7 @@ def test_a_reprint_in_a_later_set_never_overwrites_an_already_plain_card(tmp_pat
         assert item.image_url == "https://example.test/plain.jpg"
         # still worth keeping both price observations -- just not letting
         # the reprint's own name/image win
-        assert session.query(CardPrice).filter_by(card_id=row.catalog_item_id).count() == 2
+        assert session.query(CardPrice).filter_by(catalog_item_id=row.catalog_item_id).count() == 2
 
 
 def test_a_reprint_in_a_later_set_never_overwrites_when_base_name_embeds_the_full_code(tmp_path, monkeypatch):
@@ -200,7 +200,7 @@ def test_import_records_market_price_preferring_the_non_parallel_value(tmp_path,
 
     with Session(engine) as session:
         zoro = session.query(TcgCard).filter_by(number="001").one()
-        prices = session.query(CardPrice).filter_by(card_id=zoro.catalog_item_id).all()
+        prices = session.query(CardPrice).filter_by(catalog_item_id=zoro.catalog_item_id).all()
         assert len(prices) == 1
         assert float(prices[0].price) == 2.08  # the non-parallel printing's price, not the parallel's 568.01
         assert prices[0].source == "optcgapi_market"
@@ -208,7 +208,7 @@ def test_import_records_market_price_preferring_the_non_parallel_value(tmp_path,
 
         # P-055 had market_price=None -- no fabricated price row
         luffy = session.query(TcgCard).filter_by(number="055").one()
-        assert session.query(CardPrice).filter_by(card_id=luffy.catalog_item_id).count() == 0
+        assert session.query(CardPrice).filter_by(catalog_item_id=luffy.catalog_item_id).count() == 0
 
 
 def test_reimporting_appends_a_new_price_observation_each_time(tmp_path, monkeypatch):
@@ -228,7 +228,7 @@ def test_reimporting_appends_a_new_price_observation_each_time(tmp_path, monkeyp
         zoro = session.query(TcgCard).filter_by(number="001").one()
         # append-only, same convention as the rest of card_prices -- two
         # runs means two observations, not one row overwritten
-        assert session.query(CardPrice).filter_by(card_id=zoro.catalog_item_id).count() == 2
+        assert session.query(CardPrice).filter_by(catalog_item_id=zoro.catalog_item_id).count() == 2
 
 
 def test_no_prices_flag_skips_writing_card_prices(tmp_path, monkeypatch):

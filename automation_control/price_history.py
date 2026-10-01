@@ -50,7 +50,7 @@ def price_history_page(card_id: str, user: str = Depends(require_dashboard_user)
     tcg = session.get(TcgCard, card_id)
 
     observations = session.scalars(
-        select(CardPrice).where(CardPrice.card_id == card_id).order_by(CardPrice.fetched_at)
+        select(CardPrice).where(CardPrice.catalog_item_id == card_id).order_by(CardPrice.fetched_at)
     ).all()
 
     now = datetime.now(UTC)

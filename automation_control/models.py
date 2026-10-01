@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from .database import Base
 
@@ -1309,12 +1309,14 @@ class CardPrice(Base):
     __tablename__ = "card_prices"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    # The historical column name is retained because it is used throughout
-    # the pricing API, but its id-space is CatalogItem: prices now cover One
-    # Piece, Dragon Ball, collectibles and sealed stock as well as Pokemon.
-    card_id: Mapped[str] = mapped_column(
-        ForeignKey("catalog_items.id", ondelete="CASCADE"), index=True
+    # The database column remains named ``card_id`` for a no-downtime
+    # compatibility window, but the application attribute says what the id
+    # has represented since the generic catalogue shipped. The synonym keeps
+    # old one-off scripts readable during the agreed retirement period.
+    catalog_item_id: Mapped[str] = mapped_column(
+        "card_id", ForeignKey("catalog_items.id", ondelete="CASCADE"), index=True
     )
+    card_id = synonym("catalog_item_id")
     variant: Mapped[CardVariant | None] = mapped_column(Enum(CardVariant))
     source: Mapped[str] = mapped_column(String(64), index=True)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2))

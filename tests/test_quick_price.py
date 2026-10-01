@@ -39,7 +39,7 @@ def _upload():
 def _seed_pikachu(session):
     session.add(CardSet(id="base1", name="Base Set"))
     session.add(CatalogCard(id="base1-58", set_id="base1", number="58", name="Pikachu"))
-    session.add(CardPrice(card_id="base1-58", variant=CardVariant.NORMAL, source="test", price=12.50, currency="AUD"))
+    session.add(CardPrice(catalog_item_id="base1-58", variant=CardVariant.NORMAL, source="test", price=12.50, currency="AUD"))
     session.commit()
 
 
@@ -97,7 +97,7 @@ def test_recognition_failure_returns_502_not_a_crash(client):
 def test_multiple_cards_in_one_photo_each_get_their_own_result(client, session):
     _seed_pikachu(session)
     session.add(CatalogCard(id="base1-4", set_id="base1", number="4", name="Charizard"))
-    session.add(CardPrice(card_id="base1-4", variant=CardVariant.NORMAL, source="test", price=250, currency="AUD"))
+    session.add(CardPrice(catalog_item_id="base1-4", variant=CardVariant.NORMAL, source="test", price=250, currency="AUD"))
     session.commit()
 
     cards = [

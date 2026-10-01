@@ -7,6 +7,7 @@ from automation_control.approvals import ApprovalStateError, decide_approval
 from automation_control.models import (
     Approval,
     ApprovalStatus,
+    CardPrice,
     CatalogItem,
     CatalogItemType,
     EbayCategoryMapping,
@@ -26,6 +27,18 @@ from automation_control.models import (
     ToolExecutionStatus,
     User,
 )
+
+
+def test_card_price_uses_catalogue_identity_with_legacy_alias(session):
+    item = CatalogItem(id="generic-item", item_type=CatalogItemType.COLLECTIBLE,
+                       name="Generic collectible")
+    price = CardPrice(catalog_item_id=item.id, source="test", price=Decimal("12.34"),
+                      currency="AUD")
+    session.add_all([item, price])
+    session.commit()
+
+    assert price.catalog_item_id == item.id
+    assert price.card_id == item.id  # compatibility during the retirement window
 
 
 def test_approval_can_only_be_decided_once(session):

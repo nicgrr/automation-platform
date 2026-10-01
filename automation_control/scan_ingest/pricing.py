@@ -319,7 +319,7 @@ class CachedPriceSource(PriceSource):
         recent = self._session.scalars(
             select(CardPrice)
             .where(
-                CardPrice.card_id == card.id, CardPrice.variant == variant,
+                CardPrice.catalog_item_id == card.id, CardPrice.variant == variant,
                 CardPrice.source == self._source_name, CardPrice.fetched_at >= cutoff,
             )
             .order_by(CardPrice.fetched_at.desc())

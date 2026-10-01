@@ -50,8 +50,8 @@ def main() -> int:
             session.add(CatalogItem(id=CARD_ID, item_type=CatalogItemType.TCG_CARD, name=NAME))
         if session.get(TcgCard, CARD_ID) is None:
             session.add(TcgCard(catalog_item_id=CARD_ID, game="pokemon", set_id=SET_ID, number=NUMBER, rarity="Promo"))
-        if session.scalar(select(CardPrice).where(CardPrice.card_id == CARD_ID, CardPrice.source == "manual")) is None:
-            session.add(CardPrice(card_id=CARD_ID, variant=VARIANT, source="manual", price=PRICE, currency="AUD"))
+        if session.scalar(select(CardPrice).where(CardPrice.catalog_item_id == CARD_ID, CardPrice.source == "manual")) is None:
+            session.add(CardPrice(catalog_item_id=CARD_ID, variant=VARIANT, source="manual", price=PRICE, currency="AUD"))
         session.commit()
 
         scan_session = start_or_resume(session, SET_ID, VARIANT, None, user=getpass.getuser(), unattended=True)

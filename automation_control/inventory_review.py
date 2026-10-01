@@ -149,8 +149,8 @@ def _variants_for(card: CatalogCard, owned: set[CardVariant]) -> list[CardVarian
     return sorted(found or {CardVariant.NORMAL}, key=lambda v: _VARIANT_ORDER.get(v, 9))
 
 
-def _latest_prices(session: Session, card_ids: set[str]) -> dict[tuple[str, CardVariant], CardPrice]:
-    """Most recent CardPrice per (card_id, variant), picked in SQL via
+def _latest_prices(session: Session, catalog_item_ids: set[str]) -> dict[tuple[str, CardVariant], CardPrice]:
+    """Most recent CardPrice per (catalogue item, variant), picked in SQL via
     ROW_NUMBER() rather than pulling every historical row into Python and
     picking first-seen-wins by hand. That Python-side pass was ~73% of
     dashboard render time once card_prices passed 40k+ rows (diagnosed
@@ -158,21 +158,21 @@ def _latest_prices(session: Session, card_ids: set[str]) -> dict[tuple[str, Card
     same signature, same return shape, callers unchanged. Tie-breaking on
     fetched_at was already arbitrary before this change (no id tiebreaker
     existed either); ROW_NUMBER() preserves that, doesn't newly introduce it."""
-    if not card_ids:
+    if not catalog_item_ids:
         return {}
     rn = func.row_number().over(
-        partition_by=(CardPrice.card_id, CardPrice.variant), order_by=CardPrice.fetched_at.desc()
+        partition_by=(CardPrice.catalog_item_id, CardPrice.variant), order_by=CardPrice.fetched_at.desc()
     ).label("rn")
-    subq = select(CardPrice, rn).where(CardPrice.card_id.in_(card_ids)).subquery()
+    subq = select(CardPrice, rn).where(CardPrice.catalog_item_id.in_(catalog_item_ids)).subquery()
     latest_price = aliased(CardPrice, subq)
     rows = session.scalars(select(latest_price).where(subq.c.rn == 1))
-    return {(row.card_id, row.variant): row for row in rows}
+    return {(row.catalog_item_id, row.variant): row for row in rows}
 
 
 EBAY_PRICE_SOURCE = "ebay_active_low"
 
 
-def _latest_ebay_prices(session: Session, card_ids: set[str]) -> dict[str, CardPrice]:
+def _latest_ebay_prices(session: Session, catalog_item_ids: set[str]) -> dict[str, CardPrice]:
     """Most recent eBay active-listing price per card, keyed by card alone
     rather than (card, variant) like _latest_prices.
 
@@ -184,19 +184,19 @@ def _latest_ebay_prices(session: Session, card_ids: set[str]) -> dict[str, CardP
     is used rather than the median: it's the more conservative figure to
     value your own holdings against.
     """
-    if not card_ids:
+    if not catalog_item_ids:
         return {}
     rn = func.row_number().over(
-        partition_by=CardPrice.card_id, order_by=CardPrice.fetched_at.desc()
+        partition_by=CardPrice.catalog_item_id, order_by=CardPrice.fetched_at.desc()
     ).label("rn")
     subq = (
         select(CardPrice, rn)
-        .where(CardPrice.card_id.in_(card_ids), CardPrice.source == EBAY_PRICE_SOURCE)
+        .where(CardPrice.catalog_item_id.in_(catalog_item_ids), CardPrice.source == EBAY_PRICE_SOURCE)
         .subquery()
     )
     latest_price = aliased(CardPrice, subq)
     rows = session.scalars(select(latest_price).where(subq.c.rn == 1))
-    return {row.card_id: row for row in rows}
+    return {row.catalog_item_id: row for row in rows}
 
 
 def _aud(price: CardPrice | None, quantity: int = 1) -> float | None:
@@ -1151,14 +1151,14 @@ def inventory_edit_details(
         if new_price <= 0:
             raise HTTPException(status_code=400, detail="price must be greater than zero")
         latest = session.scalars(
-            select(CardPrice).where(CardPrice.card_id == card_id).order_by(CardPrice.fetched_at.desc())
+            select(CardPrice).where(CardPrice.catalog_item_id == card_id).order_by(CardPrice.fetched_at.desc())
         ).first()
         already_this_value = (
             latest is not None and latest.source == "manual"
             and Decimal(str(latest.price)).quantize(Decimal("0.01")) == new_price
         )
         if not already_this_value:
-            session.add(CardPrice(card_id=card_id, source="manual", price=new_price, currency="AUD"))
+            session.add(CardPrice(catalog_item_id=card_id, source="manual", price=new_price, currency="AUD"))
             changed["cost"] = str(new_price)
 
     condition = condition.strip()

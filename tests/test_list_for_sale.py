@@ -34,7 +34,7 @@ def add_inventory(session, name, *, price="1.00", source="ebay_active_low", quan
     item_id = f"i-{name}"
     session.add(CatalogItem(id=item_id, item_type=CatalogItemType.TCG_CARD, name=name))
     session.add(InventoryItem(id=f"inv-{name}", catalog_item_id=item_id, quantity=quantity))
-    session.add(CardPrice(card_id=item_id, variant=None, source=source, price=Decimal(price), currency="AUD"))
+    session.add(CardPrice(catalog_item_id=item_id, variant=None, source=source, price=Decimal(price), currency="AUD"))
     session.commit()
     return item_id
 

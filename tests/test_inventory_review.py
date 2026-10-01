@@ -58,7 +58,7 @@ def _seed(session, *, card_id="xy11-31", number="31", name="Dewott", set_id="xy1
     item = InventoryItem(card_id=card_id, variant=variant, condition="Near Mint", quantity=quantity)
     session.add(item)
     if price is not None:
-        session.add(CardPrice(card_id=card_id, variant=variant, source="test", price=price, currency=currency))
+        session.add(CardPrice(catalog_item_id=card_id, variant=variant, source="test", price=price, currency=currency))
     session.commit()
     return item
 
@@ -308,8 +308,8 @@ def test_set_page_uses_the_most_recent_price_observation(client, session):
     session.add(CatalogCard(id="xy11-31", set_id="xy11", number="31", name="Dewott"))
     session.add(InventoryItem(card_id="xy11-31", variant=CardVariant.NORMAL, condition="Near Mint", quantity=1))
     old = datetime.now(UTC) - timedelta(days=5)
-    session.add(CardPrice(card_id="xy11-31", variant=CardVariant.NORMAL, source="test", price=Decimal("1.00"), currency="USD", fetched_at=old))
-    session.add(CardPrice(card_id="xy11-31", variant=CardVariant.NORMAL, source="test", price=Decimal("9.00"), currency="USD", fetched_at=datetime.now(UTC)))
+    session.add(CardPrice(catalog_item_id="xy11-31", variant=CardVariant.NORMAL, source="test", price=Decimal("1.00"), currency="USD", fetched_at=old))
+    session.add(CardPrice(catalog_item_id="xy11-31", variant=CardVariant.NORMAL, source="test", price=Decimal("9.00"), currency="USD", fetched_at=datetime.now(UTC)))
     session.commit()
 
     resp = client.get(SET_PAGE)
@@ -324,8 +324,8 @@ def test_set_page_price_lookup_is_scoped_to_variant(client, session):
     session.add(CatalogCard(id="xy11-31", set_id="xy11", number="31", name="Dewott"))
     session.add(InventoryItem(card_id="xy11-31", variant=CardVariant.NORMAL, condition="Near Mint", quantity=1))
     session.add(InventoryItem(card_id="xy11-31", variant=CardVariant.HOLO, condition="Near Mint", quantity=1))
-    session.add(CardPrice(card_id="xy11-31", variant=CardVariant.NORMAL, source="test", price=Decimal("0.17"), currency="USD"))
-    session.add(CardPrice(card_id="xy11-31", variant=CardVariant.HOLO, source="test", price=Decimal("15.00"), currency="USD"))
+    session.add(CardPrice(catalog_item_id="xy11-31", variant=CardVariant.NORMAL, source="test", price=Decimal("0.17"), currency="USD"))
+    session.add(CardPrice(catalog_item_id="xy11-31", variant=CardVariant.HOLO, source="test", price=Decimal("15.00"), currency="USD"))
     session.commit()
 
     resp = client.get(SET_PAGE)
@@ -796,7 +796,7 @@ def test_edit_details_adds_a_manual_price(client, session, tmp_path):
     client.post("/inventory/edit-details", data={"card_id": "xy11-31", "variant": "normal",
                                                   "cost": "9.99", "back": SET_PAGE}, follow_redirects=False)
 
-    price = session.scalars(select(CardPrice).where(CardPrice.card_id == "xy11-31")).one()
+    price = session.scalars(select(CardPrice).where(CardPrice.catalog_item_id == "xy11-31")).one()
     assert price.source == "manual"
     assert Decimal(str(price.price)) == Decimal("9.99")
 
@@ -946,7 +946,7 @@ def test_setting_a_location_allows_the_ebay_sales_page_to_redirect_back(client, 
 def _add_ebay_price(session, card_id, price, source="ebay_active_low"):
     # stored with variant=None on purpose: an eBay search can't reliably
     # tell a reverse holo from a normal print
-    session.add(CardPrice(card_id=card_id, variant=None, source=source, price=Decimal(str(price)), currency="AUD"))
+    session.add(CardPrice(catalog_item_id=card_id, variant=None, source=source, price=Decimal(str(price)), currency="AUD"))
     session.commit()
 
 

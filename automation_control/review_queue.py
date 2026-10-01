@@ -960,14 +960,14 @@ def _apply_details_overrides(
         if not new_price.is_finite() or new_price <= 0:
             raise HTTPException(status_code=400, detail="price must be greater than zero")
         current = session.scalars(
-            select(CardPrice).where(CardPrice.card_id == card_id).order_by(CardPrice.fetched_at.desc())
+            select(CardPrice).where(CardPrice.catalog_item_id == card_id).order_by(CardPrice.fetched_at.desc())
         ).first()
         already_this_value = (
             current is not None and current.source == "manual"
             and Decimal(str(current.price)).quantize(Decimal("0.01")) == new_price
         )
         if not already_this_value:
-            session.add(CardPrice(card_id=card_id, source="manual", price=new_price, currency="AUD"))
+            session.add(CardPrice(catalog_item_id=card_id, source="manual", price=new_price, currency="AUD"))
 
 
 def _match_text(value: str) -> str:

@@ -259,7 +259,7 @@ def _inventory_price_backlog(session: Session) -> int:
     that button -- it says how far through you are rather than implying the
     job finishes when the page reloads.
     """
-    priced = select(CardPrice.card_id, CardPrice.variant).where(
+    priced = select(CardPrice.catalog_item_id, CardPrice.variant).where(
         CardPrice.source == POKEMONPRICETRACKER_SOURCE_NAME)
     held = session.execute(_held_tcg_cards(InventoryItem.variant)).all()
     return len(set(held) - set(session.execute(priced).all()))
@@ -277,7 +277,7 @@ def _ebay_price_gap(session: Session) -> int:
     """
     held = {row[0] for row in session.execute(_held_tcg_cards())}
     priced = {row[0] for row in session.execute(
-        select(CardPrice.card_id).where(CardPrice.source == "ebay_active_low").distinct())}
+        select(CardPrice.catalog_item_id).where(CardPrice.source == "ebay_active_low").distinct())}
     return len(held - priced)
 
 
