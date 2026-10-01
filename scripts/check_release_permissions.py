@@ -17,15 +17,24 @@ import sys
 
 
 def unreadable_release_files(root: Path, paths: list[str]) -> list[str]:
+    """Return tracked files and their in-repository parents the service cannot reach."""
     unreadable: list[str] = []
+    checked_directories: set[Path] = set()
     for relative in paths:
         path = root / relative
         if not path.is_file() or path.is_symlink():
             continue
+        parent = path.parent
+        while parent != root and parent not in checked_directories:
+            checked_directories.add(parent)
+            mode = parent.stat().st_mode
+            if not mode & (stat.S_IXGRP | stat.S_IXOTH):
+                unreadable.append(f"{parent.relative_to(root)}/")
+            parent = parent.parent
         mode = path.stat().st_mode
         if not mode & (stat.S_IRGRP | stat.S_IROTH):
             unreadable.append(relative)
-    return unreadable
+    return sorted(unreadable)
 
 
 def unreadable_virtualenv_paths(venv: Path) -> list[str]:
@@ -62,7 +71,7 @@ def main() -> int:
     venv_unreadable = unreadable_virtualenv_paths(root / ".venv")
     if unreadable or venv_unreadable:
         if unreadable:
-            print("Tracked files unreadable by the ezbay service group:")
+            print("Tracked release paths unreadable by the ezbay service group:")
         for path in unreadable:
             print(f"  {path}")
         if venv_unreadable:
@@ -71,7 +80,8 @@ def main() -> int:
                 print(f"  {path}")
             if len(venv_unreadable) > 50:
                 print(f"  ...and {len(venv_unreadable) - 50} more")
-        print("Normalize tracked files to Git modes and run `chmod -R g+rX .venv` after installs.")
+        print("Normalize tracked files to Git modes, make their parent directories group-traversable, "
+              "and run `chmod -R g+rX .venv` after installs.")
         return 1
     print("Release permissions: OK")
     return 0

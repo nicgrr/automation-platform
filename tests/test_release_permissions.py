@@ -22,6 +22,17 @@ def test_group_or_world_readable_files_are_accepted(tmp_path: Path):
     assert unreadable_release_files(tmp_path, ["group.py", "world.py"]) == []
 
 
+def test_untraversable_tracked_parent_directory_is_rejected(tmp_path: Path):
+    package = tmp_path / "package"
+    package.mkdir()
+    package.chmod(0o2700)
+    module = package / "module.py"
+    module.write_text("pass\n")
+    module.chmod(0o640)
+
+    assert unreadable_release_files(tmp_path, ["package/module.py"]) == ["package/"]
+
+
 def test_virtualenv_requires_group_read_and_directory_traversal(tmp_path: Path):
     package = tmp_path / "site-packages" / "example"
     package.mkdir(parents=True)
