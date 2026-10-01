@@ -217,18 +217,15 @@ def _run_price_check(api_key: str | None, user: str, include_blocked: bool = Fal
         _finish_price_check(run_id)
 
 
-# Both gap counts below join on InventoryItem.catalog_item_id, not on the
-# legacy InventoryItem.card_id they used to use.
+# Both gap counts below join on canonical catalogue identity.
 #
-# `card_prices.card_id` is a catalog_items id despite the column name --
-# import_ebay_prices.py writes `card_id=item.id` from a CatalogItem, and
+# CardPrice.catalog_item_id and InventoryItem.catalog_item_id share the
+# same CatalogItem id space. Historical code compared prices against the
+# Pokemon-only inventory card link, so both numbers were inflated by every
+# non-Pokemon holding.
+# import_ebay_prices.py writes the id from a CatalogItem, and
 # every reader of the table (the dashboard gauge, /inventory's totals)
-# looks it up that way. Counting against InventoryItem.card_id compared
-# two different key spaces, so both numbers were inflated by every holding
-# whose two ids differ and by every row whose catalog link is missing: the page
-# advertised a backlog of ~1,600 pairs and ~300 eBay gaps that no amount
-# of running the importers could ever close, because the importers target
-# catalog_item_id too.
+# looks it up that way.
 def _held_tcg_cards(*extra_columns):
     """Held TCG cards, identified by catalog_item_id, for the gap counts.
 

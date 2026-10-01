@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
             if real_card is None:
                 raise SystemExit(f"{name}: expected catalogue card {real_id!r} not found -- has the import run?")
             existing_holding = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == real_id, InventoryItem.variant == item.variant, InventoryItem.condition == item.condition)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == real_id, InventoryItem.variant == item.variant, InventoryItem.condition == item.condition)
             )
             if existing_holding is not None:
                 print(f"skip {name}: {real_id!r} already has an inventory row -- merge manually")
@@ -62,8 +62,8 @@ def main(argv: list[str] | None = None) -> int:
                 repointed += 1
                 continue
 
-            item.catalog_item_id = real_id
             item.card_id = real_id
+            item.catalog_item_id = real_id
             # scan_image_path is left alone: it's the actual scanned photo
             # of the owned copy, not the catalogue's stock photo.
             session.delete(session.get(TcgCard, ad_hoc_id))

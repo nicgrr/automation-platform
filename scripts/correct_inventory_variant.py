@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         if item is None:
             print(f"no inventory item with id {args.item_id!r}")
             return 1
-        card = session.get(CatalogCard, item.card_id)
+        card = session.get(CatalogCard, item.catalog_item_id)
         if item.variant == correct_variant:
             print("item is already filed under that printing -- nothing to do")
             return 0
@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 
         existing = session.scalar(
             select(InventoryItem).where(
-                InventoryItem.card_id == item.card_id,
+                InventoryItem.catalog_item_id == item.catalog_item_id,
                 InventoryItem.variant == correct_variant,
                 InventoryItem.condition == item.condition,
             )

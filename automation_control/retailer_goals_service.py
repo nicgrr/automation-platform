@@ -453,7 +453,6 @@ def _inventory_for_purchase(session: Session, purchase: RetailerPurchase,
 
     item = session.scalar(select(InventoryItem).where(
         InventoryItem.catalog_item_id == product.catalog_item_id,
-        InventoryItem.card_id.is_(None),
         InventoryItem.condition == "Sealed",
         InventoryItem.status == InventoryStatus.AVAILABLE,
     ).order_by(InventoryItem.added_at).limit(1))

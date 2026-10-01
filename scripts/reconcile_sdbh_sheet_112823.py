@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         if real_card is None:
             raise SystemExit(f"expected catalogue card {real_id!r} not found -- has cardotaku_catalog run?")
         existing_holding = session.scalar(
-            select(InventoryItem).where(InventoryItem.card_id == real_id, InventoryItem.variant == "normal", InventoryItem.condition == "Near Mint")
+            select(InventoryItem).where(InventoryItem.catalog_item_id == real_id, InventoryItem.variant == "normal", InventoryItem.condition == "Near Mint")
         )
         if existing_holding is not None:
             raise SystemExit(f"{real_id!r} already has an inventory row -- merge manually, this script assumes none exists")
@@ -73,8 +73,8 @@ def main(argv: list[str] | None = None) -> int:
             row.game = NEW_GAME
 
         item = session.scalar(select(InventoryItem).where(InventoryItem.catalog_item_id == ad_hoc_id))
-        item.catalog_item_id = real_id
         item.card_id = real_id
+        item.catalog_item_id = real_id
         # scan_image_path is left alone: it's the actual scanned photo of
         # the owned copy, not the catalogue's stock photo -- keep it.
 

@@ -36,14 +36,14 @@ def main(argv: list[str] | None = None) -> int:
         for item in items:
             existing = session.scalars(
                 select(CardPrice).where(
-                    CardPrice.catalog_item_id == item.card_id,
+                    CardPrice.catalog_item_id == item.catalog_item_id,
                     CardPrice.variant == item.variant,
                 )
             ).first()
             if existing:
                 continue
 
-            card = session.get(CatalogCard, item.card_id)
+            card = session.get(CatalogCard, item.catalog_item_id)
             if card is None:
                 continue
 

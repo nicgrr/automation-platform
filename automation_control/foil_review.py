@@ -101,7 +101,7 @@ def _compute_candidates(session: Session) -> list[dict]:
         path = Path(item.scan_image_path)
         if not path.exists():
             continue
-        card = cards_by_id.get(item.card_id)
+        card = cards_by_id.get(item.catalog_item_id)
         if card is None:
             continue
         assessment = assess_foil(path, card)
@@ -223,7 +223,7 @@ def foil_review_decide(
     item = session.get(InventoryItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="inventory item not found")
-    card = session.get(CatalogCard, item.card_id)
+    card = session.get(CatalogCard, item.catalog_item_id)
     if card is None or not item.scan_image_path:
         raise HTTPException(status_code=404, detail="card or photo missing")
 
@@ -242,7 +242,7 @@ def foil_review_decide(
         set_code = (card.card_set.code or card.set_id) if card.card_set else card.set_id
         existing = session.scalar(
             select(InventoryItem).where(
-                InventoryItem.card_id == item.card_id,
+                InventoryItem.catalog_item_id == item.catalog_item_id,
                 InventoryItem.variant == correct_variant,
                 InventoryItem.condition == item.condition,
             )

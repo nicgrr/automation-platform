@@ -53,12 +53,13 @@ def export_page(user: str = Depends(require_dashboard_user)) -> HTMLResponse:
 def export_inventory(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> Response:
     rows = session.execute(select(InventoryItem, CatalogItem).outerjoin(CatalogItem, InventoryItem.catalog_item_id == CatalogItem.id)).all()
     data = [
-        [item.id, catalog.name if catalog else None, item.card_id, item.variant.value, item.condition,
+        [item.id, item.catalog_item_id, catalog.name if catalog else None, item.card_id,
+         item.variant.value, item.condition,
          item.quantity, item.status.value, item.storage_location_id, item.grading_company,
          item.certification_number, item.added_at.isoformat()]
         for item, catalog in rows
     ]
-    header = ["id", "catalog_item_name", "card_id", "variant", "condition", "quantity", "status",
+    header = ["id", "catalog_item_id", "catalog_item_name", "legacy_card_id", "variant", "condition", "quantity", "status",
               "storage_location_id", "grading_company", "certification_number", "added_at"]
     return _csv_response("inventory.csv", header, data)
 

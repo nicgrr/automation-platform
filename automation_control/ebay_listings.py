@@ -327,10 +327,8 @@ def _distinctive_word(name: str) -> str | None:
 
 def _owned_card_names(session: Session) -> list[str]:
     """Every Pokemon (not Trainer/Energy) catalog item with real stock on
-    hand (quantity > 0). Joined on the id CatalogCard and CatalogItem share
-    (confirmed against svp-196: same id, both tables) rather than
-    InventoryItem.catalog_item_id, which isn't backfilled for cards
-    committed by scan-ingest -- see InventoryItem's docstring.
+    hand (quantity > 0). Joined through the canonical catalogue identity;
+    CatalogCard and CatalogItem share the same id for scan references.
 
     Restricted to supertype Pokemon: Trainer/Energy names are exactly the
     ones that collide with unrelated words -- "Ultra Ball" against "...
@@ -341,8 +339,8 @@ def _owned_card_names(session: Session) -> list[str]:
     """
     rows = session.execute(
         select(CatalogItem.name).select_from(InventoryItem)
-        .join(CatalogCard, CatalogCard.id == InventoryItem.card_id)
-        .join(CatalogItem, CatalogItem.id == InventoryItem.card_id)
+        .join(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
+        .join(CatalogItem, CatalogItem.id == InventoryItem.catalog_item_id)
         .where(InventoryItem.quantity > 0, CatalogCard.supertype == "Pokémon")
         .distinct()
     ).all()
@@ -382,7 +380,7 @@ def _exact_bundle_inventory_names(session: Session, row: EbayListing) -> list[st
         ]
         if card_ids and session.scalar(
             select(InventoryItem.id).where(
-                InventoryItem.card_id.in_(card_ids), InventoryItem.quantity > 0,
+                InventoryItem.catalog_item_id.in_(card_ids), InventoryItem.quantity > 0,
             ).limit(1)
         ):
             matches.append(f"{name} #{number}")

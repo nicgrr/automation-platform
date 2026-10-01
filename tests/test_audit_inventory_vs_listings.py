@@ -43,8 +43,11 @@ def session():
 
 
 def make_inventory(session, *, status=InventoryStatus.AVAILABLE, quantity=1):
-    item = InventoryItem(id=str(uuid.uuid4()), status=status, quantity=quantity)
-    session.add(item)
+    catalog = CatalogItem(id=str(uuid.uuid4()), item_type=CatalogItemType.TCG_CARD,
+                          name="Audit fixture item")
+    item = InventoryItem(id=str(uuid.uuid4()), catalog_item_id=catalog.id,
+                         status=status, quantity=quantity)
+    session.add_all([catalog, item])
     session.commit()
     return item
 

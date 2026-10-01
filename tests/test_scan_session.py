@@ -14,7 +14,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
-from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem, ScanSession, ScanSessionStatus
+from automation_control.models import (
+    CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType,
+    InventoryItem, ScanSession, ScanSessionStatus,
+)
 from automation_control.scan_ingest import pricing as pricing_mod
 from automation_control.scan_ingest import session as session_mod
 from automation_control.scan_ingest.detect import DetectionResult, detect_cards
@@ -104,6 +107,7 @@ def db(tmp_path):
         s.add(CardSet(id="xy11", name="Steam Siege", code="STS", printed_total=114, cached_at=datetime.now(UTC)))
         for n in (1, 2):
             s.add(CatalogCard(id=f"xy11-{n}", set_id="xy11", number=str(n), name=f"Card {n}", phash="0" * 16))
+            s.add(CatalogItem(id=f"xy11-{n}", item_type=CatalogItemType.TCG_CARD, name=f"Card {n}"))
         s.commit()
         yield s
 
@@ -753,6 +757,7 @@ def auto_db(tmp_path):
 
 def _register_reference(db, set_id: str, card_id: str, crop_path: Path) -> None:
     db.add(CatalogCard(id=card_id, set_id=set_id, number="1", name="Card 1", phash=_phash_of_crop(crop_path)))
+    db.add(CatalogItem(id=card_id, item_type=CatalogItemType.TCG_CARD, name="Card 1"))
     db.commit()
 
 
@@ -829,8 +834,11 @@ def test_auto_session_caches_an_unknown_set_from_the_printed_total(auto_db, sett
     def fake_cache_set(db, set_id, cache_dir, api_key=None, force=False, progress=None):
         db.add(CardSet(id=set_id, name="New Set", printed_total=72, cached_at=datetime.now(UTC)))
         for index, crop in enumerate(reference_crops, start=1):
-            db.add(CatalogCard(id=f"{set_id}-{index}", set_id=set_id, number=str(index),
+            card_id = f"{set_id}-{index}"
+            db.add(CatalogCard(id=card_id, set_id=set_id, number=str(index),
                                name=f"Card {index}", phash=_phash_of_crop(crop)))
+            db.add(CatalogItem(id=card_id, item_type=CatalogItemType.TCG_CARD,
+                               name=f"Card {index}"))
         db.commit()
         return SimpleNamespace(set_name="New Set", cards_total=72, hashed=72, ready=True)
 
@@ -948,6 +956,7 @@ def test_review_applies_a_typed_correction(auto_db, settings, tmp_path):
     _register_reference(auto_db, "setA", "setA-1", crops[0])
     auto_db.add(CatalogCard(id="setA-2", set_id="setA", number="2", name="Corrected",
                             phash=_phash_of_crop(crops[1])))
+    auto_db.add(CatalogItem(id="setA-2", item_type=CatalogItemType.TCG_CARD, name="Corrected"))
     auto_db.commit()
     _queue_crop(settings, crops[0], "sheet-x-card1-unidentified.jpg")
 

@@ -36,7 +36,7 @@ def _candidates_for_slice(session, offset: int, limit: int | None) -> tuple[list
         path = Path(item.scan_image_path)
         if not path.exists():
             continue
-        card = cards_by_id.get(item.card_id)
+        card = cards_by_id.get(item.catalog_item_id)
         if card is None:
             continue
         assessment = assess_foil(path, card)

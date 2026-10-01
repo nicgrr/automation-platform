@@ -30,7 +30,7 @@ def main() -> int:
                 continue
 
             normal_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == CardVariant.NORMAL)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == CardVariant.NORMAL)
             )
             if normal_row is None or normal_row.quantity < units:
                 print(f"{card.name} #{number}: expected >= {units} Normal units, found "
@@ -45,7 +45,7 @@ def main() -> int:
                 print(f"{card.name} #{number}: Normal {normal_row.quantity + units} -> {normal_row.quantity}")
 
             correct_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == correct_variant)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == correct_variant)
             )
             if correct_row is None:
                 correct_row = InventoryItem(card_id=card.id, variant=correct_variant, condition="Near Mint", quantity=0)

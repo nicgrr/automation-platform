@@ -120,6 +120,7 @@ def _cache_card(session, tmp_path, *, set_id="xy11", set_name="Steam Siege", num
         art = str(_art_phash(rgb))
     session.add(CatalogCard(id=card_id, set_id=set_id, number=number, name=name,
                             local_image_path=str(ref), phash=phash, art_phash=art, rarity=rarity))
+    session.add(CatalogItem(id=card_id, item_type=CatalogItemType.TCG_CARD, name=name))
     session.commit()
     return card_id
 
@@ -902,9 +903,6 @@ def test_a_pick_for_an_uncached_set_is_rejected(client, media, session, tmp_path
 
 def test_review_edits_sync_the_scan_and_crm_catalogues(client, media, session, tmp_path):
     _cache_card(session, tmp_path, number="31", name="Old name", seed=7, rarity="Common")
-    session.add(CatalogItem(
-        id="xy11-31", item_type=CatalogItemType.TCG_CARD, name="Old name",
-    ))
     session.add(TcgCard(
         catalog_item_id="xy11-31", game="pokemon", set_id="xy11", number="31",
         character="Old name", rarity="Common", language="English",

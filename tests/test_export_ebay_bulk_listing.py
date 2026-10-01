@@ -312,7 +312,7 @@ def _unpriced_item(session):
 
 def test_single_image_url_falls_back_to_r2_when_nothing_else_is_usable(session):
     item = _unpriced_item(session)
-    session.add(InventoryItem(id="inv-1", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+    session.add(InventoryItem(id="inv-1", card_id=None, catalog_item_id=item.id, variant=CardVariant.NORMAL, condition="Near Mint",
                               scan_image_path="/fake/scan.jpg"))
     session.commit()
     listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
@@ -334,7 +334,7 @@ def test_single_image_url_never_touches_r2_when_a_stock_photo_already_works(sess
     the rare case, not the default -- a real stock photo must win without
     an upload attempt."""
     item = _item(session, image_url="https://example.test/item.jpg")
-    session.add(InventoryItem(id="inv-2", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+    session.add(InventoryItem(id="inv-2", card_id=None, catalog_item_id=item.id, variant=CardVariant.NORMAL, condition="Near Mint",
                               scan_image_path="/fake/scan.jpg"))
     session.commit()
     listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
@@ -348,7 +348,7 @@ def test_single_image_url_never_touches_r2_when_a_stock_photo_already_works(sess
 
 def test_single_image_url_skips_r2_entirely_when_it_is_not_configured(session):
     item = _unpriced_item(session)
-    session.add(InventoryItem(id="inv-3", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+    session.add(InventoryItem(id="inv-3", card_id=None, catalog_item_id=item.id, variant=CardVariant.NORMAL, condition="Near Mint",
                               scan_image_path="/fake/scan.jpg"))
     session.commit()
     listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
@@ -363,7 +363,7 @@ def test_single_image_url_skips_r2_entirely_when_it_is_not_configured(session):
 
 def test_single_image_url_skips_r2_when_there_is_no_scan_photo_on_file(session):
     item = _unpriced_item(session)
-    session.add(InventoryItem(id="inv-4", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+    session.add(InventoryItem(id="inv-4", card_id=None, catalog_item_id=item.id, variant=CardVariant.NORMAL, condition="Near Mint",
                               scan_image_path=None))
     session.commit()
     listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
@@ -381,7 +381,7 @@ def test_single_image_url_returns_none_rather_than_raising_when_the_upload_fails
     just ends up skipped with the usual reason, same as any other missing
     image."""
     item = _unpriced_item(session)
-    session.add(InventoryItem(id="inv-5", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+    session.add(InventoryItem(id="inv-5", card_id=None, catalog_item_id=item.id, variant=CardVariant.NORMAL, condition="Near Mint",
                               scan_image_path="/fake/scan.jpg"))
     session.commit()
     listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),
@@ -404,7 +404,7 @@ def test_single_image_url_returns_none_rather_than_raising_on_a_permission_error
     just skipping this one photo. PermissionError is a subclass of
     OSError, which the fix now catches around the .exists() call too."""
     item = _unpriced_item(session)
-    session.add(InventoryItem(id="inv-6", card_id=None, variant=CardVariant.NORMAL, condition="Near Mint",
+    session.add(InventoryItem(id="inv-6", card_id=None, catalog_item_id=item.id, variant=CardVariant.NORMAL, condition="Near Mint",
                               scan_image_path="/fake/scan.jpg"))
     session.commit()
     listing = ShopListing(catalog_item_id=item.id, title="Test Card", price=Decimal("5"),

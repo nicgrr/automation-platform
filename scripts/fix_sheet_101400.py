@@ -63,7 +63,7 @@ def main() -> int:
         for number, name, correct_variant in WRONG_NORMAL_FIXES:
             card = session.scalar(select(CatalogCard).where(CatalogCard.set_id == SET_ID, CatalogCard.number == number))
             wrong_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == CardVariant.NORMAL)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == CardVariant.NORMAL)
             )
             if wrong_row is None or wrong_row.quantity < 1:
                 print(f"{name} #{number}: no Normal unit found, skipping")
@@ -73,7 +73,7 @@ def main() -> int:
             else:
                 wrong_row.quantity -= 1
             correct_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == correct_variant)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == correct_variant)
             )
             if correct_row is None:
                 correct_row = InventoryItem(card_id=card.id, variant=correct_variant, condition=CONDITION, quantity=0)

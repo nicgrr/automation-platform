@@ -287,16 +287,15 @@ def test_commit_heals_a_row_left_unlinked_by_the_old_write_path(session, tmp_pat
     assert session.scalars(select(InventoryItem)).one().catalog_item_id == "xy11-31"
 
 
-def test_commit_leaves_the_link_null_rather_than_dangling(session, tmp_path):
-    """A catalog card with no catalog_items row (svp-218 got into this
-    state) must not be given an id that resolves to nothing -- foreign
-    keys are off here, so nothing downstream would catch it."""
+def test_commit_refuses_a_card_without_canonical_catalogue_identity(session, tmp_path):
+    """A CatalogCard without its canonical CatalogItem must not create
+    inventory that newer readers cannot resolve."""
     session.add(CatalogCard(id="xy11-99", set_id="xy11", number="99", name="Orphan"))
     session.commit()
 
-    commit_card(session, Identification(card_id="xy11-99", number="99", name="Orphan",
-                                        source=Source.BOTH, confidence=1.0),
-                _scan_image(tmp_path), tmp_path / "media")
+    with pytest.raises(CommitRefused, match="no canonical CatalogItem"):
+        commit_card(session, Identification(card_id="xy11-99", number="99", name="Orphan",
+                                            source=Source.BOTH, confidence=1.0),
+                    _scan_image(tmp_path), tmp_path / "media")
 
-    item = session.scalars(select(InventoryItem).where(InventoryItem.card_id == "xy11-99")).one()
-    assert item.catalog_item_id is None
+    assert session.scalars(select(InventoryItem)).all() == []

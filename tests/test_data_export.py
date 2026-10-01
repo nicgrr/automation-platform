@@ -50,6 +50,8 @@ def test_export_inventory_csv(client, session):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/csv")
     assert "attachment" in resp.headers["content-disposition"]
+    assert "catalog_item_id" in resp.text.splitlines()[0]
+    assert "legacy_card_id" in resp.text.splitlines()[0]
     assert "Peach Sonny Angel" in resp.text
     assert ",3," in resp.text or resp.text.strip().endswith("3")
 

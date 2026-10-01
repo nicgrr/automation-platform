@@ -43,7 +43,7 @@ def main() -> int:
     with SessionLocal() as session:
         rows = session.execute(
             select(InventoryItem, CatalogCard)
-            .join(CatalogCard, CatalogCard.id == InventoryItem.card_id)
+            .join(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
             .where(InventoryItem.variant.in_([CardVariant.NORMAL, CardVariant.HOLO, CardVariant.REVERSE_HOLO]))
             .order_by(InventoryItem.id)
         ).all()

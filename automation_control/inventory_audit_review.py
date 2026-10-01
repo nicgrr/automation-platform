@@ -254,7 +254,7 @@ def inventory_audit_refile(
 
     existing = session.scalar(
         select(InventoryItem).where(
-            InventoryItem.card_id == correct_card.id,
+            InventoryItem.catalog_item_id == correct_card.id,
             InventoryItem.variant == item.variant,
             InventoryItem.condition == item.condition,
             InventoryItem.id != item.id,

@@ -43,7 +43,9 @@ reliability and rollback improve before business workflows or schemas are remove
 - [x] Introduce Alembic and baseline the existing production schema in place
   (`20261001_01`; blank-database build and production drift check both clean).
 - [x] Fail safely and visibly on application/database revision mismatch.
-- [ ] Make `catalog_item_id` canonical in every inventory reader and writer.
+- [x] Make `catalog_item_id` canonical in every active inventory reader and
+  writer; retain the synchronised nullable `card_id` compatibility link during
+  the observation window.
 - [x] Generalise the historical `CardPrice.card_id` name to catalogue-item identity
   (`catalog_item_id` is canonical in application code; the physical column and a
   compatibility synonym remain for the observation window).

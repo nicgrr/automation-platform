@@ -60,7 +60,7 @@ def find_mismatches(session: Session, threshold: int = DEFAULT_THRESHOLD) -> lis
         path = Path(item.scan_image_path)
         if not path.exists():
             continue
-        filed = by_id.get(item.card_id)
+        filed = by_id.get(item.catalog_item_id)
         if filed is None or not filed.phash:
             continue
 

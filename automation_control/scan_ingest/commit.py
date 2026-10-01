@@ -169,10 +169,15 @@ def commit_card(
     card = session.get(CatalogCard, identification.card_id)
     if card is None:
         raise CommitRefused(f"no catalog card {identification.card_id!r} -- is the set cached?")
+    catalog_item_id = _catalog_item_id_for(session, card)
+    if catalog_item_id is None:
+        raise CommitRefused(
+            f"catalog card {card.id!r} has no canonical CatalogItem; repair the catalogue before committing"
+        )
 
     existing = session.scalar(
         select(InventoryItem).where(
-            InventoryItem.card_id == card.id,
+            InventoryItem.catalog_item_id == card.id,
             InventoryItem.variant == variant,
             InventoryItem.condition == condition,
         )
@@ -198,7 +203,7 @@ def commit_card(
         # backlog of them drains as those cards are scanned again rather
         # than needing a second repair pass later.
         if existing.catalog_item_id is None:
-            existing.catalog_item_id = _catalog_item_id_for(session, card)
+            existing.catalog_item_id = catalog_item_id
         item = existing
         created = False
     else:
@@ -207,7 +212,7 @@ def commit_card(
             id=str(uuid.uuid4()), card_id=card.id, variant=variant, condition=condition,
             quantity=1, scan_image_path=str(stored) if stored else None,
             session_id=scan_session.id if scan_session else None, notes=notes,
-            catalog_item_id=_catalog_item_id_for(session, card),
+            catalog_item_id=catalog_item_id,
         )
         session.add(item)
         created = True
@@ -239,7 +244,7 @@ def inventory_for_set(session: Session, set_id: str) -> list[InventoryItem]:
     return list(
         session.scalars(
             select(InventoryItem)
-            .join(CatalogCard, InventoryItem.card_id == CatalogCard.id)
+            .join(CatalogCard, InventoryItem.catalog_item_id == CatalogCard.id)
             .where(CatalogCard.set_id == set_id)
             .order_by(CatalogCard.number)
         )
@@ -251,6 +256,6 @@ def inventory_totals(session: Session, set_id: str | None = None) -> tuple[int, 
     session reports so the operator knows where they left off."""
     query = select(InventoryItem)
     if set_id:
-        query = query.join(CatalogCard, InventoryItem.card_id == CatalogCard.id).where(CatalogCard.set_id == set_id)
+        query = query.join(CatalogCard, InventoryItem.catalog_item_id == CatalogCard.id).where(CatalogCard.set_id == set_id)
     items = list(session.scalars(query))
     return len(items), sum(item.quantity for item in items)

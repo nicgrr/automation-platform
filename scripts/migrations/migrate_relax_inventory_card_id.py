@@ -53,6 +53,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     column_list = ", ".join(COLUMNS)
+    # This historical migration may still be used to recover an old
+    # pre-catalogue database after the current model has made
+    # catalog_item_id mandatory. Every legacy card id shares the same id
+    # space, so promote it during the copy instead of recreating an invalid
+    # identity-less row.
+    select_columns = ", ".join(
+        "COALESCE(catalog_item_id, card_id) AS catalog_item_id"
+        if column == "catalog_item_id" else column
+        for column in COLUMNS
+    )
     try:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE inventory_items RENAME TO inventory_items_old"))
@@ -69,7 +79,9 @@ def main(argv: list[str] | None = None) -> int:
                 conn.execute(text(f"DROP INDEX {index_name}"))
 
             Base.metadata.tables["inventory_items"].create(conn)
-            conn.execute(text(f"INSERT INTO inventory_items ({column_list}) SELECT {column_list} FROM inventory_items_old"))
+            conn.execute(text(
+                f"INSERT INTO inventory_items ({column_list}) SELECT {select_columns} FROM inventory_items_old"
+            ))
             after_count = conn.execute(text("SELECT COUNT(*) FROM inventory_items")).scalar_one()
             if after_count != before_count:
                 raise RuntimeError(f"row count mismatch after copy: before={before_count} after={after_count} -- aborting")

@@ -40,7 +40,7 @@ def main() -> int:
                 continue
 
             holo_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == CardVariant.HOLO)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == CardVariant.HOLO)
             )
             if holo_row is None or holo_row.quantity < 1:
                 print(f"{name} #{number} ({set_id}): no Holo unit found, skipping")
@@ -48,7 +48,7 @@ def main() -> int:
 
             moved = holo_row.quantity
             rh_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == CardVariant.REVERSE_HOLO)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == CardVariant.REVERSE_HOLO)
             )
             if rh_row is None:
                 rh_row = InventoryItem(card_id=card.id, variant=CardVariant.REVERSE_HOLO, condition="Near Mint", quantity=0)

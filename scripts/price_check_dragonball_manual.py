@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         ).all()
 
         for item in items:
-            card = session.get(CatalogCard, item.card_id)
+            card = session.get(CatalogCard, item.catalog_item_id)
             if card is None:
                 continue
 
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
             if existing:
                 continue
 
-            tcg = session.get(TcgCard, item.card_id)
+            tcg = session.get(TcgCard, item.catalog_item_id)
             game = tcg.game if tcg else None
             source_cls = SNAPSHOT_PRICE_SOURCES.get(game)
             source = source_cls() if source_cls else NullPriceSource()

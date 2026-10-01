@@ -49,6 +49,14 @@ sealed stock and collectibles. The physical `card_id` column and an ORM synonym
 remain during the compatibility window, avoiding a risky 97,000-row table rebuild
 while removing the misleading name from active readers and writers.
 
+Inventory now has the same canonical identity end to end. All active readers
+and writers use `InventoryItem.catalog_item_id`; the database requires it and
+enforces one holding per catalogue-item/variant/condition. The older nullable
+`card_id` link is retained only for CatalogCard scan compatibility, must agree
+when present, and legacy card-only ORM writes are promoted automatically. The
+migration preserved all 2,140 holdings and 3,663 units in a production-copy
+drill with clean integrity and foreign keys.
+
 ## 2026-09-24 — Generic collectible discovery and alert inbox
 
 Expanded the Sonny Angel market page into a generic AU/JP collectible watch

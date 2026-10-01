@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         if item is None:
             print(f"no inventory item with id {args.item_id!r}")
             return 1
-        wrong_card = session.get(CatalogCard, item.card_id)
+        wrong_card = session.get(CatalogCard, item.catalog_item_id)
 
         correct_card = session.scalar(
             select(CatalogCard).where(CatalogCard.set_id == args.correct_set_id, CatalogCard.number == args.correct_number)
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         if correct_card is None:
             print(f"no catalog card {args.correct_set_id}#{args.correct_number} -- is that set cached?")
             return 1
-        if correct_card.id == item.card_id:
+        if correct_card.id == item.catalog_item_id:
             print("item is already filed under that card -- nothing to do")
             return 0
 
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
 
         existing = session.scalar(
             select(InventoryItem).where(
-                InventoryItem.card_id == correct_card.id,
+                InventoryItem.catalog_item_id == correct_card.id,
                 InventoryItem.variant == item.variant,
                 InventoryItem.condition == item.condition,
             )
@@ -88,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                 stored = _store_scan_image(Path(item.scan_image_path), media_dir, set_code, correct_card.number, item.variant, item.condition)
                 item.scan_image_path = str(stored)
             item.card_id = correct_card.id
+            item.catalog_item_id = correct_card.id
             result_id = item.id
 
         session.commit()

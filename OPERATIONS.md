@@ -143,6 +143,8 @@ business facts and explicit legal-review approval are configured.
 Take a manual backup first regardless of what the nightly restic run last did. The
 scripts under `scripts/migrations/` are pre-Alembic history and must not be used for
 new schema work. Production was baselined at `20261001_01` on 1 October 2026.
+Revision `20261002_03` makes inventory catalogue identity mandatory and unique;
+the legacy `card_id` link remains temporarily for scan-reference compatibility.
 
 ## Rate-limit-sensitive: pokemonpricetracker.com
 

@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     with SessionLocal() as session:
         items = session.execute(
             select(InventoryItem, CatalogCard)
-            .join(CatalogCard, CatalogCard.id == InventoryItem.card_id)
+            .join(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
             .where(InventoryItem.scan_image_path.isnot(None))
         ).all()
         print(f"{len(items)} inventory item(s) with a saved scan photo and a known reference hash")

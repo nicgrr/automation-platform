@@ -10,7 +10,7 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    CardSet, CardVariant, CatalogCard, InventoryItem, InventoryStatus,
+    CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus,
     Marketplace, PotentialPurchase, PotentialPurchaseStatus, Sale,
 )
 
@@ -40,6 +40,7 @@ def test_empty_platform_shows_zeroes_not_errors(client):
 def test_dead_stock_is_flagged_for_old_still_available_items(client, session):
     old_added = datetime.now(UTC) - timedelta(days=120)
     session.add(CardSet(id="sv1", name="Scarlet & Violet"))
+    session.add(CatalogItem(id="sv1-1", item_type=CatalogItemType.TCG_CARD, name="Sprigatito"))
     session.add(CatalogCard(id="sv1-1", set_id="sv1", number="1", name="Sprigatito"))
     session.add(InventoryItem(
         id="inv1", card_id="sv1-1", variant=CardVariant.NORMAL, quantity=1,

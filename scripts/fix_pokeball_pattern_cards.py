@@ -32,7 +32,7 @@ def main() -> int:
                 continue
 
             wrong_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == wrong_variant)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == wrong_variant)
             )
             if wrong_row is None or wrong_row.quantity < 1:
                 print(f"{name} #{number}: no {wrong_variant.value} unit found, skipping")
@@ -46,7 +46,7 @@ def main() -> int:
                 print(f"{name} #{number}: {wrong_variant.value} {wrong_row.quantity + 1} -> {wrong_row.quantity}")
 
             pb_row = session.scalar(
-                select(InventoryItem).where(InventoryItem.card_id == card.id, InventoryItem.variant == CardVariant.POKEBALL_PATTERN)
+                select(InventoryItem).where(InventoryItem.catalog_item_id == card.id, InventoryItem.variant == CardVariant.POKEBALL_PATTERN)
             )
             if pb_row is None:
                 pb_row = InventoryItem(card_id=card.id, variant=CardVariant.POKEBALL_PATTERN, condition="Near Mint", quantity=0)

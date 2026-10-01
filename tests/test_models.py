@@ -8,6 +8,9 @@ from automation_control.models import (
     Approval,
     ApprovalStatus,
     CardPrice,
+    CardSet,
+    CardVariant,
+    CatalogCard,
     CatalogItem,
     CatalogItemType,
     EbayCategoryMapping,
@@ -26,6 +29,7 @@ from automation_control.models import (
     ToolExecution,
     ToolExecutionStatus,
     User,
+    InventoryItem,
 )
 
 
@@ -39,6 +43,20 @@ def test_card_price_uses_catalogue_identity_with_legacy_alias(session):
 
     assert price.catalog_item_id == item.id
     assert price.card_id == item.id  # compatibility during the retirement window
+
+
+def test_legacy_inventory_card_write_populates_canonical_identity(session):
+    session.add(CardSet(id="set-1", name="Test set"))
+    session.add(CatalogItem(id="set-1-card-1", item_type=CatalogItemType.TCG_CARD,
+                            name="Test card"))
+    session.add(CatalogCard(id="set-1-card-1", set_id="set-1", number="1",
+                            name="Test card"))
+    holding = InventoryItem(card_id="set-1-card-1", variant=CardVariant.NORMAL,
+                            condition="Near Mint", quantity=1)
+    session.add(holding)
+    session.commit()
+
+    assert holding.catalog_item_id == "set-1-card-1"
 
 
 def test_approval_can_only_be_decided_once(session):

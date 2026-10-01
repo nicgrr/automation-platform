@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, event
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from .database import Base
@@ -1213,17 +1213,14 @@ class InventoryItem(Base):
     increments an existing row, since inventory questions are "how many do
     I have" rather than "tell me about copy #2".
 
-    That makes (card_id, variant, condition) the natural identity, enforced
-    by a unique constraint so a concurrent double-commit can't split one
-    holding across two rows.
+    That makes (catalog_item_id, variant, condition) the natural identity,
+    enforced by a unique constraint so a concurrent double-commit can't
+    split one holding across two rows.
 
-    `catalog_item_id` / `storage_location_id` / `status` / `allocated_cost_basis`
-    / `grading_company` / `certification_number` were added by
-    scripts/migrations/migrate_add_catalog_items.py, backfilled from the existing
-    `card_id` -- nullable and additive, so nothing reading only the
-    original columns breaks. `card_id` stays the source of truth for the
-    live scan-ingest pipeline until every reader is moved over to
-    `catalog_item_id` in a later, separate change.
+    `catalog_item_id` is the canonical identity for every stock type.
+    `card_id` is a temporary compatibility link to the older Pokemon-style
+    CatalogCard reference table. When present it must agree during the 60-day
+    observation window; sealed products and collectibles leave it NULL.
 
     `card_id` was made nullable by scripts/migrations/migrate_relax_inventory_card_id.py
     (a full table rebuild -- SQLite can't ALTER a NOT NULL away) so a
@@ -1236,7 +1233,10 @@ class InventoryItem(Base):
     """
 
     __tablename__ = "inventory_items"
-    __table_args__ = (UniqueConstraint("card_id", "variant", "condition", name="uq_inventory_card_variant_condition"),)
+    __table_args__ = (UniqueConstraint(
+        "catalog_item_id", "variant", "condition",
+        name="uq_inventory_catalog_item_variant_condition",
+    ),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     card_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_cards.id"), index=True)
@@ -1249,7 +1249,7 @@ class InventoryItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    catalog_item_id: Mapped[str] = mapped_column(ForeignKey("catalog_items.id"), nullable=False, index=True)
     storage_location_id: Mapped[str | None] = mapped_column(ForeignKey("storage_locations.id"), index=True)
     status: Mapped[InventoryStatus] = mapped_column(Enum(InventoryStatus), default=InventoryStatus.AVAILABLE, index=True)
     allocated_cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
@@ -1259,6 +1259,18 @@ class InventoryItem(Base):
     card: Mapped[CatalogCard | None] = relationship()
     catalog_item: Mapped[CatalogItem | None] = relationship()
     storage_location: Mapped[StorageLocation | None] = relationship()
+
+
+@event.listens_for(InventoryItem, "before_insert")
+@event.listens_for(InventoryItem, "before_update")
+def _enforce_inventory_catalog_identity(_mapper, _connection, item: InventoryItem) -> None:
+    """Keep legacy TCG writes safe while catalogue identity becomes canonical."""
+    if item.catalog_item_id is None and item.card_id is not None:
+        item.catalog_item_id = item.card_id
+    if item.catalog_item_id is None:
+        raise ValueError("InventoryItem.catalog_item_id is required")
+    if item.card_id is not None and item.card_id != item.catalog_item_id:
+        raise ValueError("InventoryItem.card_id must match catalog_item_id during compatibility")
 
 
 class FoilLabel(Base):

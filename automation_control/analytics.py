@@ -128,7 +128,7 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         for bucket, count in ageing.items()
     )
     def item_label(item: InventoryItem) -> str:
-        name = item.card.name if item.card else item.card_id
+        name = item.catalog_item.name if item.catalog_item else item.catalog_item_id
         return escape(f"{name} ({item.variant.value}, x{item.quantity})")
 
     dead_stock_html = (

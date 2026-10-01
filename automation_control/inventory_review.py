@@ -361,20 +361,22 @@ def inventory_sets(
     owned = session.execute(
         select(
             CatalogCard.set_id,
-            func.count(func.distinct(InventoryItem.card_id)).label("distinct_cards"),
+            func.count(func.distinct(InventoryItem.catalog_item_id)).label("distinct_cards"),
             func.sum(InventoryItem.quantity).label("copies"),
         )
-        .join(InventoryItem, InventoryItem.card_id == CatalogCard.id)
+        .join(InventoryItem, InventoryItem.catalog_item_id == CatalogCard.id)
         .group_by(CatalogCard.set_id)
     ).all()
 
     if not owned:
-        # `owned` only ever covers card_id-linked holdings (real CardSet
+        # `owned` only covers holdings with a CatalogCard scan reference (real CardSet
         # tiles); a holding with no catalogue match at all -- see
         # inventory_uncatalogued -- would otherwise report "nothing
         # scanned yet" even with real, correctly game-tagged stock sitting
         # in Misc.
-        any_uncatalogued = session.scalar(select(InventoryItem.id).where(InventoryItem.card_id.is_(None)).limit(1))
+        any_uncatalogued = session.scalar(
+            select(InventoryItem.id).where(InventoryItem.quantity > 0).limit(1)
+        )
         if not any_uncatalogued:
             body = (
                 brand_header("Inventory")
@@ -387,22 +389,25 @@ def inventory_sets(
     sets = {s.id: s for s in session.scalars(select(CardSet).where(CardSet.id.in_(set_ids)))}
 
     items = list(session.scalars(
-        select(InventoryItem).join(CatalogCard, InventoryItem.card_id == CatalogCard.id)
+        select(InventoryItem).join(CatalogCard, InventoryItem.catalog_item_id == CatalogCard.id)
         .where(CatalogCard.set_id.in_(set_ids))
     ))
-    prices = _latest_prices(session, {i.card_id for i in items})
-    ebay_prices = _latest_ebay_prices(session, {i.card_id for i in items})
-    set_of = {c.id: c.set_id for c in session.scalars(select(CatalogCard).where(CatalogCard.id.in_({i.card_id for i in items})))}
+    prices = _latest_prices(session, {i.catalog_item_id for i in items})
+    ebay_prices = _latest_ebay_prices(session, {i.catalog_item_id for i in items})
+    set_of = {c.id: c.set_id for c in session.scalars(select(CatalogCard).where(
+        CatalogCard.id.in_({i.catalog_item_id for i in items})
+    ))}
 
     value_by_set: dict[str, float] = {}
     for item in items:
         # same fallback as the per-card grid, so set totals and card tiles
         # can't disagree about what a holding is worth
-        line = _aud(prices.get((item.card_id, item.variant)), item.quantity)
+        line = _aud(prices.get((item.catalog_item_id, item.variant)), item.quantity)
         if line is None:
-            line = _aud(ebay_prices.get(item.card_id), item.quantity)
+            line = _aud(ebay_prices.get(item.catalog_item_id), item.quantity)
         if line:
-            value_by_set[set_of[item.card_id]] = value_by_set.get(set_of[item.card_id], 0.0) + line
+            set_id = set_of[item.catalog_item_id]
+            value_by_set[set_id] = value_by_set.get(set_id, 0.0) + line
 
     if not group:
         return _category_landing(session, owned, sets, value_by_set)
@@ -419,7 +424,8 @@ def inventory_sets(
     uncatalogued_count, uncatalogued_qty = session.execute(
         select(func.count(InventoryItem.id), func.sum(InventoryItem.quantity))
         .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
-        .where(InventoryItem.card_id.is_(None), TcgCard.game.in_(games))
+        .outerjoin(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
+        .where(CatalogCard.id.is_(None), TcgCard.game.in_(games))
     ).one()
 
     if not owned and not uncatalogued_count:
@@ -581,7 +587,8 @@ def _category_landing(session: Session, owned, sets: dict, value_by_set: dict) -
     misc_count, misc_qty = session.execute(
         select(func.count(InventoryItem.id), func.sum(InventoryItem.quantity))
         .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
-        .where(InventoryItem.card_id.is_(None))
+        .outerjoin(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
+        .where(CatalogCard.id.is_(None))
     ).one()
     tiles.append(
         "<a class='set-tile' href='/inventory/uncatalogued'>"
@@ -623,12 +630,11 @@ def inventory_all_cards(
         group = ""
 
     items = list(session.scalars(
-        select(InventoryItem).where(
-            InventoryItem.card_id.is_not(None),
-            InventoryItem.quantity > 0,
-        )
+        select(InventoryItem)
+        .join(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
+        .where(InventoryItem.quantity > 0)
     ))
-    card_ids = {item.card_id for item in items if item.card_id}
+    card_ids = {item.catalog_item_id for item in items}
     cards = {
         card.id: card
         for card in session.scalars(select(CatalogCard).where(CatalogCard.id.in_(card_ids)))
@@ -643,15 +649,15 @@ def inventory_all_cards(
         games = GAME_GROUPS[group]["games"]
         items = [
             item for item in items
-            if item.card_id in cards
-            and sets.get(cards[item.card_id].set_id)
-            and sets[cards[item.card_id].set_id].game in games
+            if item.catalog_item_id in cards
+            and sets.get(cards[item.catalog_item_id].set_id)
+            and sets[cards[item.catalog_item_id].set_id].game in games
         ]
 
     held_by: dict[tuple[str, CardVariant], list[InventoryItem]] = {}
     for item in items:
-        if item.card_id in cards:
-            held_by.setdefault((item.card_id, item.variant), []).append(item)
+        if item.catalog_item_id in cards:
+            held_by.setdefault((item.catalog_item_id, item.variant), []).append(item)
 
     visible_ids = {card_id for card_id, _ in held_by}
     prices = _latest_prices(session, visible_ids)
@@ -790,7 +796,8 @@ def inventory_uncatalogued(
         select(InventoryItem, TcgCard, CatalogItem)
         .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
         .join(CatalogItem, CatalogItem.id == InventoryItem.catalog_item_id)
-        .where(InventoryItem.card_id.is_(None))
+        .outerjoin(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
+        .where(CatalogCard.id.is_(None))
         .order_by(TcgCard.game, CatalogItem.name)
     )
     if group in GAME_GROUPS:
@@ -869,14 +876,16 @@ def inventory_set(
     # The whole set, so "Progress: 15/114" is visible rather than asserted.
     catalog_cards = list(session.scalars(select(CatalogCard).where(CatalogCard.set_id == set_id)))
 
-    item_query = select(InventoryItem).join(CatalogCard, InventoryItem.card_id == CatalogCard.id).where(CatalogCard.set_id == set_id)
+    item_query = select(InventoryItem).join(
+        CatalogCard, InventoryItem.catalog_item_id == CatalogCard.id
+    ).where(CatalogCard.set_id == set_id)
     if variant_filter is not None:
         item_query = item_query.where(InventoryItem.variant == variant_filter)
     items = list(session.scalars(item_query))
 
     held_by: dict[tuple[str, CardVariant], list[InventoryItem]] = {}
     for item in items:
-        held_by.setdefault((item.card_id, item.variant), []).append(item)
+        held_by.setdefault((item.catalog_item_id, item.variant), []).append(item)
 
     prices = _latest_prices(session, {c.id for c in catalog_cards})
     ebay_prices = _latest_ebay_prices(session, {c.id for c in catalog_cards})
@@ -1050,7 +1059,7 @@ def inventory_adjust(
         raise HTTPException(status_code=400, detail=f"unknown variant: {variant!r}")
 
     held = list(session.scalars(select(InventoryItem).where(
-        InventoryItem.card_id == card.id, InventoryItem.variant == printing)))
+        InventoryItem.catalog_item_id == card.id, InventoryItem.variant == printing)))
     if len(held) > 1:
         # Several conditions of the same printing: which one to change isn't
         # ours to guess, and guessing would silently edit the wrong holding.
@@ -1133,7 +1142,7 @@ def inventory_edit_details(
         raise HTTPException(status_code=400, detail=f"unknown variant: {variant!r}")
 
     held = list(session.scalars(select(InventoryItem).where(
-        InventoryItem.card_id == card.id, InventoryItem.variant == printing)))
+        InventoryItem.catalog_item_id == card.id, InventoryItem.variant == printing)))
 
     changed: dict[str, object] = {}
 

@@ -49,14 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     searched = 0
 
     with SessionLocal() as session:
-        # card_id is NULL for anything that isn't a TCG card -- collectibles
-        # are filed by catalog_item_id alone. Without this filter a None key
-        # reaches sorted() below and raises TypeError comparing str to None,
-        # which is exactly what killed this timer every day from 8 September
-        # (the day the first collectibles were committed) until it was found.
+        # The canonical inventory identity is populated for every item type,
+        # so join CatalogCard explicitly to keep this Pokemon-only job from
+        # spending time or API credits on collectibles.
         held = session.execute(
-            select(InventoryItem.card_id, InventoryItem.variant)
-            .where(InventoryItem.card_id.isnot(None))
+            select(InventoryItem.catalog_item_id, InventoryItem.variant)
+            .join(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
             .distinct()
         ).all()
         already_priced = set(

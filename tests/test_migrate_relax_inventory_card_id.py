@@ -63,12 +63,14 @@ def test_migration_rebuilds_table_with_nullable_card_id_and_preserves_data(tmp_p
         assert item.status == InventoryStatus.AVAILABLE
 
         # the whole point: a collectible row with no card_id now works
-        collectible_item = InventoryItem(id="item2", card_id=None, catalog_item_id=None, variant=CardVariant.NORMAL, condition="New", quantity=1)
+        collectible_item = InventoryItem(id="item2", card_id=None, catalog_item_id="collectible1",
+                                         variant=CardVariant.NORMAL, condition="New", quantity=1)
         session.add(collectible_item)
         session.commit()
 
     with Session(engine) as session:
         assert session.get(InventoryItem, "item2").card_id is None
+        assert session.get(InventoryItem, "item2").catalog_item_id == "collectible1"
 
 
 def test_migration_is_idempotent_when_already_nullable(tmp_path, monkeypatch):
