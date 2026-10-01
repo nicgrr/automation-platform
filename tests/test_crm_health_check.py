@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
-from automation_control.models import CardPrice, InventoryItem, InventoryStatus
+from automation_control.models import CardPrice, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus
 from scripts.crm_health_check import STALE_PRICE_DAYS, stale_priced_available_items, main
 
 
@@ -73,6 +73,18 @@ def test_non_card_collectibles_are_counted_by_distinct_catalog_item(session):
     make_price(session, card_id="collectible-1", fetched_at=datetime.now(UTC) - timedelta(days=1))
 
     assert stale_priced_available_items(session) == 1
+
+
+def test_manual_only_item_is_not_a_false_stale_price_alert(session):
+    session.add(CatalogItem(
+        id="unsupported-print", item_type=CatalogItemType.TCG_CARD,
+        name="Unsupported printing", pricing_policy="manual_only",
+        pricing_policy_reason="No trustworthy automated source",
+    ))
+    session.commit()
+    make_inventory(session, card_id=None, catalog_item_id="unsupported-print")
+
+    assert stale_priced_available_items(session) == 0
 
 
 def test_main_returns_zero_when_every_section_is_clean(session, capsys, monkeypatch):

@@ -37,7 +37,7 @@ from .dashboard import router as dashboard_router
 from .nav_counts import router as nav_counts_router
 from .data_export import router as data_export_router
 from .deal_check import router as deal_check_router
-from .database import Base, engine, get_session
+from .database import engine, get_session
 from .ebay_oauth import OAuthError, authorization_url, configured, consume_oauth_state, ebay_services, new_oauth_state, store_user_tokens, valid_user_access_token
 from .foil_review import router as foil_review_router
 from .inventory_audit_review import router as inventory_audit_router
@@ -66,13 +66,19 @@ from .ebay_sales import router as ebay_sales_router
 from .shop_orders import router as shop_orders_router
 from .personal_collection import router as personal_collection_router
 from .retailer_goals import router as retailer_goals_router
+from .release_info import expected_database_revision, require_database_revision
 from .navigation_hubs import router as navigation_hubs_router
 from .ui import brand_header, page
 from .whatnot import router as whatnot_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(engine)
+    # Alembic is authoritative from the 2026-10-01 baseline onward. Starting
+    # against an older/newer or unversioned schema is more dangerous than a
+    # clear failed start: create_all() cannot add columns or prove that a
+    # restored database belongs to this release.
+    with Session(engine) as session:
+        require_database_revision(session, expected_database_revision())
     yield
 
 

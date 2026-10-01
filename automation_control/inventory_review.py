@@ -807,9 +807,17 @@ def inventory_uncatalogued(
         f"<td>{inv.quantity}</td>"
         f"<td class='muted opt'>{escape(inv.condition or '—')}</td>"
         f"<td class='muted opt'>{escape(inv.status.value if inv.status else '—')}</td>"
-        "</tr>"
+        + (
+            "<td><span class='pill warn'>No supported price source</span>"
+            + (f"<small class='set-hint'>{escape(item.pricing_policy_reason)}</small>"
+               if item.pricing_policy_reason else "")
+            + "</td>"
+            if item.pricing_policy == "manual_only" else
+            "<td class='muted'>Awaiting automated price</td>"
+        )
+        + "</tr>"
         for inv, tcg, item in rows
-    ) or "<tr><td colspan=8>Nothing here.</td></tr>"
+    ) or "<tr><td colspan=9>Nothing here.</td></tr>"
 
     title = f"Misc — {GAME_GROUPS[group]['label']}" if group in GAME_GROUPS else "Misc"
     body = (
@@ -819,7 +827,7 @@ def inventory_uncatalogued(
           "<a href='/personal-collection'>Personal Collection</a> or the CLI.</p>"
         + "<div class='panel'><div class='table-wrap'><table><thead><tr>"
         + "<th class='opt'>Game</th><th>Name</th><th>Set/code</th><th>Number</th><th class='opt'>Rarity</th>"
-          "<th>Qty</th><th class='opt'>Condition</th><th class='opt'>Status</th>"
+          "<th>Qty</th><th class='opt'>Condition</th><th class='opt'>Status</th><th>Pricing</th>"
         + f"</tr></thead><tbody>{table_rows}</tbody></table></div></div>"
         + "<p><a class='btn ghost' href='/inventory'>&larr; Back to Inventory</a></p>"
         + _STYLE

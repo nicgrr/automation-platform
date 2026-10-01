@@ -766,6 +766,15 @@ class CatalogItem(Base):
     item_type: Mapped[CatalogItemType] = mapped_column(Enum(CatalogItemType), index=True)
     name: Mapped[str] = mapped_column(String(256), index=True)
     image_url: Mapped[str | None] = mapped_column(String(512))
+    # "automated" means a configured/provider source is expected to price
+    # this exact product. "manual_only" means no trustworthy automated
+    # source covers this printing; health checks must not report that as a
+    # broken/stale job, while the UI can still invite an attributed manual
+    # price. Never infer an English equivalent for a foreign printing.
+    pricing_policy: Mapped[str] = mapped_column(
+        String(16), default="automated", server_default="automated"
+    )
+    pricing_policy_reason: Mapped[str | None] = mapped_column(String(256))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

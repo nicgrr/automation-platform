@@ -74,6 +74,7 @@ cd /home/nic/automation-platform
 git status --short                            # must be clean
 git describe --tags --always --dirty          # record exactly what will run
 .venv/bin/python -m pytest -q                 # must be green
+chmod -R g+rX .venv                          # restrictive umasks must not hide installed packages from ezbay
 .venv/bin/python -m scripts.check_release_permissions
 .venv/bin/alembic current                     # must match head
 .venv/bin/alembic check                       # must report no new operations

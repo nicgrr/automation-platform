@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.job_health import JOBS, status_for
-from automation_control.models import CardPrice, InventoryItem, InventoryStatus
+from automation_control.models import CardPrice, CatalogItem, InventoryItem, InventoryStatus
 from automation_control.nav_counts import queue_counts
 from scripts.audit_inventory_vs_listings import CHECKS
 
@@ -38,6 +38,9 @@ def stale_priced_available_items(session, *, days: int = STALE_PRICE_DAYS) -> in
         select(InventoryItem.catalog_item_id).where(
             InventoryItem.status == InventoryStatus.AVAILABLE,
             InventoryItem.catalog_item_id.isnot(None),
+            InventoryItem.catalog_item_id.not_in(
+                select(CatalogItem.id).where(CatalogItem.pricing_policy == "manual_only")
+            ),
         )
     ))
     if not available_item_ids:

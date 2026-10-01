@@ -49,3 +49,36 @@ def database_revision(session: Session) -> str | None:
         return session.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar_one_or_none()
     except SQLAlchemyError:
         return None
+
+
+def expected_database_revision(repo_root: Path = REPO_ROOT) -> str | None:
+    """The single Alembic head shipped with this application checkout."""
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        config = Config(str(repo_root / "alembic.ini"))
+        config.set_main_option("script_location", str(repo_root / "migrations"))
+        return ScriptDirectory.from_config(config).get_current_head()
+    except Exception:
+        # Settings must still render a useful warning if release metadata is
+        # damaged. Startup turns this into a hard failure below.
+        return None
+
+
+def require_database_revision(session: Session, expected: str | None = None) -> str:
+    """Refuse to run application code against an unknown/wrong schema."""
+    expected = expected or expected_database_revision()
+    if expected is None:
+        raise RuntimeError("could not determine the application's expected database revision")
+    current = database_revision(session)
+    if current is None:
+        raise RuntimeError(
+            "database is not Alembic-baselined; run `alembic upgrade head` before starting EZBay"
+        )
+    if current != expected:
+        raise RuntimeError(
+            f"database revision {current!r} does not match application revision {expected!r}; "
+            "run `alembic upgrade head` or deploy the matching application release"
+        )
+    return current

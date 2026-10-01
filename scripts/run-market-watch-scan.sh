@@ -16,4 +16,4 @@ source "${env_file}"
 set +a
 
 cd -- "${project_dir}"
-exec "${venv_dir}/bin/python" scripts/scan_collectible_market.py --limit 20
+exec "${venv_dir}/bin/python" -m scripts.scan_collectible_market --limit 20

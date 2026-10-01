@@ -24,6 +24,14 @@ the test user could import it, but the `ezbay` service user could not. Normalise
 tracked files to their Git modes and added an explicit service-account import check
 to the release procedure; the API then restarted and passed its health probe.
 
+Follow-up hardening added virtual-environment permission checks and made the market
+watch runner import-safe under the service account. Alembic revision `20261001_02`
+records whether a catalogue item has automated price coverage: three manually
+catalogued printings are explicitly `manual_only`, while four genuinely stale
+supported prices remain visible as work. Application startup now refuses an
+unversioned or mismatched database instead of trying to repair it with
+`create_all()`, and Settings reports the expected-versus-current revision.
+
 ## 2026-09-24 — Generic collectible discovery and alert inbox
 
 Expanded the Sonny Angel market page into a generic AU/JP collectible watch

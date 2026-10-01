@@ -129,10 +129,15 @@ def test_category_landing_links_out_to_collectibles_and_misc(client, session):
     assert "href='/inventory/uncatalogued'" in resp.text
 
 
-def _seed_uncatalogued(session, *, catalog_item_id="uncat-1", name="Uncatalogued Card", game="one_piece"):
+def _seed_uncatalogued(session, *, catalog_item_id="uncat-1", name="Uncatalogued Card",
+                       game="one_piece", pricing_policy="automated"):
     """A card with no CatalogCard match at all -- game correctly set, but
     nothing to build a set tile from (see inventory_uncatalogued)."""
-    session.add(CatalogItem(id=catalog_item_id, item_type=CatalogItemType.TCG_CARD, name=name))
+    session.add(CatalogItem(
+        id=catalog_item_id, item_type=CatalogItemType.TCG_CARD, name=name,
+        pricing_policy=pricing_policy,
+        pricing_policy_reason=("No trustworthy automated source" if pricing_policy == "manual_only" else None),
+    ))
     session.add(TcgCard(catalog_item_id=catalog_item_id, game=game))
     item = InventoryItem(catalog_item_id=catalog_item_id, card_id=None, variant=CardVariant.NORMAL, condition="Near Mint", quantity=1)
     session.add(item)
@@ -161,6 +166,18 @@ def test_group_with_only_uncatalogued_holdings_is_not_reported_empty(client, ses
     resp = client.get("/inventory?group=one_piece")
     assert "Nothing owned yet" not in resp.text
     assert "/inventory/uncatalogued?group=one_piece" in resp.text
+
+
+def test_uncatalogued_manual_only_holding_explains_missing_price(client, session):
+    _seed_uncatalogued(
+        session, name="Rare unsupported printing", game="super_dragon_ball_heroes",
+        pricing_policy="manual_only",
+    )
+
+    page = client.get("/inventory/uncatalogued").text
+
+    assert "No supported price source" in page
+    assert "No trustworthy automated source" in page
 
 
 def test_set_grid_totals_are_converted_to_aud(client, session):

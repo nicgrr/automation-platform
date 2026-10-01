@@ -28,6 +28,27 @@ def unreadable_release_files(root: Path, paths: list[str]) -> list[str]:
     return unreadable
 
 
+def unreadable_virtualenv_paths(venv: Path) -> list[str]:
+    """Files need group-read; directories need group traversal.
+
+    The production service runs as group ``ezbay``. A restrictive operator
+    umask can make newly installed packages 0600 and their directories 2700,
+    even when every tracked source file is readable.
+    """
+    unreadable: list[str] = []
+    if not venv.exists():
+        return [str(venv)]
+    for path in venv.rglob("*"):
+        if path.is_symlink():
+            continue
+        mode = path.stat().st_mode
+        if path.is_dir() and not mode & stat.S_IXGRP:
+            unreadable.append(str(path.relative_to(venv)))
+        elif path.is_file() and not mode & stat.S_IRGRP:
+            unreadable.append(str(path.relative_to(venv)))
+    return unreadable
+
+
 def tracked_paths(root: Path) -> list[str]:
     result = subprocess.run(
         ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True,
@@ -38,11 +59,19 @@ def tracked_paths(root: Path) -> list[str]:
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     unreadable = unreadable_release_files(root, tracked_paths(root))
-    if unreadable:
-        print("Tracked files unreadable by the ezbay service group:")
+    venv_unreadable = unreadable_virtualenv_paths(root / ".venv")
+    if unreadable or venv_unreadable:
+        if unreadable:
+            print("Tracked files unreadable by the ezbay service group:")
         for path in unreadable:
             print(f"  {path}")
-        print("Set source/data-independent files to mode 0644 (or 0755 when executable).")
+        if venv_unreadable:
+            print("Virtualenv paths unreadable by the ezbay service group:")
+            for path in venv_unreadable[:50]:
+                print(f"  {path}")
+            if len(venv_unreadable) > 50:
+                print(f"  ...and {len(venv_unreadable) - 50} more")
+        print("Normalize tracked files to Git modes and run `chmod -R g+rX .venv` after installs.")
         return 1
     print("Release permissions: OK")
     return 0

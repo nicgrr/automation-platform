@@ -18,8 +18,8 @@ reliability and rollback improve before business workflows or schemas are remove
 
 - [x] Complete platform review and owner decision register.
 - [x] Run the full regression suite (1,889 passing on 2026-10-01).
-- [ ] Separate source from generated data, backups and investigation artifacts.
-- [ ] Review and checkpoint the current worktree without losing existing work.
+- [x] Separate source from generated data, backups and investigation artifacts.
+- [x] Review and checkpoint the current worktree without losing existing work.
 - [x] Display deployed Git revision and database revision in Settings (the database
   correctly reports "not baselined" until the Alembic baseline is applied).
 - [ ] Document and test the release rollback procedure.
@@ -34,14 +34,14 @@ reliability and rollback improve before business workflows or schemas are remove
 - [ ] Make job problems persistent and prominent on the dashboard until recovered.
 - [ ] Add backup age and last successful restore-drill status.
 - [ ] Perform and document a restore into a temporary database.
-- [ ] Classify the seven stale/missing-price holdings as supported-stale or
-  explicitly unsupported.
+- [x] Classify the seven stale/missing-price holdings as supported-stale or
+  explicitly unsupported (four supported-stale; three manual-only with reasons).
 
 ## Phase 2 — versioned data model
 
 - [x] Introduce Alembic and baseline the existing production schema in place
   (`20261001_01`; blank-database build and production drift check both clean).
-- [ ] Fail safely and visibly on application/database revision mismatch.
+- [x] Fail safely and visibly on application/database revision mismatch.
 - [ ] Make `catalog_item_id` canonical in every inventory reader and writer.
 - [ ] Generalise the historical `CardPrice.card_id` name to catalogue-item identity.
 - [ ] Route approved card/photo captures into canonical catalogue and inventory.

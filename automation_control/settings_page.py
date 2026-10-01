@@ -32,7 +32,7 @@ from .config import Settings
 from .database import get_session
 from .ebay_oauth import configured, configured_for_writes
 from .models import EbayCredential
-from .release_info import application_revision, database_revision
+from .release_info import application_revision, database_revision, expected_database_revision
 from .ui import brand_header, page
 
 router = APIRouter()
@@ -194,6 +194,7 @@ def settings_page(request: Request, user: str = Depends(require_dashboard_user),
     ebay_rows, action = _ebay_rows(settings, session)
     app_revision, dirty = application_revision()
     schema_revision = database_revision(session)
+    expected_schema_revision = expected_database_revision()
     if dirty is True:
         app_row = Row("Application revision", WARN, f"{app_revision} + local changes",
                       "the running source cannot be reproduced from this commit alone")
@@ -204,6 +205,9 @@ def settings_page(request: Request, user: str = Depends(require_dashboard_user),
                       "the Git working-tree state could not be read")
     schema_row = (
         Row("Database revision", GOOD, schema_revision)
+        if schema_revision and schema_revision == expected_schema_revision else
+        Row("Database revision", BAD, schema_revision,
+            f"application expects {expected_schema_revision}; deployment is blocked until they match")
         if schema_revision else
         Row("Database revision", WARN, "not baselined",
             "the current schema predates Alembic and has no recorded revision")
