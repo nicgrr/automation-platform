@@ -12,6 +12,11 @@ to temporary storage, verifies integrity and foreign keys, migrates it to the
 current schema, preserves key row counts and boots the application health
 endpoint. A tracked monthly systemd timer keeps that evidence current.
 
+Release rollback is now documented and executable as a non-destructive drill. It
+exports a historical release tag into temporary storage, pairs it with the named
+pre-release database snapshot, and exercises the historical application's real
+schema gate and health endpoint without changing the live checkout or database.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

@@ -128,6 +128,28 @@ database revision currently in use. If smoke checks fail, stop writers, restore 
 pre-release database only when the release included a data migration, return to the
 previous tag and restart both services.
 
+### Rollback procedure
+
+For a code-only release, check out the previous tag and restart the affected
+services; leave the database in place. For a release containing a data migration,
+stop every writer first, restore the named pre-release SQLite snapshot, check out
+the previous tag, then restart and run both health probes. Do not run an Alembic
+downgrade on production when a pre-release snapshot exists: restoring the exact
+code/database pair is the safer and already rehearsed path.
+
+Prove the pair non-destructively before relying on it:
+
+```bash
+.venv/bin/python -m scripts.release_rollback_drill \
+  --tag <previous-release-tag> \
+  --snapshot backups/<matching-pre-release-snapshot>.sqlite
+```
+
+The drill exports the tag and copies the snapshot beneath temporary storage. It
+starts the historical application through its real schema gate and health endpoint,
+checks integrity and foreign keys, and confirms key row counts did not change. It
+never checks out files over the live worktree or opens the production database.
+
 The tracked storefront unit is installed with:
 
 ```bash

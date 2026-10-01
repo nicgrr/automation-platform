@@ -119,12 +119,13 @@ def run(snapshot: Path, status_file: Path = STATUS_FILE) -> dict:
             after = _inspect_database(restored)
             if before["counts"] != after["counts"]:
                 raise RuntimeError("row counts changed while migrating the restored snapshot")
-            health_program = (
-                "from fastapi.testclient import TestClient; "
-                "from automation_control.api import app; "
-                "response=TestClient(app).get('/health'); "
-                "assert response.status_code == 200, response.text"
-            )
+            health_program = """\
+from fastapi.testclient import TestClient
+from automation_control.api import app
+with TestClient(app) as client:
+    response = client.get('/health')
+    assert response.status_code == 200, response.text
+"""
             _run_checked([sys.executable, "-c", health_program], database_url)
 
         status.update({
