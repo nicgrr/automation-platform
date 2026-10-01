@@ -23,6 +23,8 @@ reliability and rollback improve before business workflows or schemas are remove
 - [x] Display deployed Git revision and database revision in Settings (the database
   correctly reports "not baselined" until the Alembic baseline is applied).
 - [ ] Document and test the release rollback procedure.
+- [x] Add a service-account import check so owner-only file permissions cannot pass
+  tests and then prevent the deployed web service from starting.
 
 ## Phase 1 — truthful health and recovery
 

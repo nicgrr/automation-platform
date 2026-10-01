@@ -19,6 +19,11 @@ representations, made a fresh integrity-checked backup, and stamped production a
 `20261001_01`. `alembic check` reports no schema drift and no business table or row
 was changed by the stamp.
 
+The first restart caught owner-only (`0600`) permissions on newly tracked source:
+the test user could import it, but the `ezbay` service user could not. Normalised
+tracked files to their Git modes and added an explicit service-account import check
+to the release procedure; the API then restarted and passed its health probe.
+
 ## 2026-09-24 — Generic collectible discovery and alert inbox
 
 Expanded the Sonny Angel market page into a generic AU/JP collectible watch
