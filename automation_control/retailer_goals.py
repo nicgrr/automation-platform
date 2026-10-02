@@ -117,6 +117,7 @@ def _purchase_dialog(product: RetailerProduct, gameology_price: Decimal | None) 
     return (
         f"<dialog class='purchase-dialog' id='purchase-{escape(product.id)}'>"
         f"<form method='post' action='/retailer-goals/products/{escape(product.id)}/purchase' class='rg-form'>"
+        f"<input type='hidden' name='submission_key' value='{uuid.uuid4()}'>"
         f"<div class='dialog-head'><h2>Record purchase</h2>"
         f"<button type='button' class='icon-button' onclick=\"this.closest('dialog').close()\" aria-label='Close'>&times;</button></div>"
         f"<p class='subtitle'>{escape(product.name)}</p>"
@@ -128,7 +129,7 @@ def _purchase_dialog(product: RetailerProduct, gameology_price: Decimal | None) 
         "<label>Shipping (not added to Guild progress)<input name='shipping' type='number' min='0' step='0.01' value='0'></label>"
         "<label>Order number (optional)<input name='order_number' maxlength='256'></label>"
         "<label>Notes<textarea name='notes' rows='3'></textarea></label>"
-        "<label class='check'><input name='add_to_inventory' type='checkbox' value='1' checked> Add sealed product to EzBay inventory</label>"
+        "<p class='fine-print'>Confirming creates the retailer purchase, purchase-lot line and sealed inventory together. Shipping is included in inventory cost basis.</p>"
         "<div class='dialog-actions'><button type='button' class='secondary' onclick=\"this.closest('dialog').close()\">Cancel</button>"
         "<button type='submit'>Confirm purchase</button></div></form></dialog>"
     )
@@ -258,6 +259,10 @@ def _purchase_history(state: dict, status_filter: str, sort: str) -> str:
     rows = []
     for purchase in purchases:
         product = products.get(purchase.product_id)
+        lot_link = (
+            f"<a href='/purchase-lots/{escape(purchase.purchase_lot_id)}'>Open</a>"
+            if purchase.purchase_lot_id else "—"
+        )
         action = ""
         if purchase.status == RetailerPurchaseStatus.RECORDED:
             action = (
@@ -274,7 +279,8 @@ def _purchase_history(state: dict, status_filter: str, sort: str) -> str:
             f"<td data-label='Eligible'>{_money(purchase.eligible_spend)}</td>"
             f"<td data-label='Market'>{_money(purchase.market_unit_price)}</td>"
             f"<td data-label='Premium'>{_money(purchase.guild_premium_paid)}</td>"
-            f"<td data-label='Inventory'>{'Yes' if purchase.inventory_added else 'No'}</td>"
+            f"<td data-label='Inventory'>{'Added' if purchase.inventory_added else 'Missing'}</td>"
+            f"<td data-label='Purchase lot'>{lot_link}</td>"
             f"<td data-label='Order'>{escape(purchase.order_number or '—')}</td>"
             f"<td data-label='Status'>{pill(purchase.status.value.title(), 'ok' if purchase.status == RetailerPurchaseStatus.RECORDED else 'neutral')}{action}</td>"
             "</tr>"
@@ -286,8 +292,8 @@ def _purchase_history(state: dict, status_filter: str, sort: str) -> str:
         f"<select name='purchase_sort'>{_options({'newest':'Newest','oldest':'Oldest','spend':'Eligible spend','premium':'Guild premium'}, sort)}</select>"
         "<button type='submit'>Apply</button></form></div>"
         "<div class='history-table'><table><thead><tr><th>Date</th><th>Product</th><th>Qty</th><th>Price</th>"
-        "<th>Eligible</th><th>Market</th><th>Premium</th><th>Inventory</th><th>Order</th><th>Status</th></tr></thead>"
-        f"<tbody>{''.join(rows) or '<tr><td colspan=10>No purchases recorded yet.</td></tr>'}</tbody></table></div></div>"
+        "<th>Eligible</th><th>Market</th><th>Premium</th><th>Inventory</th><th>Purchase lot</th><th>Order</th><th>Status</th></tr></thead>"
+        f"<tbody>{''.join(rows) or '<tr><td colspan=11>No purchases recorded yet.</td></tr>'}</tbody></table></div></div>"
     )
 
 
@@ -340,7 +346,7 @@ def retailer_goal_dashboard(
                 f"<p>Gameology spend +{_money(purchase.eligible_spend)} &middot; Remaining to $5k {_money(max(ZERO, Decimal('5000') - state['spend']))}"
                 f" &middot; Fund {_money(fund_before)} → {_money(state['fund']['available'])}"
                 f" &middot; Guild premium {('+' + _money(purchase.guild_premium_paid)) if purchase.guild_premium_paid is not None else 'not available'}"
-                f" &middot; Inventory {'+' + str(purchase.quantity) if purchase.inventory_added else 'not added'}</p></div></div>"
+                f" &middot; Inventory +{purchase.quantity} &middot; <a href='/purchase-lots/{escape(purchase.purchase_lot_id or '')}'>Open purchase lot</a></p></div></div>"
             )
 
     alerts = (f"<div class='notice ok'>{escape(notice)}</div>" if notice else "") + (
@@ -738,13 +744,24 @@ def add_price(
 def mark_purchased(
     product_id: str, purchase_price: str = Form(...), quantity: str = Form("1"),
     purchase_date: str = Form(...), eligible_spend: str = Form(""), shipping: str = Form("0"),
-    order_number: str = Form(""), notes: str = Form(""), add_to_inventory: str = Form(""),
+    order_number: str = Form(""), notes: str = Form(""), submission_key: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     product = session.get(RetailerProduct, product_id)
     if product is None:
         raise HTTPException(status_code=404, detail="product not found")
     program = session.get(RetailerProgram, product.program_id)
+    clean_submission_key = submission_key.strip()[:36]
+    if clean_submission_key:
+        existing = session.scalar(select(RetailerPurchase).where(
+            RetailerPurchase.submission_key == clean_submission_key
+        ))
+        if existing is not None:
+            if existing.product_id != product.id:
+                raise HTTPException(status_code=409, detail="purchase submission key was already used")
+            return RedirectResponse(
+                f"/retailer-goals/{program.slug}?purchased={existing.id}", status_code=303
+            )
     try:
         unit = money(purchase_price, allow_negative=False)
         qty = positive_int(quantity)
@@ -755,14 +772,17 @@ def mark_purchased(
             session, program=program, product=product, unit_price=unit, quantity=qty,
             purchase_date=_date(purchase_date, default=date.today()), eligible_amount=eligible,
             shipping=money(shipping, allow_negative=False), order_number=order_number,
-            notes=notes, add_to_inventory=bool(add_to_inventory),
+            notes=notes, submission_key=clean_submission_key,
         )
     except ValueError as exc:
         session.rollback()
         return RedirectResponse(f"/retailer-goals/{program.slug}?error={quote(str(exc))}", status_code=303)
     record_event(session, actor_type="user", actor_id=user, action="retailer_goals.purchase_recorded",
                  resource_type="retailer_purchase", resource_id=result["purchase"].id, outcome="success",
-                 correlation_id=str(uuid.uuid4()), details={"quantity": qty, "inventory": bool(add_to_inventory)})
+                 correlation_id=str(uuid.uuid4()), details={
+                     "quantity": qty, "inventory_item_id": result["purchase"].inventory_item_id,
+                     "purchase_lot_id": result["purchase"].purchase_lot_id,
+                 })
     return RedirectResponse(f"/retailer-goals/{program.slug}?purchased={result['purchase'].id}", status_code=303)
 
 
@@ -776,6 +796,7 @@ def refund(purchase_id: str, user: str = Depends(require_dashboard_user),
     try:
         refund_purchase(session, purchase)
     except ValueError as exc:
+        session.rollback()
         return RedirectResponse(f"/retailer-goals/{program.slug}?error={quote(str(exc))}", status_code=303)
     record_event(session, actor_type="user", actor_id=user, action="retailer_goals.purchase_refunded",
                  resource_type="retailer_purchase", resource_id=purchase.id, outcome="success",

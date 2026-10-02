@@ -2,12 +2,20 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
+from automation_control.api import app
+from automation_control.auth import require_dashboard_user
+from automation_control.database import get_session
 from automation_control.models import (
     InventoryItem,
+    InventoryStatus,
+    PurchaseLot,
+    PurchaseLotItem,
+    PurchaseLotStatus,
     Retailer,
     RetailerBudget,
     RetailerFundEntry,
@@ -17,9 +25,12 @@ from automation_control.models import (
     RetailerPriceSnapshot,
     RetailerProduct,
     RetailerProductStatus,
+    RetailerPurchase,
     RetailerPurchaseStatus,
     RetailerStockStatus,
     RetailerTrustStatus,
+    ShopListing,
+    ShopListingStatus,
 )
 from automation_control.retailer_goals_service import (
     accrue_weekly_fund,
@@ -41,10 +52,21 @@ from automation_control.retailer_goals import retailer_goal_dashboard
 
 @pytest.fixture
 def session(tmp_path):
-    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'retailer-goals.db'}")
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'retailer-goals.db'}",
+        connect_args={"check_same_thread": False},
+    )
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         yield db
+
+
+@pytest.fixture
+def client(session):
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[require_dashboard_user] = lambda: "testuser"
+    yield TestClient(app)
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -203,26 +225,36 @@ def test_milestone_records_first_achievement_date(session, program):
     assert early.achieved_at == reached.replace(tzinfo=None)
 
 
-def test_purchase_can_create_existing_inventory_and_refund_reverses_it(session, program):
+def test_purchase_automatically_creates_linked_lot_inventory_and_refund_reverses_it(session, program):
     product = next(iter(session.scalars(select(RetailerProduct).where(
         RetailerProduct.program_id == program.id
     ))))
     result = record_purchase(
         session, program=program, product=product, unit_price=Decimal("299.95"),
         quantity=2, purchase_date=date.today(), eligible_amount=Decimal("599.90"),
-        order_number="GAME-123", add_to_inventory=True,
+        shipping=Decimal("10.00"), order_number="GAME-123",
     )
     purchase = result["purchase"]
     inventory = session.get(InventoryItem, purchase.inventory_item_id)
     assert inventory.quantity == 2
-    assert inventory.allocated_cost_basis == Decimal("299.95")
+    lot = session.get(PurchaseLot, purchase.purchase_lot_id)
+    line = session.scalars(select(PurchaseLotItem)).one()
+    assert inventory.allocated_cost_basis == Decimal("304.95")
     assert "Gameology" in inventory.notes
     assert purchase.inventory_added is True
+    assert lot.status == PurchaseLotStatus.PURCHASED
+    assert lot.external_order_number == "GAME-123"
+    assert lot.purchase_price == Decimal("609.90")
+    assert line.retailer_purchase_id == purchase.id
+    assert line.catalog_item_id == product.catalog_item_id
+    assert line.inventory_item_id == inventory.id
 
     refund_purchase(session, purchase)
 
     assert purchase.status == RetailerPurchaseStatus.REFUNDED
     assert inventory.quantity == 0
+    assert inventory.status == InventoryStatus.RETURNED
+    assert lot.status == PurchaseLotStatus.REFUNDED
     assert eligible_spend(session, program) == Decimal("0.00")
     assert fund_totals(session, _budget(session, program))["available"] == Decimal("0.00")
 
@@ -236,6 +268,104 @@ def test_refund_is_idempotently_rejected(session, program):
     refund_purchase(session, purchase)
     with pytest.raises(ValueError, match="already"):
         refund_purchase(session, purchase)
+
+
+def test_repurchase_reuses_and_reactivates_returned_holding(session, program):
+    product = _product(session, program)
+    first = record_purchase(
+        session, program=program, product=product, unit_price=Decimal("20"), quantity=1,
+        purchase_date=date.today(), eligible_amount=Decimal("20"),
+    )["purchase"]
+    inventory_id = first.inventory_item_id
+    refund_purchase(session, first)
+
+    second = record_purchase(
+        session, program=program, product=product, unit_price=Decimal("22"), quantity=2,
+        purchase_date=date.today(), eligible_amount=Decimal("44"),
+    )["purchase"]
+
+    inventory = session.get(InventoryItem, inventory_id)
+    assert second.inventory_item_id == inventory_id
+    assert inventory.quantity == 2
+    assert inventory.status == InventoryStatus.AVAILABLE
+    assert inventory.allocated_cost_basis == Decimal("22.00")
+    assert session.query(InventoryItem).filter_by(catalog_item_id=product.catalog_item_id).count() == 1
+
+
+def test_same_retailer_order_groups_lines_into_one_purchase_lot(session, program):
+    first = _product(session, program, "First Product")
+    second = _product(session, program, "Second Product")
+    one = record_purchase(
+        session, program=program, product=first, unit_price=Decimal("20"), quantity=1,
+        purchase_date=date.today(), eligible_amount=Decimal("20"), order_number="ORDER-42",
+    )["purchase"]
+    two = record_purchase(
+        session, program=program, product=second, unit_price=Decimal("30"), quantity=2,
+        purchase_date=date.today(), eligible_amount=Decimal("60"), shipping=Decimal("5"),
+        order_number="ORDER-42",
+    )["purchase"]
+
+    assert one.purchase_lot_id == two.purchase_lot_id
+    lot = session.get(PurchaseLot, one.purchase_lot_id)
+    assert lot.purchase_price == Decimal("85.00")
+    assert session.query(PurchaseLot).count() == 1
+    assert session.query(PurchaseLotItem).count() == 2
+
+    refund_purchase(session, one)
+    assert lot.status == PurchaseLotStatus.PURCHASED
+    refund_purchase(session, two)
+    assert lot.status == PurchaseLotStatus.REFUNDED
+
+
+def test_refund_is_blocked_while_inventory_is_allocated_to_shop(session, program):
+    product = _product(session, program)
+    purchase = record_purchase(
+        session, program=program, product=product, unit_price=Decimal("20"), quantity=1,
+        purchase_date=date.today(), eligible_amount=Decimal("20"),
+    )["purchase"]
+    inventory = session.get(InventoryItem, purchase.inventory_item_id)
+    session.add(ShopListing(
+        catalog_item_id=inventory.catalog_item_id, inventory_item_id=inventory.id,
+        title="Allocated product", price=Decimal("30"), quantity=1,
+        status=ShopListingStatus.ACTIVE,
+    ))
+    session.commit()
+    entries_before = session.query(RetailerFundEntry).count()
+
+    with pytest.raises(ValueError, match="Withdraw"):
+        refund_purchase(session, purchase)
+
+    session.rollback()
+    session.refresh(purchase)
+    session.refresh(inventory)
+    assert purchase.status == RetailerPurchaseStatus.RECORDED
+    assert inventory.quantity == 1
+    assert session.query(RetailerFundEntry).count() == entries_before
+
+
+def test_retried_purchase_form_is_idempotent(client, session, program):
+    product = _product(session, program)
+    data = {
+        "purchase_price": "20", "quantity": "1", "purchase_date": date.today().isoformat(),
+        "eligible_spend": "20", "shipping": "0", "order_number": "IDEMPOTENT-1",
+        "notes": "", "submission_key": "c20cb45a-d0ba-468d-a102-45f56e793cca",
+    }
+
+    first = client.post(
+        f"/retailer-goals/products/{product.id}/purchase", data=data, follow_redirects=False,
+    )
+    second = client.post(
+        f"/retailer-goals/products/{product.id}/purchase", data=data, follow_redirects=False,
+    )
+
+    assert first.status_code == second.status_code == 303
+    assert first.headers["location"] == second.headers["location"]
+    assert session.query(RetailerPurchase).count() == 1
+    assert session.query(PurchaseLot).count() == 1
+    assert session.query(PurchaseLotItem).count() == 1
+    assert session.query(RetailerFundEntry).filter(
+        RetailerFundEntry.kind == RetailerFundEntryKind.PURCHASE
+    ).count() == 1
 
 
 def test_mobile_dashboard_renders_native_tracker_controls(session, program):

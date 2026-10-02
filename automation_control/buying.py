@@ -216,9 +216,12 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
     recommended_offer = market_total * lot.target_buy_pct / 100
 
     item_rows = "".join(
-        f"<tr><td>{escape(i.description)}</td><td>{i.quantity}</td><td>${i.market_value:,.2f}</td><td>${i.market_value * i.quantity:,.2f}</td></tr>"
+        f"<tr><td>{escape(i.description)}</td><td>{i.quantity}</td><td>${i.market_value:,.2f}</td>"
+        f"<td>${i.market_value * i.quantity:,.2f}</td>"
+        f"<td>{'Linked' if i.catalog_item_id else 'Not linked'}</td>"
+        f"<td>{'Linked' if i.inventory_item_id else '—'}</td></tr>"
         for i in items
-    ) or "<tr><td colspan=4>No items added yet.</td></tr>"
+    ) or "<tr><td colspan=6>No items added yet.</td></tr>"
 
     basis = lot.offered_price or lot.asking_price
     acquisition_pct = (basis / market_total * 100) if market_total else None
@@ -229,6 +232,25 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
         for s in PurchaseLotStatus
     )
     offered_price_value = str(lot.offered_price) if lot.offered_price is not None else ""
+    automated = lot.retailer_id is not None
+    lot_controls = (
+        "<div class='notice'>This lot was created automatically from retailer purchases. "
+        "Use Retailer Goals to record or refund its lines so inventory, fund and loyalty totals stay in sync.</div>"
+        if automated else (
+            "<div class='panel'><h2>Add item</h2>"
+            + quick_price_widget("market_value", "description")
+            + "<form method='post' action='" + f"/purchase-lots/{lot_id}/items" + "' class='calc-form' style='margin-top:14px'>"
+            + "<label>Description<input name='description' required></label>"
+            + "<label>Market value (each)<input name='market_value' type='number' step='0.01' required></label>"
+            + "<label>Quantity<input name='quantity' type='number' value='1' min='1'></label>"
+            + "<button type='submit'>Add item</button></form></div>"
+            + "<div class='panel'><h2>Deal status</h2>"
+            + f"<form method='post' action='/purchase-lots/{lot_id}/status' class='calc-form'>"
+            + f"<label>Offered price<input name='offered_price' type='number' step='0.01' value='{offered_price_value}'></label>"
+            + f"<label>Status<select name='status'>{status_options}</select></label>"
+            + "<button type='submit'>Update</button></form></div>"
+        )
+    )
 
     body = (
         brand_header(f"Purchase lot: {lot.source}")
@@ -239,18 +261,8 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
         + f"<div><div class='label'>Verdict</div><div class='value'>{pill(label, kind)}</div></div>"
         + "</div></div>"
         + "<div class='panel'><h2>Items</h2><div class='table-wrap'><table>"
-        + f"<thead><tr><th>Item</th><th>Qty</th><th>Market ea.</th><th>Total</th></tr></thead><tbody>{item_rows}</tbody></table></div>"
-        + quick_price_widget("market_value", "description")
-        + "<form method='post' action='" + f"/purchase-lots/{lot_id}/items" + "' class='calc-form' style='margin-top:14px'>"
-        + "<label>Description<input name='description' required></label>"
-        + "<label>Market value (each)<input name='market_value' type='number' step='0.01' required></label>"
-        + "<label>Quantity<input name='quantity' type='number' value='1' min='1'></label>"
-        + "<button type='submit'>Add item</button></form></div>"
-        + "<div class='panel'><h2>Deal status</h2>"
-        + f"<form method='post' action='/purchase-lots/{lot_id}/status' class='calc-form'>"
-        + f"<label>Offered price<input name='offered_price' type='number' step='0.01' value='{offered_price_value}'></label>"
-        + f"<label>Status<select name='status'>{status_options}</select></label>"
-        + "<button type='submit'>Update</button></form></div>"
+        + f"<thead><tr><th>Item</th><th>Qty</th><th>Market ea.</th><th>Total</th><th>Catalogue</th><th>Inventory</th></tr></thead><tbody>{item_rows}</tbody></table></div></div>"
+        + lot_controls
         + _STYLE
     )
     return HTMLResponse(page(f"EzBay — {lot.source}", body))
@@ -261,8 +273,11 @@ def add_purchase_lot_item(
     lot_id: str, description: str = Form(...), market_value: str = Form(...), quantity: str = Form("1"),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
-    if session.get(PurchaseLot, lot_id) is None:
+    lot = session.get(PurchaseLot, lot_id)
+    if lot is None:
         raise HTTPException(status_code=404, detail="purchase lot not found")
+    if lot.retailer_id is not None:
+        raise HTTPException(status_code=409, detail="retailer purchase lots are managed from Retailer Goals")
     session.add(PurchaseLotItem(
         id=str(uuid.uuid4()), purchase_lot_id=lot_id, description=description,
         market_value=_dec(market_value), quantity=int(quantity or 1),
@@ -279,6 +294,8 @@ def update_purchase_lot_status(
     lot = session.get(PurchaseLot, lot_id)
     if lot is None:
         raise HTTPException(status_code=404, detail="purchase lot not found")
+    if lot.retailer_id is not None:
+        raise HTTPException(status_code=409, detail="retailer purchase lots are managed from Retailer Goals")
     lot.status = PurchaseLotStatus(status)
     if offered_price.strip():
         lot.offered_price = _dec(offered_price)

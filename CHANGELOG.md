@@ -70,6 +70,15 @@ a giveaway. Exact Seller Hub fees are preferred and a missing rule can no longer
 silently produce zero fees. A temporary-database rehearsal covers the full show
 without contacting Whatnot or another external service.
 
+Retailer purchases now create linked purchase-lot lines and canonical sealed
+inventory automatically in the same transaction. Shipping is allocated into
+landed inventory cost, matching order numbers group into one lot, duplicate form
+submissions do not double-charge the fund or duplicate stock, and refunds are
+blocked while units are allocated or no longer fully available. Safe refunds
+reverse the ledger, inventory and linked-lot state together. A temporary-database
+drill covers purchase, channel-allocation blocking, refund and repurchase without
+external calls.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

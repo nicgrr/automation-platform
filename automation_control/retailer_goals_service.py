@@ -22,6 +22,11 @@ from .models import (
     CatalogItemType,
     InventoryItem,
     InventoryStatus,
+    EbayListingLink,
+    EbayListingLinkStatus,
+    PurchaseLot,
+    PurchaseLotItem,
+    PurchaseLotStatus,
     Retailer,
     RetailerBudget,
     RetailerFundEntry,
@@ -38,6 +43,8 @@ from .models import (
     RetailerStockStatus,
     RetailerTrustStatus,
     SealedProduct,
+    ShopListing,
+    ShopListingStatus,
 )
 
 CENT = Decimal("0.01")
@@ -454,17 +461,20 @@ def _inventory_for_purchase(session: Session, purchase: RetailerPurchase,
     item = session.scalar(select(InventoryItem).where(
         InventoryItem.catalog_item_id == product.catalog_item_id,
         InventoryItem.condition == "Sealed",
-        InventoryItem.status == InventoryStatus.AVAILABLE,
+        InventoryItem.variant == CardVariant.NORMAL,
     ).order_by(InventoryItem.added_at).limit(1))
     note = f"Purchased from {retailer.name} on {purchase.purchase_date.isoformat()}"
     if purchase.order_number:
         note += f" | order {purchase.order_number}"
     note += f" | retailer purchase {purchase.id}"
+    landed_unit_cost = money(
+        ((purchase.purchase_unit_price * purchase.quantity) + purchase.shipping) / purchase.quantity
+    )
     if item is None:
         item = InventoryItem(
             id=str(uuid.uuid4()), card_id=None, catalog_item_id=product.catalog_item_id,
             variant=CardVariant.NORMAL, condition="Sealed", quantity=purchase.quantity,
-            allocated_cost_basis=money(purchase.purchase_unit_price),
+            allocated_cost_basis=landed_unit_cost,
             status=InventoryStatus.AVAILABLE, notes=note,
             added_at=datetime.combine(purchase.purchase_date, datetime.min.time(), tzinfo=UTC),
         )
@@ -472,19 +482,94 @@ def _inventory_for_purchase(session: Session, purchase: RetailerPurchase,
     else:
         old_qty = item.quantity
         old_basis = item.allocated_cost_basis or ZERO
-        combined_cost = (old_basis * old_qty) + (purchase.purchase_unit_price * purchase.quantity)
+        combined_cost = (old_basis * old_qty) + (landed_unit_cost * purchase.quantity)
         item.quantity += purchase.quantity
         item.allocated_cost_basis = money(combined_cost / item.quantity)
         item.notes = (item.notes + "\n" if item.notes else "") + note
+        if item.status in {
+            InventoryStatus.SOLD, InventoryStatus.GIVEAWAY, InventoryStatus.RETURNED,
+        }:
+            item.status = InventoryStatus.AVAILABLE
     session.flush()
     return item
+
+
+def _purchase_lot_for_retailer_purchase(
+    session: Session, purchase: RetailerPurchase, product: RetailerProduct,
+    retailer: Retailer, inventory: InventoryItem,
+) -> PurchaseLot:
+    order_number = (purchase.order_number or "").strip() or None
+    lot = None
+    if order_number:
+        lot = session.scalar(select(PurchaseLot).where(
+            PurchaseLot.retailer_id == retailer.id,
+            PurchaseLot.external_order_number == order_number,
+        ))
+    landed_total = money(purchase.purchase_unit_price * purchase.quantity + purchase.shipping)
+    if lot is None:
+        note = f"Automatically created from retailer purchase {purchase.id}."
+        lot = PurchaseLot(
+            id=str(uuid.uuid4()), source=f"{retailer.name} retailer purchase",
+            seller=retailer.name, asking_price=landed_total, offered_price=landed_total,
+            purchase_price=landed_total, status=PurchaseLotStatus.PURCHASED,
+            notes=note, retailer_id=retailer.id, external_order_number=order_number,
+            purchased_at=datetime.combine(purchase.purchase_date, datetime.min.time(), tzinfo=UTC),
+        )
+        session.add(lot)
+        session.flush()
+    else:
+        lot.asking_price = money(lot.asking_price + landed_total)
+        lot.offered_price = money((lot.offered_price or ZERO) + landed_total)
+        lot.purchase_price = money((lot.purchase_price or ZERO) + landed_total)
+        lot.status = PurchaseLotStatus.PURCHASED
+    purchase.purchase_lot_id = lot.id
+    session.add(PurchaseLotItem(
+        id=str(uuid.uuid4()), purchase_lot_id=lot.id,
+        catalog_item_id=product.catalog_item_id, description=product.name,
+        market_value=purchase.market_unit_price or purchase.purchase_unit_price,
+        quantity=purchase.quantity, retailer_purchase_id=purchase.id,
+        inventory_item_id=inventory.id,
+    ))
+    session.flush()
+    return lot
+
+
+def _inventory_refund_blocker(session: Session, purchase: RetailerPurchase) -> str | None:
+    if not purchase.inventory_item_id:
+        return "The linked inventory record is missing."
+    inventory = session.get(InventoryItem, purchase.inventory_item_id)
+    if inventory is None:
+        return "The linked inventory record is missing."
+    if inventory.status != InventoryStatus.AVAILABLE or inventory.quantity < purchase.quantity:
+        return "The purchased stock is no longer fully available; resolve sold or reserved units before refunding."
+    listing = session.scalar(select(ShopListing.id).where(
+        ShopListing.inventory_item_id == inventory.id,
+        ShopListing.quantity > 0,
+        ShopListing.status != ShopListingStatus.WITHDRAWN,
+    ).limit(1))
+    if listing is not None:
+        return "Withdraw the linked shop listing before refunding this purchase."
+    ebay = session.scalar(
+        select(EbayListingLink.id)
+        .join(ShopListing, ShopListing.id == EbayListingLink.shop_listing_id)
+        .where(
+            ShopListing.inventory_item_id == inventory.id,
+            EbayListingLink.status.in_([
+                EbayListingLinkStatus.PUBLISHING, EbayListingLinkStatus.ACTIVE,
+                EbayListingLinkStatus.ENDING,
+            ]),
+        ).limit(1)
+    )
+    if ebay is not None:
+        return "End the linked eBay offer before refunding this purchase."
+    return None
 
 
 def record_purchase(session: Session, *, program: RetailerProgram, product: RetailerProduct,
                     unit_price: Decimal, quantity: int, purchase_date: date,
                     eligible_amount: Decimal, shipping: Decimal = ZERO,
                     order_number: str | None = None, notes: str | None = None,
-                    add_to_inventory: bool = False) -> dict:
+                    submission_key: str | None = None) -> dict:
     budget = session.scalar(select(RetailerBudget).where(RetailerBudget.program_id == program.id))
     if budget is None:
         raise ValueError("Retailer budget is missing.")
@@ -497,6 +582,7 @@ def record_purchase(session: Session, *, program: RetailerProgram, product: Reta
     premium_paid = money((unit_price - market) * quantity) if market is not None else None
     purchase = RetailerPurchase(
         id=str(uuid.uuid4()), program_id=program.id, product_id=product.id,
+        submission_key=(submission_key or "").strip() or None,
         retailer_id=program.retailer_id, purchase_unit_price=money(unit_price, allow_negative=False),
         quantity=positive_int(quantity), eligible_spend=money(eligible_amount, allow_negative=False),
         shipping=money(shipping, allow_negative=False), market_unit_price=market,
@@ -512,10 +598,10 @@ def record_purchase(session: Session, *, program: RetailerProgram, product: Reta
         kind=RetailerFundEntryKind.PURCHASE, amount=-total_cost,
         entry_date=purchase_date, dedupe_key=f"purchase:{purchase.id}", notes=product.name,
     ))
-    if add_to_inventory:
-        inventory = _inventory_for_purchase(session, purchase, product, retailer)
-        purchase.inventory_added = True
-        purchase.inventory_item_id = inventory.id
+    inventory = _inventory_for_purchase(session, purchase, product, retailer)
+    purchase.inventory_added = True
+    purchase.inventory_item_id = inventory.id
+    lot = _purchase_lot_for_retailer_purchase(session, purchase, product, retailer, inventory)
     product.status = RetailerProductStatus.PURCHASED
     before = money(eligible_spend(session, program) - purchase.eligible_spend)
     after = eligible_spend(session, program)
@@ -524,7 +610,7 @@ def record_purchase(session: Session, *, program: RetailerProgram, product: Reta
     return {
         "purchase": purchase, "before": before, "after": after,
         "remaining": money(max(ZERO, Decimal("5000") - after)),
-        "fund": fund_totals(session, budget), "premium": premium_paid,
+        "fund": fund_totals(session, budget), "premium": premium_paid, "purchase_lot": lot,
     }
 
 
@@ -534,23 +620,38 @@ def refund_purchase(session: Session, purchase: RetailerPurchase) -> None:
     budget = session.scalar(select(RetailerBudget).where(RetailerBudget.program_id == purchase.program_id))
     if budget is None:
         raise ValueError("Retailer budget is missing.")
+    blocker = _inventory_refund_blocker(session, purchase)
+    if blocker:
+        raise ValueError(blocker)
     total = money(purchase.purchase_unit_price * purchase.quantity)
     session.add(RetailerFundEntry(
         id=str(uuid.uuid4()), budget_id=budget.id, purchase_id=purchase.id,
         kind=RetailerFundEntryKind.REFUND, amount=total, entry_date=date.today(),
         dedupe_key=f"refund:{purchase.id}", notes="Purchase refunded / removed",
     ))
-    if purchase.inventory_added and purchase.inventory_item_id:
-        inventory = session.get(InventoryItem, purchase.inventory_item_id)
-        if inventory is not None:
-            old_qty = inventory.quantity
-            removed = min(old_qty, purchase.quantity)
-            inventory.quantity = old_qty - removed
-            if inventory.quantity > 0 and inventory.allocated_cost_basis is not None:
-                remaining_cost = (inventory.allocated_cost_basis * old_qty) - (purchase.purchase_unit_price * removed)
-                inventory.allocated_cost_basis = money(max(ZERO, remaining_cost) / inventory.quantity)
+    inventory = session.get(InventoryItem, purchase.inventory_item_id)
+    old_qty = inventory.quantity
+    inventory.quantity = old_qty - purchase.quantity
+    if inventory.quantity > 0 and inventory.allocated_cost_basis is not None:
+        landed_unit_cost = money(
+            ((purchase.purchase_unit_price * purchase.quantity) + purchase.shipping) / purchase.quantity
+        )
+        remaining_cost = (inventory.allocated_cost_basis * old_qty) - (landed_unit_cost * purchase.quantity)
+        inventory.allocated_cost_basis = money(max(ZERO, remaining_cost) / inventory.quantity)
+    elif inventory.quantity == 0:
+        inventory.status = InventoryStatus.RETURNED
     purchase.status = RetailerPurchaseStatus.REFUNDED
     purchase.refunded_at = datetime.now(UTC)
+    if purchase.purchase_lot_id:
+        other_purchase = session.scalar(select(RetailerPurchase.id).where(
+            RetailerPurchase.purchase_lot_id == purchase.purchase_lot_id,
+            RetailerPurchase.status == RetailerPurchaseStatus.RECORDED,
+            RetailerPurchase.id != purchase.id,
+        ).limit(1))
+        if other_purchase is None:
+            lot = session.get(PurchaseLot, purchase.purchase_lot_id)
+            if lot is not None:
+                lot.status = PurchaseLotStatus.REFUNDED
     product = session.get(RetailerProduct, purchase.product_id)
     if product is not None:
         other = session.scalar(select(RetailerPurchase.id).where(

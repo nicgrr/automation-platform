@@ -130,6 +130,7 @@ class InventoryStatus(str, enum.Enum):
     TRADE = "trade"
     GIVEAWAY = "giveaway"
     DAMAGED = "damaged"
+    RETURNED = "returned"
 
 
 class PurchaseLotStatus(str, enum.Enum):
@@ -138,6 +139,7 @@ class PurchaseLotStatus(str, enum.Enum):
     ACCEPTED = "accepted"
     DECLINED = "declined"
     PURCHASED = "purchased"
+    REFUNDED = "refunded"
 
 
 class PotentialPurchaseStatus(str, enum.Enum):
@@ -952,6 +954,9 @@ class PurchaseLot(Base):
     live in PurchaseLotItem; this row holds the deal-level numbers."""
 
     __tablename__ = "purchase_lots"
+    __table_args__ = (
+        UniqueConstraint("retailer_id", "external_order_number", name="uq_purchase_lot_retailer_order"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source: Mapped[str] = mapped_column(String(256))
@@ -962,6 +967,8 @@ class PurchaseLot(Base):
     purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     status: Mapped[PurchaseLotStatus] = mapped_column(Enum(PurchaseLotStatus), default=PurchaseLotStatus.EVALUATING, index=True)
     notes: Mapped[str | None] = mapped_column(Text)
+    retailer_id: Mapped[str | None] = mapped_column(ForeignKey("retailers.id"), index=True)
+    external_order_number: Mapped[str | None] = mapped_column(String(256), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -980,6 +987,10 @@ class PurchaseLotItem(Base):
     description: Mapped[str] = mapped_column(String(256))
     market_value: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     quantity: Mapped[int] = mapped_column(Integer, default=1)
+    retailer_purchase_id: Mapped[str | None] = mapped_column(
+        ForeignKey("retailer_purchases.id"), unique=True, index=True
+    )
+    inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
 
     purchase_lot: Mapped[PurchaseLot] = relationship()
 
@@ -1890,6 +1901,7 @@ class RetailerPurchase(Base):
     __tablename__ = "retailer_purchases"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    submission_key: Mapped[str | None] = mapped_column(String(36), unique=True, index=True)
     program_id: Mapped[str] = mapped_column(ForeignKey("retailer_programs.id"), index=True)
     product_id: Mapped[str] = mapped_column(ForeignKey("retailer_products.id"), index=True)
     retailer_id: Mapped[str] = mapped_column(ForeignKey("retailers.id"), index=True)
@@ -1904,6 +1916,7 @@ class RetailerPurchase(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     inventory_added: Mapped[bool] = mapped_column(Boolean, default=False)
     inventory_item_id: Mapped[str | None] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    purchase_lot_id: Mapped[str | None] = mapped_column(ForeignKey("purchase_lots.id"), index=True)
     status: Mapped[RetailerPurchaseStatus] = mapped_column(
         Enum(RetailerPurchaseStatus), default=RetailerPurchaseStatus.RECORDED, index=True
     )

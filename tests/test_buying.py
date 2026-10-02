@@ -10,7 +10,8 @@ from automation_control.auth import require_dashboard_user
 from automation_control.buying import traffic_light
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    BuyThresholdConfig, PotentialPurchase, PotentialPurchaseStatus, PurchaseLotStatus,
+    BuyThresholdConfig, PotentialPurchase, PotentialPurchaseStatus, PurchaseLot,
+    PurchaseLotStatus, Retailer,
 )
 
 
@@ -123,3 +124,34 @@ def test_purchase_lot_detail_has_quick_price_widget(client):
     detail = client.get(create.headers["location"])
     assert "data-name-field='description'" in detail.text
     assert "data-price-field='market_value'" in detail.text
+
+
+def test_automated_retailer_lot_is_read_only_on_purchase_lot_routes(client, session):
+    retailer = Retailer(name="Test retailer")
+    session.add(retailer)
+    session.flush()
+    lot = PurchaseLot(
+        source="Test retailer purchase", seller="Test retailer",
+        asking_price=Decimal("50"), purchase_price=Decimal("50"),
+        status=PurchaseLotStatus.PURCHASED, retailer_id=retailer.id,
+    )
+    session.add(lot)
+    session.commit()
+
+    detail = client.get(f"/purchase-lots/{lot.id}")
+    add = client.post(
+        f"/purchase-lots/{lot.id}/items",
+        data={"description": "Injected", "market_value": "1", "quantity": "1"},
+        follow_redirects=False,
+    )
+    status = client.post(
+        f"/purchase-lots/{lot.id}/status",
+        data={"status": "declined", "offered_price": "1"},
+        follow_redirects=False,
+    )
+
+    assert detail.status_code == 200
+    assert "created automatically from retailer purchases" in detail.text
+    assert "Identify &amp; price" not in detail.text
+    assert add.status_code == 409
+    assert status.status_code == 409

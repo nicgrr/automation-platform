@@ -15,11 +15,19 @@ Gameology Guild is the first program, but the schema is retailer-neutral.
   This is separate from `CardPrice` because the existing table has no retailer,
   trust, URL or stock fields.
 - `RetailerPurchase` records eligible spend, the market-price snapshot and the
-  Guild premium. If inventory is requested it links to the existing
-  `InventoryItem` row and updates its quantity and per-unit cost basis.
+  Guild premium. Confirming a purchase always creates or updates its
+  `PurchaseLot`, `PurchaseLotItem` and canonical `InventoryItem` in the same
+  transaction. Orders with the same retailer order number share one lot.
 
-All money is `Decimal`/`NUMERIC`, rounded to cents. Shipping is recorded but is
-excluded from eligible spend and fund spending by default.
+All money is `Decimal`/`NUMERIC`, rounded to cents. Shipping is excluded from
+eligible spend and fund spending, but is allocated across the received units so
+inventory holds the true landed per-unit cost.
+
+Repeated submission of the same purchase form is idempotent. Refund/removal is
+blocked while the linked holding is listed, reserved, sold or otherwise no
+longer fully available. A safe refund reverses the fund and loyalty effects,
+returns the inventory, and marks the linked lot refunded when all its lines have
+been refunded.
 
 ## Weekly fund
 

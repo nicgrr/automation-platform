@@ -89,7 +89,10 @@ reliability and rollback improve before business workflows or schemas are remove
   the complete workflow in a temporary database before first use; real inventory
   cannot be queued while allocated to NL Vault/eBay, and exact Seller Hub fees
   take precedence over dated estimates.
-- [ ] Integrate retailer purchases with purchase lots and inventory.
+- [x] Integrate retailer purchases with purchase lots and canonical inventory in
+  one transaction, allocate shipping into landed stock cost, group matching
+  retailer order numbers, guard duplicate submissions and unsafe refunds, and
+  rehearse purchase/refund/repurchase against a temporary database.
 - [ ] Integrate customer, direct-sale and supplier records before exposing their
   currently empty screens.
 
