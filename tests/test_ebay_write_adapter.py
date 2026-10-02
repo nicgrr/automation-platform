@@ -83,6 +83,31 @@ async def test_get_offers_filters_by_sku_and_returns_the_offer_list():
 
 
 @pytest.mark.asyncio
+async def test_get_offers_treats_ebays_no_offer_25713_response_as_empty():
+    async def handler(request: httpx.Request):
+        return httpx.Response(404, json={"errors": [{
+            "errorId": 25713, "domain": "API_INVENTORY",
+            "message": "This Offer is not available.",
+        }]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = EbayWriteAdapter("tok", client)
+    assert await adapter.get_offers("brand-new-sku") == []
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_offers_does_not_hide_an_unrelated_404():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(404, json={"errors": [{"errorId": 99999}]}),
+    ))
+    adapter = EbayWriteAdapter("tok", client)
+    with pytest.raises(EbayApiError, match="99999"):
+        await adapter.get_offers("broken-sku")
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_update_offer_replaces_the_existing_offer():
     async def handler(request: httpx.Request):
         assert request.method == "PUT"

@@ -98,8 +98,27 @@ class EbayWriteAdapter:
         return await self._get(f"/sell/inventory/v1/offer/{offer_id}")
 
     async def get_offers(self, sku: str) -> list[dict]:
-        response = await self._get("/sell/inventory/v1/offer", params={"sku": sku})
-        offers = response.get("offers", [])
+        path = "/sell/inventory/v1/offer"
+        response = await self.client.get(
+            f"{self.base_url}{path}", headers=self._headers(), params={"sku": sku},
+        )
+        if response.status_code == 404:
+            try:
+                errors = response.json().get("errors", [])
+            except (ValueError, AttributeError):
+                errors = []
+            # Production Inventory API returns error 25713 (rather than a
+            # 200 response with offers=[]) when a brand-new SKU has no
+            # offer. That is the normal create-offer branch, not a failed
+            # read. Keep every other 404/error fail-closed.
+            if any(error.get("errorId") == 25713 for error in errors if isinstance(error, dict)):
+                return []
+        if response.status_code >= 400:
+            raise EbayApiError(
+                f"eBay API GET {path} failed ({response.status_code}): {response.text}"
+            )
+        payload = response.json() if response.content else {}
+        offers = payload.get("offers", [])
         if not isinstance(offers, list):
             raise EbayApiError("eBay getOffers response did not contain an offers list")
         return offers

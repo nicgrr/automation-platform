@@ -123,6 +123,12 @@ an obsolete September Alcremie draft; it was withdrawn through the audited
 workflow after a clean online backup, leaving the newer canonical listing with its
 actual card photo and approved price.
 
+A real read-only production canary check exposed that eBay represents "no offer
+exists for this SKU" as HTTP 404 with Inventory API error `25713`, rather than the
+documented-looking empty offer list used by the mocks. The write adapter now maps
+only that exact response to an empty result so new SKUs proceed to `createOffer`;
+all other 404 responses still fail closed.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in
