@@ -17,8 +17,8 @@ from automation_control.config import Settings
 from automation_control.database import Base, get_session
 from automation_control.ebay_oauth import INVENTORY_WRITE_SCOPE
 from automation_control.models import (
-    Approval, CardSet, CatalogItem, CatalogItemType, EbayCategoryMapping, EbayCredential,
-    EbayListingLink, EbayListingLinkStatus, ShopListing, ShopListingStatus, TcgCard,
+    Approval, CardSet, CardVariant, CatalogItem, CatalogItemType, EbayCategoryMapping, EbayCredential,
+    EbayListingLink, EbayListingLinkStatus, InventoryItem, ShopListing, ShopListingStatus, TcgCard,
 )
 
 
@@ -143,6 +143,33 @@ def test_preflight_blocks_prices_below_ebays_minimum(client, session, monkeypatc
     assert resp.status_code == 200
     assert "BLOCKED" in resp.text
     assert "at least AUD $1.00" in resp.text
+    assert "Publish live to eBay" not in resp.text
+
+
+def test_preflight_blocks_two_sellable_listings_backed_by_the_same_inventory(client, session, monkeypatch):
+    listing = make_listing(session)
+    inventory = InventoryItem(
+        id="stock-1", catalog_item_id=listing.catalog_item_id,
+        variant=CardVariant.NORMAL, condition="Near Mint", quantity=2,
+    )
+    session.add(inventory)
+    session.flush()
+    listing.inventory_item_id = inventory.id
+    session.add(ShopListing(
+        id="listing-duplicate", catalog_item_id=listing.catalog_item_id,
+        inventory_item_id=inventory.id, title="Duplicate card", condition="Near Mint · Normal",
+        price=Decimal("8.99"), currency="AUD", quantity=1,
+        status=ShopListingStatus.DRAFT,
+    ))
+    add_category_mapping(session)
+    session.commit()
+    monkeypatch.setattr(ebay_publish, "get_settings", _configured_settings)
+
+    resp = client.get("/shop-listings/listing-1/ebay-preview")
+
+    assert resp.status_code == 200
+    assert "BLOCKED" in resp.text
+    assert "Another active or draft listing already uses this inventory" in resp.text
     assert "Publish live to eBay" not in resp.text
 
 

@@ -115,6 +115,14 @@ Dragon Ball references, so the older table-based assumption was consuming the
 daily allowance on guaranteed misses. Zero-quantity stock is excluded and cards
 with no price from any source are prioritized ahead of already-covered backlog.
 
+Photo-capture promotion now reuses an existing draft for the same catalogue item
+and printing instead of creating a second sellable listing. Direct eBay preflight
+also blocks any listing whose inventory is already linked to another active or
+draft listing. The sole production duplicate found while preparing the canary was
+an obsolete September Alcremie draft; it was withdrawn through the audited
+workflow after a clean online backup, leaving the newer canonical listing with its
+actual card photo and approved price.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

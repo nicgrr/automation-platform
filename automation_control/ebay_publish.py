@@ -163,6 +163,19 @@ def publication_preflight(session: Session, listing: ShopListing, settings) -> P
     image_will_upload = False
     inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
 
+    if listing.inventory_item_id:
+        duplicate = session.scalar(
+            select(ShopListing.id).where(
+                ShopListing.id != listing.id,
+                ShopListing.inventory_item_id == listing.inventory_item_id,
+                ShopListing.status.in_((ShopListingStatus.ACTIVE, ShopListingStatus.DRAFT)),
+            ).limit(1)
+        )
+        if duplicate:
+            errors.append(
+                "Another active or draft listing already uses this inventory; withdraw the duplicate first."
+            )
+
     if catalog_item is None:
         errors.append("The catalogue item is missing.")
     else:

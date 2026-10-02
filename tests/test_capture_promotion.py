@@ -84,6 +84,35 @@ def test_successful_promotion_is_idempotent(_configured, _upload, config, sessio
     assert session.query(ShopListing).count() == 1
 
 
+@patch("automation_control.capture_promotion.load_pipeline_config")
+@patch("automation_control.capture_promotion.upload_card_image", return_value="https://img.example/own-card.jpg")
+@patch("automation_control.capture_promotion.r2_is_configured", return_value=True)
+def test_safe_approval_reuses_an_existing_draft_instead_of_creating_a_duplicate(
+    _configured, _upload, config, session,
+):
+    config.return_value = SimpleNamespace(images=SimpleNamespace(base_url="https://img.example"))
+    _catalogue(session)
+    draft = ShopListing(
+        id="existing-draft", catalog_item_id="sv-test-1", title="Old title",
+        condition="Near Mint · Normal", price=Decimal("3.00"), quantity=1,
+        status=ShopListingStatus.DRAFT, image_url="reference.jpg",
+    )
+    card = _capture(approved_price=Decimal("4.50"))
+    session.add_all([draft, card])
+    session.flush()
+
+    result = promote_approved_card(session, card, _settings())
+    session.commit()
+
+    assert result.promoted is True
+    assert result.shop_listing_id == "existing-draft"
+    assert session.query(ShopListing).count() == 1
+    assert draft.status == ShopListingStatus.ACTIVE
+    assert draft.price == Decimal("4.50")
+    assert draft.image_url == "https://img.example/own-card.jpg"
+    assert draft.inventory_item_id == session.query(InventoryItem).one().id
+
+
 def test_shared_uncropped_photo_records_issue_without_touching_inventory(session):
     _catalogue(session)
     card = _capture()

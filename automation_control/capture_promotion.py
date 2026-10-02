@@ -143,14 +143,24 @@ def promote_approved_card(session: Session, card: CapturedCard, settings) -> Pro
         )
 
     variant = card.variant
+    # Reuse a draft before creating another listing for the same holding.
+    # The historical code looked only for ACTIVE rows, so approving a photo
+    # while an older DRAFT existed created two independently publishable
+    # listings backed by one inventory record. Prefer ACTIVE when both are
+    # already present, otherwise promote the newest draft in place.
     active = session.scalar(
         select(ShopListing)
         .outerjoin(InventoryItem, InventoryItem.id == ShopListing.inventory_item_id)
         .where(
             ShopListing.catalog_item_id == catalog_item.id,
-            ShopListing.status == ShopListingStatus.ACTIVE,
+            ShopListing.status.in_((ShopListingStatus.ACTIVE, ShopListingStatus.DRAFT)),
             (InventoryItem.variant == variant) | (ShopListing.inventory_item_id.is_(None)),
-        ).order_by(ShopListing.created_at.desc()).limit(1)
+        )
+        .order_by(
+            (ShopListing.status == ShopListingStatus.ACTIVE).desc(),
+            ShopListing.created_at.desc(),
+        )
+        .limit(1)
     )
     if active:
         export = _latest_export(session, active.id)
@@ -220,6 +230,7 @@ def promote_approved_card(session: Session, card: CapturedCard, settings) -> Pro
         active.quantity = inventory.quantity
         active.price = price
         active.image_url = image_url
+        active.status = ShopListingStatus.ACTIVE
 
     promotion = existing_promotion or CapturePromotion(captured_card_id=card.id)
     if existing_promotion is None:
