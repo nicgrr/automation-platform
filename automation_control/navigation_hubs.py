@@ -21,9 +21,9 @@ from .models import (
     EbayExportBatch,
     EbayListing,
     MarketListing,
-    PendingListing,
     ReleaseCalendarEntry,
     ShopListing,
+    ShopListingStatus,
     ShopOrder,
 )
 from .market_watch_service import allowed_country_codes
@@ -136,7 +136,7 @@ def review_centre(request: Request, user: str = Depends(require_dashboard_user),
 @router.get("/ebay", response_class=HTMLResponse)
 def ebay_hub(user: str = Depends(require_dashboard_user),
              session: Session = Depends(get_session)) -> HTMLResponse:
-    drafts = _count(session, PendingListing)
+    drafts = _count(session, ShopListing, ShopListing.status == ShopListingStatus.DRAFT)
     live = _count(session, EbayListing)
     batches = _count(session, EbayExportBatch)
     return _render(
@@ -144,7 +144,7 @@ def ebay_hub(user: str = Depends(require_dashboard_user),
         "Prepare listings, compare them with the live eBay account, and track every bulk-upload file from one place.",
         [
             _section("Listing workflow", "EzBay never publishes automatically; these screens keep preparation and live state distinct.", [
-                _card("/listings/review", "Draft listings", "Review generated listings before publication.", status=f"{drafts} total"),
+                _card("/shop-listings?status=draft", "Sellable drafts", "Review the canonical listing before choosing eBay export or direct publishing.", status=f"{drafts} total"),
                 _card("/ebay-listings", "Live listings", "Refresh and inspect the listings eBay reports as live.", status=f"{live} mirrored"),
                 _card("/ebay-export", "Bulk upload", "Build CSV files, import eBay results and prevent duplicate exports.", status=f"{batches} exports"),
             ]),

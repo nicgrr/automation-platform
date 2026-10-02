@@ -146,7 +146,7 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
     counts = queue_counts(session, settings)
     pending_review_count = counts["/cards/review"]
     pending_price_count = counts["/cards/pricing"]
-    pending_listing_count = counts["/listings/review"]
+    pending_listing_count = counts["/shop-listings"]
     review_count = counts["/review"]
     catalog_by_game = session.execute(select(TcgCard.game, func.count()).group_by(TcgCard.game)).all()
 

@@ -112,16 +112,17 @@ def _run_build_listings(user: str, settings) -> None:
 
 @router.post("/build")
 def listings_build(request: Request, background_tasks: BackgroundTasks, user: str = Depends(require_dashboard_user)):
-    settings = request.app.state.settings
-    if not _r2_configured(settings):
-        return RedirectResponse("/listings/review?configuration=r2", status_code=303)
-    background_tasks.add_task(_run_build_listings, user, settings)
-    return RedirectResponse("/listings/review?building=1", status_code=303)
+    # Compatibility endpoint only. Capture approval now creates the
+    # canonical ShopListing directly; scheduling the historical builder
+    # would recreate the retired pending_listings duplicate queue.
+    return RedirectResponse("/shop-listings?status=draft", status_code=303)
 
 
 @router.get("/review")
 def listings_list(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     drafts = session.scalars(select(PendingListing).where(PendingListing.status == ListingBuildStatus.DRAFT).order_by(PendingListing.created_at)).all()
+    if not drafts:
+        return RedirectResponse("/shop-listings?status=draft", status_code=303)
     rows = "".join(
         f"<li><a href='/listings/review/{d.id}'>{escape(d.custom_label)} — {escape(d.title)} — AUD ${d.list_price}</a></li>" for d in drafts
     ) or "<li>No listings waiting for review.</li>"

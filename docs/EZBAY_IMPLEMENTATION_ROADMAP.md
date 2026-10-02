@@ -63,8 +63,9 @@ reliability and rollback improve before business workflows or schemas are remove
 - [x] Move Retailer Goals beneath Research/Market Tools.
 - [x] Merge Potential Stock into Market Watch candidate statuses; the empty legacy
   table and detail routes remain during the observation window, but accept no new rows.
-- [ ] Make `shop_listings` the canonical sellable draft and retire
-  `pending_listings` after dependency checks.
+- [x] Make `shop_listings` the canonical sellable draft and retire new writes to
+  the empty `pending_listings` queue; preserve its schema and legacy detail route
+  during the observation window.
 - [ ] Validate direct eBay publishing end to end; retain CSV as fallback and for
   large/recovery batches.
 - [ ] Extract shared capture/review mechanics for cards, collectibles and accessories

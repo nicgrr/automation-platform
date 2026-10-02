@@ -31,6 +31,12 @@ prices and notes retained across market refreshes. Dashboard and analytics consu
 these canonical candidates. The empty legacy table remains for the observation
 window but its form no longer creates duplicate records.
 
+`shop_listings` is now the single sellable-draft queue used by the dashboard,
+eBay hub, storefront administration, bulk export and direct eBay publishing.
+The historical `pending_listings` table had zero production rows; its build/list
+endpoints now route to canonical drafts, while legacy detail handling and schema
+remain available during the observation window.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

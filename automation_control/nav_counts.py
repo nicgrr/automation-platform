@@ -34,11 +34,11 @@ from .models import (
     CapturedCollectible,
     CardCaptureStatus,
     InventoryItem,
-    ListingBuildStatus,
-    PendingListing,
     PhotoAuditDismissal,
     PricingStatus,
     FoilLabel,
+    ShopListing,
+    ShopListingStatus,
 )
 
 router = APIRouter(tags=["nav"])
@@ -117,10 +117,10 @@ def queue_counts(session: Session, settings) -> dict[str, int | None]:
             .select_from(CapturedCard)
             .where(CapturedCard.pricing_status == PricingStatus.PENDING_PRICE_REVIEW)
         ),
-        "/listings/review": session.scalar(
+        "/shop-listings": session.scalar(
             select(func.count())
-            .select_from(PendingListing)
-            .where(PendingListing.status == ListingBuildStatus.DRAFT)
+            .select_from(ShopListing)
+            .where(ShopListing.status == ShopListingStatus.DRAFT)
         ),
     }
     review_routes = (

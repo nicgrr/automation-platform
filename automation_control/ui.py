@@ -313,7 +313,6 @@ TOOL_NAV = [
         ("/contact-messages", "Contact messages"),
     ], False),
     ("eBay", [
-        ("/listings/review", "eBay drafts (unpublished)"),
         ("/ebay-listings", "eBay live listings"),
         ("/ebay-sales", "eBay sales (pack assistant)"),
         ("/ebay-export", "eBay bulk upload file"),
@@ -349,7 +348,7 @@ NAV_ACTIVE_PREFIXES = {
     ),
     "/inventory": ("/inventory", "/search", "/sealed-products", "/collectibles", "/accessories"),
     "/personal-collection": ("/personal-collection",),
-    "/ebay": ("/ebay", "/listings/review", "/ebay-listings", "/ebay-sales", "/ebay-export"),
+    "/ebay": ("/ebay", "/ebay-listings", "/ebay-sales", "/ebay-export"),
     "/nl-vault": ("/nl-vault", "/shop-listings", "/shop-pricing", "/shop-orders", "/contact-messages"),
     "/market-tools": ("/market-tools", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar", "/retailer-goals"),
     "/settings": ("/settings", "/export"),
@@ -368,11 +367,9 @@ NAV_ACTIVE_PREFIXES = {
 # Moving one back into ADMIN_NAV above is the whole of un-hiding it. The
 # day one of these tables has rows is the day its entry goes back.
 #
-# Deliberately excluded from this list: /shop-orders, /contact-messages
-# and /listings/review are equally empty but are fed by the live shop,
-# the live contact form and the capture pipeline respectively -- they
-# fill on their own, so they stay visible. /release-calendar had rows
-# already and moved up into "Sell & buy".
+# Deliberately excluded from this list: /shop-orders and /contact-messages
+# are equally empty but are fed by the live shop and contact form, so they
+# fill on their own and stay visible. /release-calendar had rows already.
 HIDDEN_NAV = [
     ("/customers", "Customers"),
     ("/suppliers", "Suppliers"),
