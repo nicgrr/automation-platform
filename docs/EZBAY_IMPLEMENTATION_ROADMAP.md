@@ -66,13 +66,14 @@ reliability and rollback improve before business workflows or schemas are remove
 - [x] Make `shop_listings` the canonical sellable draft and retire new writes to
   the empty `pending_listings` queue; preserve its schema and legacy detail route
   during the observation window.
-- [ ] Validate direct eBay publishing end to end; retain CSV as fallback and for
+- [x] Validate direct eBay publishing end to end; retain CSV as fallback and for
   large/recovery batches.
   - [x] Validate the complete Inventory API request contract locally, add a
     read-only production preflight, explicit live confirmation, required item
     specifics/condition descriptor/duration and crash-safe offer resumption.
-  - [ ] Publish one owner-approved production canary and verify it in the live
-    eBay mirror before declaring direct publishing fully validated.
+  - [x] Publish one owner-approved production canary and verify it in both the
+    Inventory API and live Trading API mirror before declaring direct publishing
+    fully validated (Alcremie VMAX #73, listing `267801619646`, 2026-10-03).
 - [x] Extract shared capture/review mechanics for cards, collectibles and accessories
   without changing their external routes; upload persistence, background-batch
   accounting/status and pending-queue traversal now share one implementation,

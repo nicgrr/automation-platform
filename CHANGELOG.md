@@ -3,6 +3,23 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-10-03 — First direct eBay listing live
+
+The owner reconnected the production eBay account with the expanded account
+scope. EZBay then discovered and selected the existing Trading Cards business
+policies, created the missing enabled Sydney warehouse location, and replaced
+the four deployment placeholders with verified production identifiers.
+
+The approved Alcremie VMAX #73 canary was published through the direct Inventory
+API path at AUD 6.96 with quantity one. eBay reports offer `293098215011` as
+`PUBLISHED` and live listing `267801619646` as active in category 183454. A
+Trading API read-back independently confirmed the title, price, quantity and
+Ungraded condition. The local eBay link is active, audited and error-free.
+
+Direct publishing is now the validated single-item default; CSV remains the
+bulk and recovery path. Order polling remains independently healthy and does not
+depend on the listing-policy configuration.
+
 ## 2026-10-02 — Recovery evidence on the dashboard
 
 The dashboard and on-demand CRM health report now verify that the latest

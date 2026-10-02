@@ -202,21 +202,19 @@ polls eBay for orders and reflects a sale onto the matching `ShopListing`;
 a website sale pushes the other direction automatically already (see
 `automation_control/ebay_sync.py`), no timer needed for that half.
 
-Not yet enabled on this host -- `ebay-order-import.timer` needs, before
-it does anything useful: reconnecting eBay OAuth via `/auth/ebay/start`
-(the scope widened to include write access, so the existing connection
-if any needs re-authorizing), and eBay Seller Hub business policies
-(payment/fulfillment/return) plus a merchant location, with the
-resulting IDs set as `EBAY_PAYMENT_POLICY_ID` / `EBAY_FULFILLMENT_POLICY_ID`
-/ `EBAY_RETURN_POLICY_ID` / `EBAY_MERCHANT_LOCATION_KEY` in `.env.local`.
-Until then the script just exits with a clear "not configured for
-writes" error -- safe to enable early, it won't do anything destructive,
-but it'll fail every run and log nothing useful.
+This is enabled in production through `ebay-order-import.timer` and polls every
+ten minutes. Order import requires only the connected OAuth account; it does not
+depend on Seller Hub listing policies. Direct publication is separately gated
+on the payment, fulfillment and return policy IDs plus the merchant location in
+`.env.local`. The owner-approved production canary passed on 2026-10-03.
 
-Once configured, enable it the same way as any other timer:
+If the timer is ever disabled, restore it the same way as any other timer:
 ```bash
 sudo systemctl enable --now ebay-order-import.timer
 ```
+
+See `docs/EBAY_OPERATIONS.md` for policy/location configuration, publication,
+verification and safe-retry procedures.
 
 ## Inventory-vs-listings reconciliation audit
 

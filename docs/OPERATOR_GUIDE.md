@@ -44,8 +44,9 @@ Detailed procedures: [scan ingest](scan-ingest.md),
 - **eBay direct** is the normal individual-listing route. Run the production
   preflight and explicitly confirm a live publish. Reusing a SKU resumes the
   existing offer instead of creating another one. Use the CSV bulk file for
-  large or recovery batches. The first production canary still requires owner
-  approval before this path can be called fully live-validated.
+  large or recovery batches. This path was live-validated with the approved
+  Alcremie VMAX canary on 3 October 2026; continue to review every listing before
+  confirming publication.
 - **eBay sales** imports orders, assists packing and reconciles stock. Do not
   create a second direct-sale record.
 - **NL Vault** reserves stock at checkout and guards payment/cancellation races.
@@ -55,7 +56,8 @@ Detailed procedures: [scan ingest](scan-ingest.md),
 - **Direct/social/in-person** sales use the Sales ledger. Select owned inventory;
   cost is copied from stock. Void an error there to restore stock exactly once.
 
-Detailed procedures: [NL Vault](NL_VAULT_ORDER_OPERATIONS.md),
+Detailed procedures: [eBay](EBAY_OPERATIONS.md),
+[NL Vault](NL_VAULT_ORDER_OPERATIONS.md),
 [Whatnot](WHATNOT_SHOW_OPERATIONS.md), and
 [direct sales/customers](DIRECT_SALES_AND_CUSTOMERS.md).
 

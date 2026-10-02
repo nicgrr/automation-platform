@@ -58,3 +58,8 @@ testpaths = ["tests"]
 # distribution but with behaviour worth testing).
 pythonpath = ["."]
 asyncio_mode = "auto"
+# A full suite creates roughly 2 GB of throwaway SQLite fixtures. Pytest's
+# default retention of three successful runs can fill this host's 5.9 GB tmpfs
+# and turn every later database setup into a misleading "disk is full" failure.
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "none"
