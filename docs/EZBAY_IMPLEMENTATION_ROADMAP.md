@@ -93,8 +93,9 @@ reliability and rollback improve before business workflows or schemas are remove
   one transaction, allocate shipping into landed stock cost, group matching
   retailer order numbers, guard duplicate submissions and unsafe refunds, and
   rehearse purchase/refund/repurchase against a temporary database.
-- [ ] Integrate customer, direct-sale and supplier records before exposing their
-  currently empty screens.
+- [ ] Complete CRM integration before exposing every former empty screen:
+  inventory-backed direct sales and customer identity are complete and rehearsed;
+  supplier purchasing and receipt into inventory remains.
 
 ## Phase 5 — staged retirement and documentation
 

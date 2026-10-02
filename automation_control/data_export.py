@@ -67,11 +67,12 @@ def export_inventory(user: str = Depends(require_dashboard_user), session: Sessi
 @router.get("/export/sales.csv")
 def export_sales(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> Response:
     sales = session.scalars(select(Sale).order_by(Sale.sold_at)).all()
-    header = ["id", "sold_at", "customer_id", "marketplace_id", "gross_amount", "fees_amount",
-              "shipping_revenue", "shipping_cost", "packaging_cost", "tax_amount", "notes"]
+    header = ["id", "sold_at", "customer_id", "marketplace_id", "source", "status", "gross_amount", "fees_amount",
+              "shipping_revenue", "shipping_cost", "packaging_cost", "tax_amount", "notes", "voided_at"]
     data = [
-        [s.id, s.sold_at.isoformat(), s.customer_id, s.marketplace_id, s.gross_amount, s.fees_amount,
-         s.shipping_revenue, s.shipping_cost, s.packaging_cost, s.tax_amount, s.notes]
+        [s.id, s.sold_at.isoformat(), s.customer_id, s.marketplace_id, s.source, s.status.value,
+         s.gross_amount, s.fees_amount, s.shipping_revenue, s.shipping_cost, s.packaging_cost,
+         s.tax_amount, s.notes, s.voided_at.isoformat() if s.voided_at else None]
         for s in sales
     ]
     return _csv_response("sales.csv", header, data)
@@ -88,8 +89,9 @@ def export_sale_items(user: str = Depends(require_dashboard_user), session: Sess
 @router.get("/export/customers.csv")
 def export_customers(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> Response:
     customers = session.scalars(select(Customer).order_by(Customer.display_name)).all()
-    header = ["id", "display_name", "segment", "notes", "created_at"]
-    data = [[c.id, c.display_name, c.segment, c.notes, c.created_at.isoformat()] for c in customers]
+    header = ["id", "display_name", "email", "phone", "platform_handles", "segment", "notes", "created_at"]
+    data = [[c.id, c.display_name, c.email, c.phone, c.platform_handles, c.segment, c.notes,
+             c.created_at.isoformat()] for c in customers]
     return _csv_response("customers.csv", header, data)
 
 

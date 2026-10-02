@@ -317,6 +317,10 @@ TOOL_NAV = [
         ("/ebay-sales", "eBay sales (pack assistant)"),
         ("/ebay-export", "eBay bulk upload file"),
     ], False),
+    ("Sales records", [
+        ("/sales", "Sales ledger & direct sale"),
+        ("/customers", "Customers"),
+    ], False),
     ("Market tools", [
         ("/market-search", "Market search"),
         ("/market-watch", "Sonny Angel watch"),
@@ -350,6 +354,7 @@ NAV_ACTIVE_PREFIXES = {
     "/personal-collection": ("/personal-collection",),
     "/ebay": ("/ebay", "/ebay-listings", "/ebay-sales", "/ebay-export"),
     "/nl-vault": ("/nl-vault", "/shop-listings", "/shop-pricing", "/shop-orders", "/contact-messages"),
+    "/sales": ("/sales", "/customers"),
     "/market-tools": ("/market-tools", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar", "/retailer-goals"),
     "/settings": ("/settings", "/export"),
 }
@@ -371,13 +376,11 @@ NAV_ACTIVE_PREFIXES = {
 # are equally empty but are fed by the live shop and contact form, so they
 # fill on their own and stay visible. /release-calendar had rows already.
 HIDDEN_NAV = [
-    ("/customers", "Customers"),
     ("/suppliers", "Suppliers"),
     ("/goals", "Goals"),
     ("/purchase-lots", "Purchase lots"),
     ("/potential-stock", "Potential stock"),
     ("/whatnot", "Whatnot shows"),
-    ("/sales", "Sales"),
     ("/marketplaces", "Marketplaces"),
 ]
 

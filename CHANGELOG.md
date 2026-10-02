@@ -79,6 +79,15 @@ reverse the ledger, inventory and linked-lot state together. A temporary-databas
 drill covers purchase, channel-allocation blocking, refund and repurchase without
 external calls.
 
+Direct/social/in-person sales now select canonical owned inventory instead of
+accepting disconnected free text and a hand-entered cost basis. Recording a sale
+atomically reduces stock, snapshots cost, reuses a customer by normalized email
+or name, and rejects channel-allocated stock and duplicate form submissions. A
+guarded void restores stock exactly once and voided sales no longer inflate
+dashboard, analytics or customer lifetime value. Sales and customer records are
+now available through the command palette, with a temporary-database rehearsal
+covering the full flow without external calls.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

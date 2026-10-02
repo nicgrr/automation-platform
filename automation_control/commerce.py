@@ -16,12 +16,18 @@ from html import escape
 
 from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
-from .models import Customer, Marketplace, MarketplaceFeeRule, Sale, SaleItem
+from .models import (
+    CatalogItem, Customer, EbayListingLink, EbayListingLinkStatus, InventoryItem,
+    InventoryStatus, Marketplace, MarketplaceFeeRule, Sale, SaleItem, SaleStatus,
+    ShopListing, ShopListingStatus, StorageLocation,
+)
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["commerce"])
@@ -32,6 +38,27 @@ def _dec(value: str, default: str = "0") -> Decimal:
         return Decimal(value) if value.strip() else Decimal(default)
     except InvalidOperation:
         return Decimal(default)
+
+
+def _money(value: str, label: str, *, positive: bool = False) -> Decimal:
+    try:
+        number = Decimal(value.strip() or "0")
+    except (InvalidOperation, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"{label} must be a valid amount") from exc
+    if not number.is_finite() or number < 0 or (positive and number <= 0):
+        qualifier = "greater than zero" if positive else "zero or more"
+        raise HTTPException(status_code=400, detail=f"{label} must be {qualifier}")
+    return number.quantize(Decimal("0.01"))
+
+
+def _positive_int(value: str, label: str = "quantity") -> int:
+    try:
+        number = int(value.strip())
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"{label} must be a whole number") from exc
+    if number < 1:
+        raise HTTPException(status_code=400, detail=f"{label} must be at least one")
+    return number
 
 
 def active_fee_rule(session: Session, marketplace_id: str, category: str | None = None, at: datetime | None = None) -> MarketplaceFeeRule | None:
@@ -127,6 +154,79 @@ def create_fee_rule(
 
 # --- Module 8: sales ---------------------------------------------------------
 
+SYSTEM_MANAGED_CHANNELS = {"whatnot", "ebay", "website"}
+
+
+def _direct_inventory(session: Session) -> list[tuple[InventoryItem, CatalogItem, StorageLocation | None]]:
+    listing_exists = exists(select(ShopListing.id).where(
+        ShopListing.inventory_item_id == InventoryItem.id,
+        ShopListing.quantity > 0,
+        ShopListing.status != ShopListingStatus.WITHDRAWN,
+    ))
+    ebay_exists = exists(
+        select(EbayListingLink.id)
+        .join(ShopListing, ShopListing.id == EbayListingLink.shop_listing_id)
+        .where(
+            ShopListing.inventory_item_id == InventoryItem.id,
+            EbayListingLink.status.in_([
+                EbayListingLinkStatus.PUBLISHING, EbayListingLinkStatus.ACTIVE,
+                EbayListingLinkStatus.ENDING,
+            ]),
+        )
+    )
+    return session.execute(
+        select(InventoryItem, CatalogItem, StorageLocation)
+        .join(CatalogItem, CatalogItem.id == InventoryItem.catalog_item_id)
+        .outerjoin(StorageLocation, StorageLocation.id == InventoryItem.storage_location_id)
+        .where(
+            InventoryItem.status == InventoryStatus.AVAILABLE,
+            InventoryItem.quantity > 0,
+            ~listing_exists,
+            ~ebay_exists,
+        )
+        .order_by(CatalogItem.name, InventoryItem.condition)
+        .limit(500)
+    ).all()
+
+
+def _direct_sale_blocker(session: Session, inventory_id: str) -> str | None:
+    listing = session.scalar(select(ShopListing.id).where(
+        ShopListing.inventory_item_id == inventory_id,
+        ShopListing.quantity > 0,
+        ShopListing.status != ShopListingStatus.WITHDRAWN,
+    ).limit(1))
+    if listing is not None:
+        return "This holding is allocated to NL Vault/eBay. Withdraw it before recording a direct sale."
+    return None
+
+
+def _customer_for_sale(
+    session: Session, name: str, email: str = "", phone: str = "",
+) -> Customer | None:
+    clean_name = name.strip()[:256]
+    clean_email = email.strip().lower()[:256]
+    clean_phone = phone.strip()[:64]
+    if not clean_name and not clean_email:
+        return None
+    customer = None
+    if clean_email:
+        customer = session.scalar(select(Customer).where(func.lower(Customer.email) == clean_email))
+    if customer is None and clean_name:
+        customer = session.scalar(select(Customer).where(func.lower(Customer.display_name) == clean_name.lower()))
+    if customer is None:
+        customer = Customer(
+            id=str(uuid.uuid4()), display_name=clean_name or clean_email,
+            email=clean_email or None, phone=clean_phone or None,
+        )
+        session.add(customer)
+        session.flush()
+    else:
+        if clean_email and not customer.email:
+            customer.email = clean_email
+        if clean_phone and not customer.phone:
+            customer.phone = clean_phone
+    return customer
+
 @router.get("/sales", response_class=HTMLResponse)
 def sales_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
     sales = session.scalars(select(Sale).order_by(Sale.sold_at.desc()).limit(100)).all()
@@ -139,16 +239,18 @@ def sales_page(user: str = Depends(require_dashboard_user), session: Session = D
         items = session.scalars(select(SaleItem).where(SaleItem.sale_id == s.id)).all()
         cost_basis_total = sum((i.cost_basis or Decimal("0")) * i.quantity for i in items)
         net_profit = s.gross_amount + s.shipping_revenue - s.fees_amount - s.shipping_cost - s.packaging_cost - s.tax_amount - cost_basis_total
-        total_profit += net_profit
+        if s.status == SaleStatus.COMPLETED:
+            total_profit += net_profit
         item_desc = "; ".join(i.description for i in items) or "—"
         rows.append(
             "<tr>"
-            f"<td>{s.sold_at:%Y-%m-%d}</td>"
+            f"<td>{s.sold_at:%Y-%m-%d}<br>{pill(s.status.value, 'ok' if s.status == SaleStatus.COMPLETED else 'neutral')}</td>"
             f"<td>{escape(item_desc)}</td>"
             f"<td>{escape(marketplaces.get(s.marketplace_id, '—'))}</td>"
             f"<td>{escape(customers.get(s.customer_id, '—'))}</td>"
             f"<td>${s.gross_amount:,.2f}</td>"
             f"<td>${net_profit:,.2f}</td>"
+            f"<td>{('<form method=\'post\' action=\'/sales/' + escape(s.id) + '/void\' onsubmit=\"return confirm(\'Void this direct sale and restore its stock?\')\"><button class=\'text-button\'>Void</button></form>') if s.source == 'direct' and s.status == SaleStatus.COMPLETED else '—'}</td>"
             "</tr>"
         )
     table = (
@@ -156,26 +258,42 @@ def sales_page(user: str = Depends(require_dashboard_user), session: Session = D
         f"<div><div class='label'>Sales shown</div><div class='value'>{len(sales)}</div></div>"
         f"<div><div class='label'>Total net profit</div><div class='value'>${total_profit:,.2f}</div></div>"
         f"</div><div class='table-wrap'><table>"
-        f"<thead><tr><th>Date</th><th>Item(s)</th><th>Channel</th><th>Customer</th><th>Gross</th><th>Net profit</th></tr></thead>"
-        f"<tbody>{''.join(rows) or '<tr><td colspan=6>No sales recorded yet.</td></tr>'}</tbody></table></div></div>"
+        f"<thead><tr><th>Date</th><th>Item(s)</th><th>Channel</th><th>Customer</th><th>Gross</th><th>Net profit</th><th></th></tr></thead>"
+        f"<tbody>{''.join(rows) or '<tr><td colspan=7>No sales recorded yet.</td></tr>'}</tbody></table></div></div>"
     )
 
-    marketplace_options = "".join(f"<option value='{escape(m.id)}'>{escape(m.name)}</option>" for m in session.scalars(select(Marketplace)).all())
+    marketplaces_for_direct = [
+        m for m in session.scalars(select(Marketplace).order_by(Marketplace.name)).all()
+        if m.name.lower() not in SYSTEM_MANAGED_CHANNELS
+    ]
+    marketplace_options = "".join(
+        f"<option value='{escape(m.id)}'>{escape(m.name)}</option>" for m in marketplaces_for_direct
+    )
+    inventory_options = "".join(
+        f"<option value='{escape(inventory.id)}'>{escape(catalog.name)} · {escape(inventory.condition)} "
+        f"· qty {inventory.quantity} · {escape(location.name if location else 'not located')}</option>"
+        for inventory, catalog, location in _direct_inventory(session)
+    )
     form = (
-        "<div class='panel'><h2>Record a sale</h2>"
+        "<div class='panel'><h2>Record a direct sale</h2>"
+        "<p class='muted'>Choose owned stock. Whatnot, eBay and NL Vault sales are recorded by their own workflows.</p>"
         "<form method='post' action='/sales' class='calc-form'>"
-        f"<label>Marketplace<select name='marketplace_id'>{marketplace_options}</select></label>"
+        f"<input type='hidden' name='submission_key' value='{uuid.uuid4()}'>"
+        f"<label>Channel<select name='marketplace_id' required>{marketplace_options}</select></label>"
+        f"<label>Owned inventory<select name='inventory_item_id' required>{inventory_options}</select></label>"
         "<label>Customer name (optional)<input name='customer_name'></label>"
-        "<label>Item description<input name='description' required></label>"
+        "<label>Customer email (optional)<input name='customer_email' type='email'></label>"
+        "<label>Customer phone (optional)<input name='customer_phone'></label>"
         "<label>Quantity<input name='quantity' type='number' value='1' min='1'></label>"
         "<label>Sale price (each)<input name='unit_price' type='number' step='0.01' required></label>"
-        "<label>Cost basis (each)<input name='cost_basis' type='number' step='0.01' value='0'></label>"
         "<label>Fees<input name='fees_amount' type='number' step='0.01' value='0'></label>"
         "<label>Shipping revenue<input name='shipping_revenue' type='number' step='0.01' value='0'></label>"
         "<label>Shipping cost<input name='shipping_cost' type='number' step='0.01' value='0'></label>"
         "<label>Packaging cost<input name='packaging_cost' type='number' step='0.01' value='0'></label>"
+        "<label>Tax collected/remitted<input name='tax_amount' type='number' step='0.01' value='0'></label>"
+        "<label>Notes<input name='notes'></label>"
         "<button type='submit'>Record sale</button>"
-        "</form></div>"
+        "</form>" + ("</div>" if inventory_options else "<div class='notice warn'>No unallocated inventory is available for a direct sale.</div></div>")
     )
     body = brand_header("Sales") + table + form + _STYLE
     return HTMLResponse(page("EzBay — Sales", body))
@@ -183,34 +301,126 @@ def sales_page(user: str = Depends(require_dashboard_user), session: Session = D
 
 @router.post("/sales")
 def create_sale(
-    marketplace_id: str = Form(""), customer_name: str = Form(""), description: str = Form(...),
-    quantity: str = Form("1"), unit_price: str = Form(...), cost_basis: str = Form("0"),
-    fees_amount: str = Form("0"), shipping_revenue: str = Form("0"), shipping_cost: str = Form("0"), packaging_cost: str = Form("0"),
+    marketplace_id: str = Form(...), inventory_item_id: str = Form(...),
+    customer_name: str = Form(""), customer_email: str = Form(""), customer_phone: str = Form(""),
+    quantity: str = Form("1"), unit_price: str = Form(...),
+    fees_amount: str = Form("0"), shipping_revenue: str = Form(""), shipping_cost: str = Form(""),
+    packaging_cost: str = Form(""), tax_amount: str = Form(""), notes: str = Form(""),
+    submission_key: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
-    qty = int(quantity or 1)
-    price = _dec(unit_price)
-    customer_id = None
-    if customer_name.strip():
-        customer = session.scalar(select(Customer).where(Customer.display_name == customer_name.strip()))
-        if customer is None:
-            customer = Customer(id=str(uuid.uuid4()), display_name=customer_name.strip())
-            session.add(customer)
-            session.flush()
-        customer_id = customer.id
+    key = submission_key.strip()[:36] or None
+    if key:
+        existing = session.scalar(select(Sale).where(Sale.submission_key == key))
+        if existing is not None:
+            return RedirectResponse("/sales", status_code=303)
+    marketplace = session.get(Marketplace, marketplace_id)
+    if marketplace is None:
+        raise HTTPException(status_code=404, detail="sale channel not found")
+    if marketplace.name.lower() in SYSTEM_MANAGED_CHANNELS:
+        raise HTTPException(status_code=409, detail="use that channel's own order workflow")
+    qty = _positive_int(quantity)
+    price = _money(unit_price, "sale price", positive=True)
+    fees = _money(fees_amount, "fees")
+    shipping_in = _money(shipping_revenue, "shipping revenue")
+    shipping_out = _money(shipping_cost, "shipping cost")
+    packaging = _money(packaging_cost, "packaging cost")
+    tax = _money(tax_amount, "tax")
+    inventory = session.get(InventoryItem, inventory_item_id)
+    if inventory is None:
+        raise HTTPException(status_code=404, detail="inventory item not found")
+    claim = session.execute(
+        update(InventoryItem)
+        .where(
+            InventoryItem.id == inventory_item_id,
+            InventoryItem.status == InventoryStatus.AVAILABLE,
+            InventoryItem.quantity >= qty,
+        )
+        .values(quantity=InventoryItem.quantity - qty)
+        .execution_options(synchronize_session=False)
+    )
+    if claim.rowcount != 1:
+        raise HTTPException(status_code=409, detail="that inventory is no longer available in the requested quantity")
+    blocker = _direct_sale_blocker(session, inventory_item_id)
+    if blocker:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=blocker)
+    session.expire(inventory)
+    catalog = session.get(CatalogItem, inventory.catalog_item_id)
+    if catalog is None:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="inventory has no canonical catalogue item")
+    if inventory.quantity == 0:
+        inventory.status = InventoryStatus.SOLD
+    customer = _customer_for_sale(session, customer_name, customer_email, customer_phone)
 
     sale = Sale(
-        id=str(uuid.uuid4()), marketplace_id=marketplace_id or None, customer_id=customer_id,
-        gross_amount=price * qty, fees_amount=_dec(fees_amount), shipping_revenue=_dec(shipping_revenue),
-        shipping_cost=_dec(shipping_cost), packaging_cost=_dec(packaging_cost),
+        id=str(uuid.uuid4()), submission_key=key, source="direct",
+        marketplace_id=marketplace.id, customer_id=customer.id if customer else None,
+        gross_amount=price * qty, fees_amount=fees, shipping_revenue=shipping_in,
+        shipping_cost=shipping_out, packaging_cost=packaging, tax_amount=tax,
+        notes=notes.strip() or None,
     )
     session.add(sale)
     session.flush()
     session.add(SaleItem(
-        id=str(uuid.uuid4()), sale_id=sale.id, description=description, quantity=qty,
-        unit_price=price, cost_basis=_dec(cost_basis),
+        id=str(uuid.uuid4()), sale_id=sale.id, inventory_item_id=inventory.id,
+        description=catalog.name, quantity=qty, unit_price=price,
+        cost_basis=inventory.allocated_cost_basis or Decimal("0"),
     ))
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if key and session.scalar(select(Sale.id).where(Sale.submission_key == key)):
+            return RedirectResponse("/sales", status_code=303)
+        raise HTTPException(status_code=409, detail="this sale could not be recorded uniquely") from exc
+    record_event(
+        session, actor_type="user", actor_id=user, action="sale.direct.record",
+        resource_type="sale", resource_id=sale.id, outcome="success",
+        correlation_id=sale.id,
+        details={"inventory_item_id": inventory.id, "quantity": qty, "marketplace_id": marketplace.id},
+    )
+    return RedirectResponse("/sales", status_code=303)
+
+
+@router.post("/sales/{sale_id}/void")
+def void_direct_sale(
+    sale_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+):
+    sale = session.get(Sale, sale_id)
+    if sale is None:
+        raise HTTPException(status_code=404, detail="sale not found")
+    if sale.source != "direct" or sale.status != SaleStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="only a completed direct sale can be voided here")
+    items = session.scalars(select(SaleItem).where(SaleItem.sale_id == sale.id)).all()
+    inventories = []
+    for item in items:
+        inventory = session.get(InventoryItem, item.inventory_item_id) if item.inventory_item_id else None
+        if inventory is None:
+            raise HTTPException(status_code=409, detail="the sale's inventory link is missing")
+        if inventory.status not in (InventoryStatus.AVAILABLE, InventoryStatus.SOLD):
+            raise HTTPException(status_code=409, detail="resolve the inventory's current allocation before voiding")
+        inventories.append((item, inventory))
+    claim = session.execute(
+        update(Sale)
+        .where(Sale.id == sale.id, Sale.status == SaleStatus.COMPLETED, Sale.source == "direct")
+        .values(status=SaleStatus.VOIDED, voided_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
+    )
+    if claim.rowcount != 1:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="this sale was already changed")
+    for item, inventory in inventories:
+        inventory.quantity += item.quantity
+        if inventory.status == InventoryStatus.SOLD:
+            inventory.status = InventoryStatus.AVAILABLE
     session.commit()
+    record_event(
+        session, actor_type="user", actor_id=user, action="sale.direct.void",
+        resource_type="sale", resource_id=sale.id, outcome="success",
+        correlation_id=sale.id, details={"restored_items": len(items)},
+    )
     return RedirectResponse("/sales", status_code=303)
 
 
@@ -223,12 +433,13 @@ def customers_page(user: str = Depends(require_dashboard_user), session: Session
     for c in customers:
         stats = session.execute(
             select(func.count(Sale.id), func.coalesce(func.sum(Sale.gross_amount), 0), func.max(Sale.sold_at))
-            .where(Sale.customer_id == c.id)
+            .where(Sale.customer_id == c.id, Sale.status == SaleStatus.COMPLETED)
         ).first()
         order_count, lifetime_value, last_purchase = stats
         rows.append(
             "<tr>"
             f"<td>{escape(c.display_name)}</td>"
+            f"<td>{escape(c.email or '—')}<br><span class='muted'>{escape(c.phone or '')}</span></td>"
             f"<td>{pill(c.segment, 'neutral') if c.segment else '—'}</td>"
             f"<td>{order_count}</td>"
             f"<td>${lifetime_value:,.2f}</td>"
@@ -237,13 +448,15 @@ def customers_page(user: str = Depends(require_dashboard_user), session: Session
         )
     table = (
         "<div class='panel'><div class='table-wrap'><table>"
-        "<thead><tr><th>Customer</th><th>Segment</th><th>Orders</th><th>Lifetime value</th><th>Last purchase</th></tr></thead>"
-        f"<tbody>{''.join(rows) or '<tr><td colspan=5>No customers yet -- they appear automatically when you record a sale.</td></tr>'}</tbody></table></div></div>"
+        "<thead><tr><th>Customer</th><th>Contact</th><th>Segment</th><th>Orders</th><th>Lifetime value</th><th>Last purchase</th></tr></thead>"
+        f"<tbody>{''.join(rows) or '<tr><td colspan=6>No customers yet -- they appear automatically when you record a sale.</td></tr>'}</tbody></table></div></div>"
     )
     form = (
         "<div class='panel'><h2>Add a customer</h2>"
         "<form method='post' action='/customers' class='calc-form'>"
         "<label>Name<input name='display_name' required></label>"
+        "<label>Email<input name='email' type='email'></label>"
+        "<label>Phone<input name='phone'></label>"
         "<label>Segment<input name='segment' placeholder='VIP, One Piece, ...'></label>"
         "<label>Notes<input name='notes'></label>"
         "<button type='submit'>Add</button></form></div>"
@@ -254,13 +467,19 @@ def customers_page(user: str = Depends(require_dashboard_user), session: Session
 
 @router.post("/customers")
 def create_customer(
-    display_name: str = Form(...), segment: str = Form(""), notes: str = Form(""),
+    display_name: str = Form(...), email: str = Form(""), phone: str = Form(""),
+    segment: str = Form(""), notes: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
-    existing = session.scalar(select(Customer).where(Customer.display_name == display_name.strip()))
-    if existing is None:
-        session.add(Customer(id=str(uuid.uuid4()), display_name=display_name.strip(), segment=segment or None, notes=notes or None))
-        session.commit()
+    clean_name = display_name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="customer name is required")
+    customer = _customer_for_sale(session, clean_name, email, phone)
+    if segment.strip():
+        customer.segment = segment.strip()[:64]
+    if notes.strip():
+        customer.notes = notes.strip()
+    session.commit()
     return RedirectResponse("/customers", status_code=303)
 
 

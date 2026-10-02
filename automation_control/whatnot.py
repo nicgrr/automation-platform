@@ -508,7 +508,7 @@ def mark_outcome(
         if inventory is not None and inventory.quantity == 0:
             inventory.status = InventoryStatus.SOLD
         sale = Sale(
-            id=str(uuid.uuid4()), marketplace_id=marketplace.id,
+            id=str(uuid.uuid4()), marketplace_id=marketplace.id, source="whatnot",
             customer_id=customer.id, gross_amount=price * item.quantity, fees_amount=fees,
             notes=(f"Whatnot show: {show.title}; {fee_source}"
                    + (f"; order {external_id}" if external_id else "")

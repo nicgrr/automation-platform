@@ -187,6 +187,11 @@ class WhatnotShowStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class SaleStatus(str, enum.Enum):
+    COMPLETED = "completed"
+    VOIDED = "voided"
+
+
 class ScanSessionStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
@@ -1058,6 +1063,8 @@ class Customer(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     display_name: Mapped[str] = mapped_column(String(256))
+    email: Mapped[str | None] = mapped_column(String(256), unique=True, index=True)
+    phone: Mapped[str | None] = mapped_column(String(64))
     platform_handles: Mapped[dict] = mapped_column(JSON, default=dict)
     segment: Mapped[str | None] = mapped_column(String(64))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -1074,6 +1081,9 @@ class Sale(Base):
     __tablename__ = "sales"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    submission_key: Mapped[str | None] = mapped_column(String(36), unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="manual", index=True)
+    status: Mapped[SaleStatus] = mapped_column(Enum(SaleStatus), default=SaleStatus.COMPLETED, index=True)
     marketplace_id: Mapped[str | None] = mapped_column(ForeignKey("marketplaces.id"), index=True)
     customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.id"), index=True)
     sold_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
@@ -1084,6 +1094,7 @@ class Sale(Base):
     packaging_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     notes: Mapped[str | None] = mapped_column(Text)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     marketplace: Mapped[Marketplace | None] = relationship()
     customer: Mapped[Customer | None] = relationship()

@@ -29,7 +29,7 @@ from .database import get_session
 from .inventory_review import _aud, _latest_prices
 from .models import (
     Goal, InventoryItem, InventoryStatus, MarketListing, Marketplace,
-    PotentialPurchaseStatus, PurchaseLot, PurchaseLotStatus, Sale,
+    PotentialPurchaseStatus, PurchaseLot, PurchaseLotStatus, Sale, SaleStatus,
 )
 from .ui import brand_header, page, pill
 
@@ -72,7 +72,7 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
 
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    all_sales = session.scalars(select(Sale)).all()
+    all_sales = session.scalars(select(Sale).where(Sale.status == SaleStatus.COMPLETED)).all()
 
     def net_profit(s: Sale) -> float:
         return float(s.gross_amount + s.shipping_revenue - s.fees_amount - s.shipping_cost - s.packaging_cost - s.tax_amount)

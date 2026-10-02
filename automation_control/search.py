@@ -6,10 +6,9 @@ place (Pokémon today, One Piece as soon as a set is imported via
 scripts/import_tcg_catalog_csv.py) and cross-references ownership from
 inventory_items.catalog_item_id.
 
-Deliberately scoped to what actually exists yet: customers, suppliers,
-sales, and purchase lots aren't built (Phase 5+), so they aren't searched --
-extend the UNION below as those tables land rather than searching tables
-that don't exist.
+Deliberately scoped to catalogue and ownership lookup. CRM sales/customers and
+purchase operations have their own workflow screens; folding unlike records into
+this item autocomplete would make its results less predictable.
 """
 
 from html import escape

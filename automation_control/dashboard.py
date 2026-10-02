@@ -22,7 +22,7 @@ from .database import get_session
 from .inventory_review import _aud, _latest_ebay_prices, _latest_prices
 from .models import (
     AuditEvent, CollectibleProduct, InventoryItem, InventoryStatus, Marketplace,
-    MarketListing, PotentialPurchaseStatus, RetailerProgram, Sale, TcgCard,
+    MarketListing, PotentialPurchaseStatus, RetailerProgram, Sale, SaleStatus, TcgCard,
 )
 from .nav_counts import queue_counts
 from .ui import ADMIN_NAV, page
@@ -202,7 +202,9 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
 
     # -- sales by channel + recent sales --
     marketplaces = {m.id: m.name for m in session.scalars(select(Marketplace)).all()}
-    all_sales = session.scalars(select(Sale).order_by(desc(Sale.sold_at))).all()
+    all_sales = session.scalars(
+        select(Sale).where(Sale.status == SaleStatus.COMPLETED).order_by(desc(Sale.sold_at))
+    ).all()
     channel_totals: dict[str, float] = {}
     for s in all_sales:
         name = marketplaces.get(s.marketplace_id, "Unrecorded")
@@ -259,11 +261,9 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
 
     # -- widgets that only appear once they have something to say --------
     #
-    # Sales are recorded by hand on /sales, which has never been used (see
-    # HIDDEN_NAV in ui.py). An empty-state message is the right thing for a widget whose
-    # data comes and goes; it is the wrong thing for one that has never
-    # had any, because it reads as a broken feature rather than an unused
-    # one. These three render the moment their first row exists.
+    # Sales arrive from integrated channels (currently Whatnot) and the
+    # inventory-backed direct-sale form. Keep the honest empty state until the
+    # first real transaction rather than seeding example revenue.
     sales_rows = "".join(
         f"<tr><td>{escape(marketplaces.get(s.marketplace_id, '—'))}</td>"
         f"<td>${s.gross_amount:,.2f}</td><td>{s.sold_at:%Y-%m-%d}</td></tr>"
