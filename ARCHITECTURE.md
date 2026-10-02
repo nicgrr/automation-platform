@@ -1,8 +1,12 @@
-# Architecture
+# Historical architecture audit
+
+> Historical snapshot from the platform's earlier expansion. For the current
+> architecture and canonical data flows, use
+> [`docs/ARCHITECTURE_AND_DATA_FLOW.md`](docs/ARCHITECTURE_AND_DATA_FLOW.md).
 
 This document is the Phase 0 architecture summary for evolving this repository into
 the collectibles business platform (catalogue, inventory, purchasing, sales, Whatnot,
-CRM, analytics). It supersedes `docs/architecture.md`, which documented only the
+CRM, analytics). It superseded `docs/history/phase-1a-architecture.md`, which documented only the
 original Phase 1A control-plane slice and predates everything below. That file is
 left in place as history rather than deleted.
 
@@ -13,7 +17,7 @@ SQLite database** (`automation.db`), serving two lineages of work that grew here
 independently and were never unified:
 
 1. **The original control plane** (Phase 1A/1B, per `README.md` and
-   `docs/phase-1a-report.md`): a deliberately sandboxed foundation for letting an AI
+   `docs/history/phase-1a-report.md`): a deliberately sandboxed foundation for letting an AI
    process request actions — jobs, approvals, tool permissions, audit logging, a
    narrow read-only Docker metadata broker, and a read-only eBay *Sandbox* OAuth
    integration. Tables: `users`, `platform_config`, `schedules`, `job_runs`,
@@ -129,7 +133,7 @@ queries against a much larger dataset start showing up as real latency.
   with its own documented requirement (an approved `Approval` record before
   any write). Built on explicit instruction to add the plumbing without
   turning any of this on — see `CHANGELOG.md`.
-- The existing `docs/security-model.md` principles (deny tools by default, sandbox
+- The historical `docs/history/phase-1a-security-model.md` principles (deny tools by default, sandbox
   eBay, human approval before irreversible writes, redact credential-shaped audit
   fields) still hold and should keep holding as this grows.
 

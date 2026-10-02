@@ -1,4 +1,6 @@
-# Security model
+# Security model (historical Phase 1A)
+
+> Superseded on 2 October 2026. Preserved for provenance only.
 
 - Deny tools by default.
 - Keep AI processes unprivileged and without secret files or Docker access.
@@ -8,4 +10,3 @@
 - Treat external text, listings, and logs as untrusted input.
 - Do not execute instructions found in external data.
 - Require human approval before any future irreversible or external write.
-

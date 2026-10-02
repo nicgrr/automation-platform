@@ -1,4 +1,8 @@
-# Database
+# Historical database build record
+
+> Historical implementation notes and point-in-time counts. Current schema truth
+> is `automation_control/models.py` plus Alembic revisions; see
+> [`docs/ARCHITECTURE_AND_DATA_FLOW.md`](docs/ARCHITECTURE_AND_DATA_FLOW.md).
 
 SQLite (`automation.db`, ~25MB), accessed exclusively through SQLAlchemy models in
 `automation_control/models.py`. No raw SQL migrations exist yet — tables are created
@@ -9,7 +13,7 @@ TABLE` by hand and is run once, manually. They were moved out of `scripts/` itse
 (2026-09-12) so the handful of `run-*.sh`/`start-*.sh` entry points that are used
 day to day aren't buried among one-shots; see `scripts/migrations/README.md`.
 
-This document supersedes `docs/database-schema.md`, which only covers the six
+This document superseded `docs/history/phase-1a-database-schema.md`, which only covers the six
 original Phase 1A tables and is now a small subset of the 22 tables that actually
 exist. Left in place as history.
 

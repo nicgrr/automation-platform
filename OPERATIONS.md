@@ -1,4 +1,10 @@
-# Operations
+# Detailed operations reference
+
+> Use [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) for current workflows and
+> [`docs/SECURITY_AND_RECOVERY.md`](docs/SECURITY_AND_RECOVERY.md) for the current
+> release/recovery contract. This older long-form reference retains host history
+> and troubleshooting detail; point-in-time revisions and readiness notes below
+> may be historical.
 
 ## Services (systemd, not Docker — see `ARCHITECTURE.md`)
 

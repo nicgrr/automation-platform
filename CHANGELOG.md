@@ -96,6 +96,19 @@ line-total and per-unit cost evidence. Retailer-generated lots remain protected
 from manual edits. Suppliers and Purchase Lots are now available under Market
 Tools after a no-external-call transaction rehearsal passed.
 
+Phase 5 retirement has begun without deleting compatibility data. The unused
+generic Goals routes and analytics panel are removed while their empty table is
+retained. Generic job and approval writes now return `410 Gone` and record the
+rejected attempt in the audit log instead of creating disconnected records. The
+production baseline, earliest 60-day review date and mandatory export/backup/
+migration checks are recorded in the deprecation register.
+
+Current operator, architecture/data-flow and security/recovery guides now replace
+the Phase 1 control-plane documents as active instructions. Superseded Phase 1
+files live under `docs/history/` with explicit historical labels. The acceptance
+journeys for stock intake, eBay, NL Vault and verified recovery are documented
+against the consolidated platform.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

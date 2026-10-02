@@ -1,4 +1,6 @@
-# Phase 1A tool policy
+# Phase 1A tool policy (historical)
+
+> Superseded on 2 October 2026. Preserved for provenance only.
 
 | Tool | Capability | Initial policy |
 |---|---|---|
@@ -11,4 +13,3 @@
 
 Restart, exec, listing mutation, shell, arbitrary HTTP, arbitrary filesystem, and
 generic Docker tools are outside the Phase 1A tool registry.
-

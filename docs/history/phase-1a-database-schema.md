@@ -1,4 +1,6 @@
-# Database schema
+# Database schema (historical Phase 1A)
+
+> Superseded on 2 October 2026. Preserved for provenance only.
 
 Phase 1A defines the following durable records:
 

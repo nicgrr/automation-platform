@@ -28,10 +28,10 @@ from .auth import require_dashboard_user
 from .database import get_session
 from .inventory_review import _aud, _latest_prices
 from .models import (
-    Goal, InventoryItem, InventoryStatus, MarketListing, Marketplace,
+    InventoryItem, InventoryStatus, MarketListing, Marketplace,
     PotentialPurchaseStatus, PurchaseLot, PurchaseLotStatus, Sale, SaleStatus,
 )
-from .ui import brand_header, page, pill
+from .ui import brand_header, page
 
 router = APIRouter(tags=["analytics"])
 
@@ -107,8 +107,6 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         if candidate.candidate_status in (PotentialPurchaseStatus.OFFER_SENT, PotentialPurchaseStatus.COUNTER_OFFER)
     )
 
-    goals = session.scalars(select(Goal).where(Goal.achieved_at.is_(None)).order_by(Goal.created_at)).all()
-
     def stat(label: str, value: str, sub: str = "") -> str:
         sub_html = f" <span class='value-sub'>{sub}</span>" if sub else ""
         return f"<div class='stat-card'><div class='label'>{label}</div><div class='value'>{value}{sub_html}</div></div>"
@@ -140,23 +138,13 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         if dead_stock else "<li class='muted'>None flagged.</li>"
     )
 
-    goals_html = "".join(
-        f"<li>{g.label} — {pill(f'{min(100, float(g.current_value / g.target_value * 100)) if g.target_value else 0:.0f}%', 'neutral')}</li>"
-        for g in goals[:6]
-    ) or "<li class='muted'>No open goals.</li>"
-
     body = (
         brand_header("Business analytics")
         + top_cards
         + "<div class='panel'><h2>Inventory ageing</h2><div class='age-row'>" + ageing_html + "</div></div>"
         + f"<div class='panel'><h2>Dead stock (90+ days, still available)</h2><ul class='events'>{dead_stock_html}</ul></div>"
-        # Both of these read tables that are filled by hand on pages nobody
-        # has used yet (see HIDDEN_NAV in ui.py), so their "empty" state was
-        # the only state they had ever shown. They come back on their own
-        # with the first sale and the first goal.
         + (f"<div class='panel'><h2>Best sales channel</h2><p>{escape(best_channel)} — "
            f"${channel_totals[best_channel]:,.2f}</p></div>" if best_channel else "")
-        + (f"<div class='panel'><h2>Open goals</h2><ul class='events'>{goals_html}</ul></div>" if goals else "")
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Analytics", body))

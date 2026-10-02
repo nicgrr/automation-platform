@@ -100,13 +100,15 @@ reliability and rollback improve before business workflows or schemas are remove
 
 ## Phase 5 — staged retirement and documentation
 
-- [ ] Hide and deprecate the unused control-plane surfaces while retaining audit
+- [x] Hide and deprecate the unused control-plane surfaces while retaining audit
   events.
-- [ ] Remove the generic goals module.
-- [ ] Begin the agreed 60-day observation period for deprecated features.
-- [ ] Replace active documentation with current operator, architecture/data-flow and
+- [x] Remove the generic goals module while retaining its empty schema until a
+  separately backed-up post-observation release.
+- [x] Begin the agreed 60-day observation period for deprecated features (2 October
+  through 1 December 2026 at the earliest).
+- [x] Replace active documentation with current operator, architecture/data-flow and
   security/backup guides.
-- [ ] Move superseded Phase 1 material to `docs/history/` with historical labels.
+- [x] Move superseded Phase 1 material to `docs/history/` with historical labels.
 - [ ] After the observation window: export, back up and remove unused code; remove
   its schema only in a later release.
 

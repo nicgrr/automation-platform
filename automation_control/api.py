@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -46,14 +46,14 @@ from .listings_review import router as listings_router
 from .market_search import router as market_search_router
 from .market_watch import router as market_watch_router
 from .market_watch_service import allowed_country_codes
-from .models import Approval, EbayCredential, EbayListing, JobRun
+from .models import EbayCredential, EbayListing
 from .price_history import router as price_history_router
 from .price_review import router as pricing_router
 from .quick_price import router as quick_price_router
 from .review_queue import router as review_router
 from .scan_feed import router as scan_feed_router
 from .scan_ingest_status import router as scan_ingest_status_router
-from .schemas import ApprovalCreate, ApprovalRead, HealthResponse, JobCreate, JobRead
+from .schemas import HealthResponse
 from .sealed_economics import router as sealed_economics_router
 from .search import router as search_router
 from .ebay_bulk_export import router as ebay_bulk_export_router
@@ -336,13 +336,27 @@ async def ebay_market_search(
         raise HTTPException(status_code=502, detail=f"eBay {settings.ebay_env.title()} market search failed")
 
 
-@app.post("/approvals", response_model=ApprovalRead, status_code=status.HTTP_201_CREATED)
-def request_approval(payload: ApprovalCreate, session: Session = Depends(get_session), user: str = Depends(require_dashboard_user)) -> Approval:
-    approval = Approval(**payload.model_dump()); session.add(approval); session.commit(); session.refresh(approval); return approval
+def _deprecated_control_plane_write(session: Session, user: str, resource: str) -> None:
+    record_event(
+        session, actor_type="user", actor_id=user, action=f"deprecated.{resource}.write",
+        resource_type=resource, resource_id=None, outcome="rejected",
+        correlation_id=correlation_id(), details={"replacement": "workflow-specific operations"},
+    )
+    raise HTTPException(
+        status_code=410,
+        detail=f"the generic {resource} endpoint is deprecated; use the workflow-specific operation",
+    )
 
 
-@app.post("/jobs", response_model=JobRead, status_code=status.HTTP_201_CREATED)
-def create_job(payload: JobCreate, session: Session = Depends(get_session), user: str = Depends(require_dashboard_user)) -> JobRun:
-    if payload.job_type not in {"grocery.snapshot", "ebay.market_snapshot", "docker.status_snapshot"}:
-        raise HTTPException(status_code=400, detail="unregistered job type")
-    job = JobRun(**payload.model_dump()); session.add(job); session.commit(); session.refresh(job); return job
+@app.post("/approvals")
+def deprecated_approval_write(
+    session: Session = Depends(get_session), user: str = Depends(require_dashboard_user),
+) -> None:
+    _deprecated_control_plane_write(session, user, "approval")
+
+
+@app.post("/jobs")
+def deprecated_job_write(
+    session: Session = Depends(get_session), user: str = Depends(require_dashboard_user),
+) -> None:
+    _deprecated_control_plane_write(session, user, "job")

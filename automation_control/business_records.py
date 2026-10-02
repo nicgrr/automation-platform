@@ -1,4 +1,4 @@
-"""Suppliers, goals, and the release calendar -- Modules 10, 14, 15.
+"""Suppliers and the release calendar -- Modules 10 and 15.
 
 Grouped in one file because each is simple reference-data CRUD with no
 shared logic worth its own module, unlike buying.py (shares the
@@ -20,7 +20,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .models import (
-    CatalogItem, Goal, GoalKind, PurchaseLot, ReleaseCalendarEntry,
+    CatalogItem, PurchaseLot, ReleaseCalendarEntry,
     Supplier, SupplierProduct, SupplierStatus,
 )
 from .ui import brand_header, page, pill
@@ -214,66 +214,6 @@ def create_supplier_product(
     return RedirectResponse(f"/suppliers/{supplier_id}", status_code=303)
 
 
-# --- Module 14: goals ---------------------------------------------------------
-
-@router.get("/goals", response_class=HTMLResponse)
-def goals_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    goals = session.scalars(select(Goal).order_by(Goal.achieved_at.is_(None).desc(), Goal.created_at).limit(500)).all()
-    cards = []
-    for g in goals:
-        pct = min(100, float(g.current_value / g.target_value * 100)) if g.target_value else 0
-        achieved = g.achieved_at is not None
-        cards.append(
-            "<div class='goal-card" + (" achieved" if achieved else "") + "'>"
-            f"<div class='goal-label'>{escape(g.label)}</div>"
-            f"<div class='goal-bar'><div class='goal-fill' style='width:{pct:.0f}%'></div></div>"
-            f"<div class='goal-value'>{g.current_value:,.0f} / {g.target_value:,.0f}"
-            + (f" {pill('achieved', 'ok')}" if achieved else "") + "</div>"
-            + f"<form method='post' action='/goals/{escape(g.id)}/progress' class='goal-form'>"
-            + "<input name='current_value' type='number' step='0.01' placeholder='update progress'>"
-            + "<button type='submit'>Update</button></form>"
-            "</div>"
-        )
-    board = f"<div class='goal-grid'>{''.join(cards) or '<p class=\"muted\">No goals yet.</p>'}</div>"
-    form = (
-        "<div class='panel'><h2>Add a goal</h2>"
-        "<form method='post' action='/goals' class='calc-form'>"
-        "<label>Label<input name='label' required placeholder='First $1,000 sales month'></label>"
-        f"<label>Kind<select name='kind'>{''.join(f'<option value=\"{k.value}\">{k.value.title()}</option>' for k in GoalKind)}</select></label>"
-        "<label>Target value<input name='target_value' type='number' step='0.01' value='1' required></label>"
-        "<button type='submit'>Add</button></form></div>"
-    )
-    body = brand_header("Goals") + board + form + _STYLE
-    return HTMLResponse(page("EzBay — Goals", body))
-
-
-@router.post("/goals")
-def create_goal(
-    label: str = Form(...), kind: str = Form(GoalKind.MILESTONE.value), target_value: str = Form("1"),
-    user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
-):
-    session.add(Goal(id=str(uuid.uuid4()), label=label, kind=GoalKind(kind), target_value=_dec(target_value, "1")))
-    session.commit()
-    return RedirectResponse("/goals", status_code=303)
-
-
-@router.post("/goals/{goal_id}/progress")
-def update_goal_progress(
-    goal_id: str, current_value: str = Form(...),
-    user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
-):
-    from datetime import UTC, datetime
-
-    goal = session.get(Goal, goal_id)
-    if goal is None:
-        raise HTTPException(status_code=404, detail="goal not found")
-    goal.current_value = _dec(current_value)
-    if goal.current_value >= goal.target_value and goal.achieved_at is None:
-        goal.achieved_at = datetime.now(UTC)
-    session.commit()
-    return RedirectResponse("/goals", status_code=303)
-
-
 # --- Module 15: release calendar ---------------------------------------------
 #
 # Was a flat add-only table: no edit, no delete, and nothing seeding it,
@@ -458,16 +398,6 @@ _STYLE = """<style>
   padding:10px 12px;color:var(--text);font-size:14px}
 .calc-form button{background:linear-gradient(120deg,var(--accent),var(--accent-2));border:none;padding:11px;
   border-radius:8px;color:#fff;font-weight:700;cursor:pointer;margin-top:4px}
-.goal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-bottom:20px}
-.goal-card{background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px}
-.goal-card.achieved{border-color:var(--success)}
-.goal-label{font-weight:650;margin-bottom:10px}
-.goal-bar{height:8px;border-radius:999px;background:var(--surface-sunken);overflow:hidden;margin-bottom:8px}
-.goal-fill{height:100%;background:linear-gradient(120deg,var(--accent),var(--accent-2))}
-.goal-value{font-size:13px;color:var(--text-dim);margin-bottom:10px}
-.goal-form{display:flex;gap:8px}
-.goal-form input{flex:1;background:var(--surface-sunken);border:1px solid var(--panel-border);border-radius:8px;padding:8px;color:var(--text)}
-.goal-form button{padding:8px 14px;border-radius:8px;border:none;background:var(--accent-2);color:#fff;font-weight:700;cursor:pointer}
 .muted{color:var(--text-dim);font-size:13px}
 .listing-actions{display:flex;gap:6px}
 </style>"""

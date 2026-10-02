@@ -1,4 +1,7 @@
-# Phase 1B private configuration
+# Phase 1B private configuration (historical)
+
+> Superseded on 2 October 2026. Do not use this as the current configuration
+> procedure; it is preserved for provenance only.
 
 ## Network boundary
 

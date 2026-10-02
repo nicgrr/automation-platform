@@ -378,7 +378,6 @@ NAV_ACTIVE_PREFIXES = {
 # are equally empty but are fed by the live shop and contact form, so they
 # fill on their own and stay visible. /release-calendar had rows already.
 HIDDEN_NAV = [
-    ("/goals", "Goals"),
     ("/potential-stock", "Potential stock"),
     ("/whatnot", "Whatnot shows"),
     ("/marketplaces", "Marketplaces"),

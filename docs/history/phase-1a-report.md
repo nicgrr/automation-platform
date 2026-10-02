@@ -1,4 +1,6 @@
-# RBAY Project — Phase 1A Report
+# RBAY Project — Phase 1A Report (historical)
+
+> Superseded on 2 October 2026. Preserved for provenance only.
 
 **Status:** Complete  
 **Verification date:** 8 August 2026  

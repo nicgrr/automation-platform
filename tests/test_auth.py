@@ -165,10 +165,8 @@ async def test_a_csrf_token_from_a_different_session_is_refused():
 
 
 async def test_a_json_post_is_not_csrf_checked():
-    """/approvals and /jobs take a Pydantic JSON body, not Form(...) -- a
-    plain cross-site <form> can't forge a JSON-content-typed request
-    without a CORS preflight this app already refuses, so those routes
-    are deliberately left out of the form-based check."""
+    """JSON requests cannot be forged by a plain cross-site HTML form
+    without the CORS preflight this application already refuses."""
     issued = int(time.time())
     request = _FakeRequest(create_session("nic", KEY, now=issued), _settings(), method="POST")
     request.headers = {"content-type": "application/json"}

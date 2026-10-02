@@ -1,4 +1,6 @@
-# Phase 1A architecture
+# Phase 1A architecture (historical)
+
+> Superseded on 2 October 2026. Preserved for provenance only.
 
 The control plane owns job, approval, permission, and audit records. External
 systems are available only through typed adapters. AI-facing code must call the
@@ -9,4 +11,3 @@ read-only operations: list allowlisted names, status, health, and bounded logs.
 It has no restart, exec, create, update, delete, or generic Docker operation.
 
 Phase 1A includes no deployment configuration and publishes no ports.
-
