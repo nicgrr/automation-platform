@@ -59,8 +59,15 @@ def unreadable_virtualenv_paths(venv: Path) -> list[str]:
 
 
 def tracked_paths(root: Path) -> list[str]:
+    """Return tracked and not-ignored untracked release candidates.
+
+    Including untracked files matters during a release prepared in-place: a new
+    0600 module must be caught before the commit that makes it importable by the
+    service. Ignored runtime data and secrets remain out of scope.
+    """
     result = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True,
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=root, capture_output=True, check=True,
     )
     return [os.fsdecode(value) for value in result.stdout.split(b"\0") if value]
 

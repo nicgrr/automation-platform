@@ -1,6 +1,7 @@
+import subprocess
 from pathlib import Path
 
-from scripts.check_release_permissions import unreadable_release_files, unreadable_virtualenv_paths
+from scripts.check_release_permissions import tracked_paths, unreadable_release_files, unreadable_virtualenv_paths
 
 
 def test_owner_only_file_is_rejected(tmp_path: Path):
@@ -57,3 +58,19 @@ def test_group_readable_virtualenv_is_accepted(tmp_path: Path):
     module.chmod(0o640)
 
     assert unreadable_virtualenv_paths(tmp_path) == []
+
+
+def test_release_paths_include_untracked_files_but_not_ignored_runtime_data(tmp_path: Path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "tracked.py").write_text("pass\n")
+    subprocess.run(["git", "add", "tracked.py"], cwd=tmp_path, check=True)
+    (tmp_path / "new_module.py").write_text("pass\n")
+    (tmp_path / ".gitignore").write_text("runtime.db\n")
+    (tmp_path / "runtime.db").write_text("ignored\n")
+
+    paths = tracked_paths(tmp_path)
+
+    assert "tracked.py" in paths
+    assert "new_module.py" in paths
+    assert ".gitignore" in paths
+    assert "runtime.db" not in paths
