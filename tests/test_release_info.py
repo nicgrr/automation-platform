@@ -11,7 +11,7 @@ def _session():
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_database_revision() == "20261002_05"
+    assert expected_database_revision() == "20261002_06"
 
 
 def test_unversioned_database_is_rejected():

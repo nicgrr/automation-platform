@@ -85,8 +85,10 @@ reliability and rollback improve before business workflows or schemas are remove
   fulfilment, cancellation and refund in a controlled temporary-database
   transaction; the repeatable drill makes no Stripe/eBay calls or real charges.
 - [x] Add storefront health to the dashboard before public launch.
-- [ ] Prepare Whatnot inventory, show, sale and customer integration and rehearse a
-  show workflow before first use.
+- [x] Prepare Whatnot inventory, show, sale and customer integration and rehearse
+  the complete workflow in a temporary database before first use; real inventory
+  cannot be queued while allocated to NL Vault/eBay, and exact Seller Hub fees
+  take precedence over dated estimates.
 - [ ] Integrate retailer purchases with purchase lots and inventory.
 - [ ] Integrate customer, direct-sale and supplier records before exposing their
   currently empty screens.

@@ -178,6 +178,13 @@ class WhatnotShowItemOutcome(str, enum.Enum):
     GIVEAWAY = "giveaway"
 
 
+class WhatnotShowStatus(str, enum.Enum):
+    DRAFT = "draft"
+    LIVE = "live"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 class ScanSessionStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
@@ -1157,8 +1164,15 @@ class WhatnotShow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title: Mapped[str] = mapped_column(String(256))
     show_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    category: Mapped[str] = mapped_column(String(64), default="TCG")
+    status: Mapped[WhatnotShowStatus] = mapped_column(
+        Enum(WhatnotShowStatus), default=WhatnotShowStatus.DRAFT, index=True
+    )
     viewer_count: Mapped[int | None] = mapped_column(Integer)
     follower_count: Mapped[int | None] = mapped_column(Integer)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -1176,10 +1190,18 @@ class WhatnotShowItem(Base):
         ForeignKey("inventory_items.id", ondelete="SET NULL"), index=True
     )
     description: Mapped[str] = mapped_column(String(256))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
     starting_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     final_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    fees_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    buyer_shipping: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    buyer_tax: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    buyer_handle: Mapped[str | None] = mapped_column(String(128), index=True)
+    whatnot_order_id: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
     outcome: Mapped[WhatnotShowItemOutcome] = mapped_column(Enum(WhatnotShowItemOutcome), default=WhatnotShowItemOutcome.PENDING, index=True)
     sale_id: Mapped[str | None] = mapped_column(ForeignKey("sales.id"))
+    stock_reserved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stock_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     whatnot_show: Mapped[WhatnotShow] = relationship()
 

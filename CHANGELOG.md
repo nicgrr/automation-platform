@@ -62,6 +62,14 @@ completed refund with optional restocking only after the returned goods are back
 in hand. A temporary-database transaction drill covers checkout, signed webhook,
 packing, shipping, cancellation and refund without external calls or real money.
 
+Whatnot shows now have a draft/live/completed/cancelled lifecycle backed by real
+owned inventory rather than free text. Queueing reserves stock and rejects items
+still allocated to NL Vault/eBay; sold, unsold and giveaway outcomes respectively
+create a deduplicated Sale/customer handoff, restore stock once, or deplete it as
+a giveaway. Exact Seller Hub fees are preferred and a missing rule can no longer
+silently produce zero fees. A temporary-database rehearsal covers the full show
+without contacting Whatnot or another external service.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in
