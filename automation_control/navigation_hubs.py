@@ -21,10 +21,12 @@ from .models import (
     EbayExportBatch,
     EbayListing,
     MarketListing,
+    PurchaseLot,
     ReleaseCalendarEntry,
     ShopListing,
     ShopListingStatus,
     ShopOrder,
+    Supplier,
 )
 from .market_watch_service import allowed_country_codes
 from .nav_counts import queue_counts
@@ -184,6 +186,8 @@ def market_tools(request: Request, user: str = Depends(require_dashboard_user),
         session, MarketListing, MarketListing.active.is_(True), MarketListing.country.in_(allowed),
     )
     releases = _count(session, ReleaseCalendarEntry)
+    purchase_lots = _count(session, PurchaseLot)
+    suppliers = _count(session, Supplier)
     return _render(
         "Market tools",
         "Research current listings and purchase economics. These are comparison tools, not automated purchasing or investment advice.",
@@ -197,6 +201,8 @@ def market_tools(request: Request, user: str = Depends(require_dashboard_user),
                 _card("/buying-calculator", "Buying calculator", "Calculate fees, break-even, margin and maximum buy price."),
                 _card("/release-calendar", "Release calendar", "Track preorder dates, deadlines, releases, quantities and costs.", status=f"{releases} releases"),
                 _card("/retailer-goals", "Retailer Goals", "Track retailer loyalty milestones, eligible spend and purchase recommendations."),
+                _card("/purchase-lots", "Purchase lots", "Evaluate a deal, allocate its final cost and receive catalogue-linked stock.", status=f"{purchase_lots} lots"),
+                _card("/suppliers", "Suppliers", "Maintain catalogue-linked wholesale products and start supplier purchase lots.", status=f"{suppliers} suppliers"),
             ]),
         ],
     )

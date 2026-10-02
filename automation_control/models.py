@@ -973,9 +973,11 @@ class PurchaseLot(Base):
     status: Mapped[PurchaseLotStatus] = mapped_column(Enum(PurchaseLotStatus), default=PurchaseLotStatus.EVALUATING, index=True)
     notes: Mapped[str | None] = mapped_column(Text)
     retailer_id: Mapped[str | None] = mapped_column(ForeignKey("retailers.id"), index=True)
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("suppliers.id"), index=True)
     external_order_number: Mapped[str | None] = mapped_column(String(256), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    inventory_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PurchaseLotItem(Base):
@@ -992,6 +994,11 @@ class PurchaseLotItem(Base):
     description: Mapped[str] = mapped_column(String(256))
     market_value: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     quantity: Mapped[int] = mapped_column(Integer, default=1)
+    supplier_product_id: Mapped[str | None] = mapped_column(ForeignKey("supplier_products.id"), index=True)
+    condition: Mapped[str] = mapped_column(String(64), default="Sealed")
+    quoted_unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    allocated_total_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    allocated_unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     retailer_purchase_id: Mapped[str | None] = mapped_column(
         ForeignKey("retailer_purchases.id"), unique=True, index=True
     )
@@ -1122,7 +1129,7 @@ class Supplier(Base):
     __tablename__ = "suppliers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(256))
+    name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     contact: Mapped[str | None] = mapped_column(String(256))
     website: Mapped[str | None] = mapped_column(String(512))
     account_status: Mapped[SupplierStatus] = mapped_column(Enum(SupplierStatus), default=SupplierStatus.RESEARCHING, index=True)
@@ -1135,6 +1142,9 @@ class Supplier(Base):
 
 class SupplierProduct(Base):
     __tablename__ = "supplier_products"
+    __table_args__ = (
+        UniqueConstraint("supplier_id", "catalog_item_id", name="uq_supplier_product_catalog"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     supplier_id: Mapped[str] = mapped_column(ForeignKey("suppliers.id"), index=True)

@@ -22,12 +22,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .models import (
-    BuyThresholdConfig, PotentialPurchase, PotentialPurchaseStatus,
-    PurchaseLot, PurchaseLotItem, PurchaseLotStatus,
+    BuyThresholdConfig, CatalogItem, PotentialPurchase, PotentialPurchaseStatus,
+    PurchaseLot, PurchaseLotItem, PurchaseLotStatus, Supplier, SupplierProduct,
 )
+from .purchase_receiving import receive_purchase_lot
 from .ui import brand_header, page, pill, quick_price_widget
 
 router = APIRouter(tags=["buying"])
@@ -57,6 +59,29 @@ def _dec(value: str, default: str = "0") -> Decimal:
         return Decimal(value) if value.strip() else Decimal(default)
     except InvalidOperation:
         return Decimal(default)
+
+
+def _amount(value: str, label: str, *, positive: bool = False) -> Decimal:
+    try:
+        number = Decimal(value.strip())
+    except (InvalidOperation, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"{label} must be a valid amount") from exc
+    if not number.is_finite() or number < 0 or (positive and number <= 0):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} must be {'greater than zero' if positive else 'zero or more'}",
+        )
+    return number.quantize(Decimal("0.01"))
+
+
+def _positive_int(value: str) -> int:
+    try:
+        quantity = int(value.strip())
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="quantity must be a whole number") from exc
+    if quantity < 1:
+        raise HTTPException(status_code=400, detail="quantity must be at least one")
+    return quantity
 
 
 # --- Module 6: buying calculator ------------------------------------------
@@ -146,9 +171,14 @@ def buying_calculator(
 # --- Module 3: purchase lots -----------------------------------------------
 
 @router.get("/purchase-lots", response_class=HTMLResponse)
-def purchase_lots_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+def purchase_lots_page(
+    supplier_id: str = Query(""), user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
     lots = session.scalars(select(PurchaseLot).order_by(PurchaseLot.created_at.desc())).all()
     config = _default_thresholds(session)
+    suppliers = session.scalars(select(Supplier).order_by(Supplier.name)).all()
+    supplier_names = {supplier.id: supplier.name for supplier in suppliers}
 
     rows = []
     for lot in lots:
@@ -159,12 +189,14 @@ def purchase_lots_page(user: str = Depends(require_dashboard_user), session: Ses
         kind, label = traffic_light(acquisition_pct, config)
         rows.append(
             "<tr>"
-            f"<td><a href='/purchase-lots/{escape(lot.id)}'>{escape(lot.source)}</a>{' — ' + escape(lot.seller) if lot.seller else ''}</td>"
+            f"<td><a href='/purchase-lots/{escape(lot.id)}'>{escape(lot.source)}</a>"
+            f"{' — ' + escape(supplier_names.get(lot.supplier_id, lot.seller or '')) if lot.supplier_id or lot.seller else ''}</td>"
             f"<td>${lot.asking_price:,.2f}</td>"
             f"<td>${market_total:,.2f}</td>"
             f"<td>{f'{acquisition_pct:.0f}%' if acquisition_pct is not None else '—'}</td>"
             f"<td>{pill(label, kind)}</td>"
-            f"<td>{pill(lot.status.value.replace('_', ' '), 'neutral')}</td>"
+            f"<td>{pill(lot.status.value.replace('_', ' '), 'neutral')}"
+            f"{' ' + pill('inventory received', 'ok') if lot.inventory_received_at else ''}</td>"
             "</tr>"
         )
     table = (
@@ -173,9 +205,15 @@ def purchase_lots_page(user: str = Depends(require_dashboard_user), session: Ses
         f"<tbody>{''.join(rows) or '<tr><td colspan=6>No purchase lots yet.</td></tr>'}</tbody></table></div></div>"
     )
 
+    supplier_options = "<option value=''>Private seller / other</option>" + "".join(
+        f"<option value='{escape(supplier.id)}'{' selected' if supplier.id == supplier_id else ''}>"
+        f"{escape(supplier.name)}</option>" for supplier in suppliers
+    )
+
     form = (
         "<div class='panel'><h2>New purchase lot</h2>"
         "<form method='post' action='/purchase-lots' class='calc-form'>"
+        f"<label>Supplier<select name='supplier_id'>{supplier_options}</select></label>"
         "<label>Source<input name='source' required placeholder='Facebook Marketplace Collection'></label>"
         "<label>Seller<input name='seller'></label>"
         "<label>Asking price<input name='asking_price' type='number' step='0.01' required></label>"
@@ -194,14 +232,30 @@ def purchase_lots_page(user: str = Depends(require_dashboard_user), session: Ses
 @router.post("/purchase-lots")
 def create_purchase_lot(
     source: str = Form(...), seller: str = Form(""), asking_price: str = Form(...), target_buy_pct: str = Form("55"),
+    supplier_id: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
+    clean_source = source.strip()[:256]
+    if not clean_source:
+        raise HTTPException(status_code=400, detail="purchase source is required")
+    supplier = session.get(Supplier, supplier_id) if supplier_id else None
+    if supplier_id and supplier is None:
+        raise HTTPException(status_code=404, detail="supplier not found")
+    asking = _amount(asking_price, "asking price", positive=True)
+    target = _amount(target_buy_pct, "target buy percentage", positive=True)
+    if target > 100:
+        raise HTTPException(status_code=400, detail="target buy percentage cannot exceed 100")
     lot = PurchaseLot(
-        id=str(uuid.uuid4()), source=source, seller=seller or None,
-        asking_price=_dec(asking_price), target_buy_pct=_dec(target_buy_pct, "55"),
+        id=str(uuid.uuid4()), source=clean_source,
+        seller=supplier.name if supplier else seller.strip() or None,
+        supplier_id=supplier.id if supplier else None,
+        asking_price=asking, target_buy_pct=target,
     )
     session.add(lot)
     session.commit()
+    record_event(session, actor_type="user", actor_id=user, action="purchase_lot.create",
+                 resource_type="purchase_lot", resource_id=lot.id, outcome="success",
+                 correlation_id=lot.id, details={"supplier_id": lot.supplier_id})
     return RedirectResponse(f"/purchase-lots/{lot.id}", status_code=303)
 
 
@@ -218,10 +272,12 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
     item_rows = "".join(
         f"<tr><td>{escape(i.description)}</td><td>{i.quantity}</td><td>${i.market_value:,.2f}</td>"
         f"<td>${i.market_value * i.quantity:,.2f}</td>"
-        f"<td>{'Linked' if i.catalog_item_id else 'Not linked'}</td>"
-        f"<td>{'Linked' if i.inventory_item_id else '—'}</td></tr>"
+        f"<td>{f'${i.quoted_unit_cost:,.2f}' if i.quoted_unit_cost is not None else '—'}</td>"
+        f"<td>{f'${i.allocated_total_cost:,.2f}' if i.allocated_total_cost is not None else '—'}</td>"
+        f"<td>{'Linked' if i.catalog_item_id else pill('Missing', 'bad')}</td>"
+        f"<td>{'Received' if i.inventory_item_id else '—'}</td></tr>"
         for i in items
-    ) or "<tr><td colspan=6>No items added yet.</td></tr>"
+    ) or "<tr><td colspan=8>No items added yet.</td></tr>"
 
     basis = lot.offered_price or lot.asking_price
     acquisition_pct = (basis / market_total * 100) if market_total else None
@@ -233,23 +289,54 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
     )
     offered_price_value = str(lot.offered_price) if lot.offered_price is not None else ""
     automated = lot.retailer_id is not None
+    supplier_products = session.scalars(
+        select(SupplierProduct).where(SupplierProduct.supplier_id == lot.supplier_id)
+        .order_by(SupplierProduct.description)
+    ).all() if lot.supplier_id else []
+    supplier_product_options = "".join(
+        f"<option value='{escape(product.id)}'>{escape(product.description)} · ${product.cost:,.2f}</option>"
+        for product in supplier_products if product.catalog_item_id
+    )
+    if lot.supplier_id:
+        add_panel = (
+            "<div class='panel'><h2>Add supplier product</h2>"
+            + (
+                f"<form method='post' action='/purchase-lots/{lot_id}/items' class='calc-form'>"
+                f"<label>Supplier product<select name='supplier_product_id' required>{supplier_product_options}</select></label>"
+                "<label>Expected market value (each)<input name='market_value' type='number' step='0.01' required></label>"
+                "<label>Quantity<input name='quantity' type='number' value='1' min='1'></label>"
+                "<label>Condition<input name='condition' value='Sealed' required></label>"
+                "<button type='submit'>Add item</button></form>"
+                if supplier_product_options else
+                f"<p class='muted'>Link catalogue products on <a href='/suppliers/{escape(lot.supplier_id)}'>the supplier page</a> first.</p>"
+            ) + "</div>"
+        )
+    else:
+        add_panel = (
+            "<div class='panel'><h2>Add catalogue-linked item</h2>"
+            + quick_price_widget("market_value", "description")
+            + f"<form method='post' action='/purchase-lots/{lot_id}/items' class='calc-form'>"
+            + "<label>Description<input name='description' required></label>"
+            + "<label>Catalogue item ID<input name='catalog_item_id' required></label>"
+            + "<label>Market value (each)<input name='market_value' type='number' step='0.01' required></label>"
+            + "<label>Quantity<input name='quantity' type='number' value='1' min='1'></label>"
+            + "<label>Condition<input name='condition' value='Near Mint' required></label>"
+            + "<button type='submit'>Add item</button></form></div>"
+        )
+    status_panel = (
+        "<div class='panel'><h2>Deal status &amp; inventory receipt</h2>"
+        "<p class='muted'>Selecting Purchased receives every line into inventory and permanently locks its cost allocation.</p>"
+        f"<form method='post' action='/purchase-lots/{lot_id}/status' class='calc-form'>"
+        f"<label>Final offered/purchase price<input name='offered_price' type='number' step='0.01' value='{offered_price_value}'></label>"
+        f"<label>Status<select name='status'>{status_options}</select></label>"
+        "<button type='submit'>Update status</button></form></div>"
+    )
     lot_controls = (
         "<div class='notice'>This lot was created automatically from retailer purchases. "
         "Use Retailer Goals to record or refund its lines so inventory, fund and loyalty totals stay in sync.</div>"
-        if automated else (
-            "<div class='panel'><h2>Add item</h2>"
-            + quick_price_widget("market_value", "description")
-            + "<form method='post' action='" + f"/purchase-lots/{lot_id}/items" + "' class='calc-form' style='margin-top:14px'>"
-            + "<label>Description<input name='description' required></label>"
-            + "<label>Market value (each)<input name='market_value' type='number' step='0.01' required></label>"
-            + "<label>Quantity<input name='quantity' type='number' value='1' min='1'></label>"
-            + "<button type='submit'>Add item</button></form></div>"
-            + "<div class='panel'><h2>Deal status</h2>"
-            + f"<form method='post' action='/purchase-lots/{lot_id}/status' class='calc-form'>"
-            + f"<label>Offered price<input name='offered_price' type='number' step='0.01' value='{offered_price_value}'></label>"
-            + f"<label>Status<select name='status'>{status_options}</select></label>"
-            + "<button type='submit'>Update</button></form></div>"
-        )
+        if automated else
+        "<div class='notice ok'>Inventory was received from this lot. Cost allocation and stock links are locked.</div>"
+        if lot.inventory_received_at else add_panel + status_panel
     )
 
     body = (
@@ -261,7 +348,7 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
         + f"<div><div class='label'>Verdict</div><div class='value'>{pill(label, kind)}</div></div>"
         + "</div></div>"
         + "<div class='panel'><h2>Items</h2><div class='table-wrap'><table>"
-        + f"<thead><tr><th>Item</th><th>Qty</th><th>Market ea.</th><th>Total</th><th>Catalogue</th><th>Inventory</th></tr></thead><tbody>{item_rows}</tbody></table></div></div>"
+        + f"<thead><tr><th>Item</th><th>Qty</th><th>Market ea.</th><th>Total</th><th>Quoted ea.</th><th>Allocated</th><th>Catalogue</th><th>Inventory</th></tr></thead><tbody>{item_rows}</tbody></table></div></div>"
         + lot_controls
         + _STYLE
     )
@@ -270,7 +357,9 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
 
 @router.post("/purchase-lots/{lot_id}/items")
 def add_purchase_lot_item(
-    lot_id: str, description: str = Form(...), market_value: str = Form(...), quantity: str = Form("1"),
+    lot_id: str, description: str = Form(""), catalog_item_id: str = Form(""),
+    supplier_product_id: str = Form(""), market_value: str = Form(...),
+    quantity: str = Form("1"), condition: str = Form("Sealed"),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     lot = session.get(PurchaseLot, lot_id)
@@ -278,11 +367,33 @@ def add_purchase_lot_item(
         raise HTTPException(status_code=404, detail="purchase lot not found")
     if lot.retailer_id is not None:
         raise HTTPException(status_code=409, detail="retailer purchase lots are managed from Retailer Goals")
-    session.add(PurchaseLotItem(
-        id=str(uuid.uuid4()), purchase_lot_id=lot_id, description=description,
-        market_value=_dec(market_value), quantity=int(quantity or 1),
-    ))
+    if lot.inventory_received_at is not None or lot.status == PurchaseLotStatus.PURCHASED:
+        raise HTTPException(status_code=409, detail="inventory has already been received from this lot")
+    supplier_product = session.get(SupplierProduct, supplier_product_id) if supplier_product_id else None
+    if lot.supplier_id:
+        if supplier_product is None or supplier_product.supplier_id != lot.supplier_id:
+            raise HTTPException(status_code=400, detail="choose a product linked to this supplier")
+        catalog_item_id = supplier_product.catalog_item_id or ""
+        description = supplier_product.description
+    catalog = session.get(CatalogItem, catalog_item_id) if catalog_item_id else None
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="catalogue item not found")
+    clean_condition = condition.strip()[:64]
+    if not clean_condition:
+        raise HTTPException(status_code=400, detail="condition is required")
+    item = PurchaseLotItem(
+        id=str(uuid.uuid4()), purchase_lot_id=lot_id,
+        supplier_product_id=supplier_product.id if supplier_product else None,
+        catalog_item_id=catalog.id, description=(description.strip() or catalog.name)[:256],
+        market_value=_amount(market_value, "market value", positive=True),
+        quoted_unit_cost=supplier_product.cost if supplier_product else None,
+        quantity=_positive_int(quantity), condition=clean_condition,
+    )
+    session.add(item)
     session.commit()
+    record_event(session, actor_type="user", actor_id=user, action="purchase_lot.item.add",
+                 resource_type="purchase_lot_item", resource_id=item.id, outcome="success",
+                 correlation_id=lot.id, details={"catalog_item_id": catalog.id})
     return RedirectResponse(f"/purchase-lots/{lot_id}", status_code=303)
 
 
@@ -296,12 +407,28 @@ def update_purchase_lot_status(
         raise HTTPException(status_code=404, detail="purchase lot not found")
     if lot.retailer_id is not None:
         raise HTTPException(status_code=409, detail="retailer purchase lots are managed from Retailer Goals")
-    lot.status = PurchaseLotStatus(status)
+    if lot.inventory_received_at is not None:
+        raise HTTPException(status_code=409, detail="received purchase lots are locked")
+    try:
+        selected = PurchaseLotStatus(status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid purchase-lot status") from exc
     if offered_price.strip():
-        lot.offered_price = _dec(offered_price)
-    if lot.status == PurchaseLotStatus.PURCHASED and lot.purchase_price is None:
+        lot.offered_price = _amount(offered_price, "offered price", positive=True)
+    if selected == PurchaseLotStatus.PURCHASED:
         lot.purchase_price = lot.offered_price or lot.asking_price
-    session.commit()
+        try:
+            received = receive_purchase_lot(session, lot)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        session.commit()
+        record_event(session, actor_type="user", actor_id=user, action="purchase_lot.receive",
+                     resource_type="purchase_lot", resource_id=lot.id, outcome="success",
+                     correlation_id=lot.id, details={"inventory_rows": len(received)})
+    else:
+        lot.status = selected
+        session.commit()
     return RedirectResponse(f"/purchase-lots/{lot_id}", status_code=303)
 
 

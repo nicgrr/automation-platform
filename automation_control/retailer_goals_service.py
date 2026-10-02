@@ -514,6 +514,7 @@ def _purchase_lot_for_retailer_purchase(
             purchase_price=landed_total, status=PurchaseLotStatus.PURCHASED,
             notes=note, retailer_id=retailer.id, external_order_number=order_number,
             purchased_at=datetime.combine(purchase.purchase_date, datetime.min.time(), tzinfo=UTC),
+            inventory_received_at=datetime.combine(purchase.purchase_date, datetime.min.time(), tzinfo=UTC),
         )
         session.add(lot)
         session.flush()
@@ -528,7 +529,10 @@ def _purchase_lot_for_retailer_purchase(
         catalog_item_id=product.catalog_item_id, description=product.name,
         market_value=purchase.market_unit_price or purchase.purchase_unit_price,
         quantity=purchase.quantity, retailer_purchase_id=purchase.id,
-        inventory_item_id=inventory.id,
+        inventory_item_id=inventory.id, condition="Sealed",
+        quoted_unit_cost=purchase.purchase_unit_price,
+        allocated_total_cost=landed_total,
+        allocated_unit_cost=money(landed_total / purchase.quantity),
     ))
     session.flush()
     return lot

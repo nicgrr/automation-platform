@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
-from automation_control.models import GoalKind, SupplierStatus
+from automation_control.models import CatalogItem, CatalogItemType, GoalKind, SupplierStatus
 
 
 @pytest.fixture
@@ -36,6 +36,19 @@ def test_add_and_list_a_supplier(client):
     listing = client.get("/suppliers")
     assert "Big Wholesale Co" in listing.text
     assert "15.00%" in listing.text
+
+
+def test_supplier_name_is_case_insensitively_unique(client):
+    first = client.post("/suppliers", data={
+        "name": "Unique Wholesale", "account_status": "active",
+        "contact": "", "website": "", "categories": "", "wholesale_discount_pct": "",
+    }, follow_redirects=False)
+    duplicate = client.post("/suppliers", data={
+        "name": " unique wholesale ", "account_status": "active",
+        "contact": "", "website": "", "categories": "", "wholesale_discount_pct": "",
+    }, follow_redirects=False)
+    assert first.status_code == 303
+    assert duplicate.status_code == 409
 
 
 def test_a_goal_marks_itself_achieved_once_progress_reaches_target(client):
@@ -205,9 +218,15 @@ def test_add_a_supplier_product_and_see_it_on_the_detail_page(client, session):
     from automation_control.models import SupplierProduct
 
     supplier_id = _create_supplier(client)
+    catalog = CatalogItem(
+        id="supplier-catalog-1", name="Sonny Angel Mini Figures - Fruits Series",
+        item_type=CatalogItemType.COLLECTIBLE,
+    )
+    session.add(catalog)
+    session.commit()
     create = client.post(
         f"/suppliers/{supplier_id}/products",
-        data={"description": "Sonny Angel Mini Figures - Fruits Series", "cost": "12.50", "min_order_qty": "24"},
+        data={"catalog_item_id": catalog.id, "cost": "12.50", "min_order_qty": "24"},
         follow_redirects=False,
     )
     assert create.status_code == 303
@@ -225,5 +244,14 @@ def test_add_a_supplier_product_and_see_it_on_the_detail_page(client, session):
 
 
 def test_add_supplier_product_404_for_unknown_supplier(client):
-    resp = client.post("/suppliers/does-not-exist/products", data={"description": "x", "cost": "1"})
+    resp = client.post("/suppliers/does-not-exist/products", data={"catalog_item_id": "x", "cost": "1"})
     assert resp.status_code == 404
+
+
+def test_supplier_product_requires_real_catalogue_item(client):
+    supplier_id = _create_supplier(client)
+    response = client.post(
+        f"/suppliers/{supplier_id}/products",
+        data={"catalog_item_id": "missing", "cost": "12", "min_order_qty": "1"},
+    )
+    assert response.status_code == 404

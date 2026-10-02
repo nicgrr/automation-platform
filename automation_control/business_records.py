@@ -10,14 +10,19 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
 
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
-from .models import Goal, GoalKind, ReleaseCalendarEntry, Supplier, SupplierProduct, SupplierStatus
+from .models import (
+    CatalogItem, Goal, GoalKind, PurchaseLot, ReleaseCalendarEntry,
+    Supplier, SupplierProduct, SupplierStatus,
+)
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["business-records"])
@@ -28,6 +33,19 @@ def _dec(value: str, default: str = "0") -> Decimal:
         return Decimal(value) if value.strip() else Decimal(default)
     except InvalidOperation:
         return Decimal(default)
+
+
+def _amount(value: str, label: str, *, positive: bool = False) -> Decimal:
+    try:
+        number = Decimal(value.strip())
+    except (InvalidOperation, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"{label} must be a valid amount") from exc
+    if not number.is_finite() or number < 0 or (positive and number <= 0):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} must be {'greater than zero' if positive else 'zero or more'}",
+        )
+    return number.quantize(Decimal("0.01"))
 
 
 # --- Module 10: suppliers ----------------------------------------------------
@@ -74,17 +92,40 @@ def create_supplier(
     account_status: str = Form(SupplierStatus.RESEARCHING.value), wholesale_discount_pct: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
-    session.add(Supplier(
-        id=str(uuid.uuid4()), name=name, contact=contact or None, website=website or None, categories=categories or None,
-        account_status=SupplierStatus(account_status),
-        wholesale_discount_pct=_dec(wholesale_discount_pct) if wholesale_discount_pct.strip() else None,
-    ))
-    session.commit()
+    clean_name = name.strip()[:256]
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="supplier name is required")
+    if session.scalar(select(Supplier.id).where(func.lower(Supplier.name) == clean_name.lower())):
+        raise HTTPException(status_code=409, detail="that supplier already exists")
+    try:
+        status = SupplierStatus(account_status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid supplier status") from exc
+    discount = _amount(wholesale_discount_pct, "wholesale discount") if wholesale_discount_pct.strip() else None
+    if discount is not None and discount > 100:
+        raise HTTPException(status_code=400, detail="wholesale discount cannot exceed 100%")
+    supplier = Supplier(
+        id=str(uuid.uuid4()), name=clean_name, contact=contact.strip() or None,
+        website=website.strip() or None, categories=categories.strip() or None,
+        account_status=status, wholesale_discount_pct=discount,
+    )
+    session.add(supplier)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="that supplier already exists") from exc
+    record_event(session, actor_type="user", actor_id=user, action="supplier.create",
+                 resource_type="supplier", resource_id=supplier.id, outcome="success",
+                 correlation_id=supplier.id, details={"status": status.value})
     return RedirectResponse("/suppliers", status_code=303)
 
 
 @router.get("/suppliers/{supplier_id}", response_class=HTMLResponse)
-def supplier_detail_page(supplier_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
+def supplier_detail_page(
+    supplier_id: str, q: str = Query(""),
+    user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+) -> HTMLResponse:
     supplier = session.get(Supplier, supplier_id)
     if supplier is None:
         raise HTTPException(status_code=404, detail="supplier not found")
@@ -95,15 +136,28 @@ def supplier_detail_page(supplier_id: str, user: str = Depends(require_dashboard
         f"<td>{escape(p.description)}</td>"
         f"<td>${p.cost:,.2f}</td>"
         f"<td>{p.min_order_qty if p.min_order_qty is not None else '—'}</td>"
+        f"<td>{'Linked' if p.catalog_item_id else pill('Missing', 'bad')}</td>"
         "</tr>"
         for p in products
-    ) or "<tr><td colspan=3>No products on file for this supplier yet.</td></tr>"
-    table = f"<div class='panel'><h2>What they sell</h2><div class='table-wrap'><table><thead><tr><th>Product</th><th>Cost</th><th>Min order qty</th></tr></thead><tbody>{rows}</tbody></table></div></div>"
+    ) or "<tr><td colspan=4>No products on file for this supplier yet.</td></tr>"
+    table = f"<div class='panel'><h2>What they sell</h2><div class='table-wrap'><table><thead><tr><th>Product</th><th>Cost</th><th>Min order qty</th><th>Catalogue</th></tr></thead><tbody>{rows}</tbody></table></div></div>"
+
+    catalog_query = q.strip()
+    catalog_statement = select(CatalogItem).order_by(CatalogItem.name).limit(100)
+    if catalog_query:
+        catalog_statement = catalog_statement.where(CatalogItem.name.ilike(f"%{catalog_query}%"))
+    catalog_options = "".join(
+        f"<option value='{escape(item.id)}'>{escape(item.name)} · {escape(item.item_type.value)}</option>"
+        for item in session.scalars(catalog_statement)
+    )
 
     form = (
         "<div class='panel'><h2>Add a product</h2>"
+        f"<form method='get' action='/suppliers/{escape(supplier_id)}' class='calc-form'>"
+        f"<label>Find catalogue item<input name='q' value='{escape(q)}' placeholder='Search exact product name'></label>"
+        "<button type='submit'>Search catalogue</button></form>"
         f"<form method='post' action='/suppliers/{escape(supplier_id)}/products' class='calc-form'>"
-        "<label>Description<input name='description' required placeholder='Sonny Angel Mini Figures - Fruits Series'></label>"
+        f"<label>Canonical product<select name='catalog_item_id' required>{catalog_options}</select></label>"
         "<label>Cost<input name='cost' type='number' step='0.01' required></label>"
         "<label>Min order qty<input name='min_order_qty' type='number' step='1'></label>"
         "<button type='submit'>Add</button></form></div>"
@@ -120,23 +174,43 @@ def supplier_detail_page(supplier_id: str, user: str = Depends(require_dashboard
     )
     body = (
         brand_header(escape(supplier.name)) + "<p class='subtitle'><a href='/suppliers'>&larr; All suppliers</a></p>"
-        + details + table + form + _STYLE
+        + details
+        + f"<p><a class='btn' href='/purchase-lots?supplier_id={escape(supplier.id)}'>Create a purchase lot from this supplier</a></p>"
+        + table + form + _STYLE
     )
     return HTMLResponse(page(f"EzBay — {supplier.name}", body))
 
 
 @router.post("/suppliers/{supplier_id}/products")
 def create_supplier_product(
-    supplier_id: str, description: str = Form(...), cost: str = Form("0"), min_order_qty: str = Form(""),
+    supplier_id: str, catalog_item_id: str = Form(...), cost: str = Form("0"), min_order_qty: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     if session.get(Supplier, supplier_id) is None:
         raise HTTPException(status_code=404, detail="supplier not found")
-    session.add(SupplierProduct(
-        id=str(uuid.uuid4()), supplier_id=supplier_id, description=description,
-        cost=_dec(cost), min_order_qty=int(min_order_qty) if min_order_qty.strip() else None,
-    ))
-    session.commit()
+    catalog = session.get(CatalogItem, catalog_item_id)
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="catalogue item not found")
+    try:
+        minimum = int(min_order_qty) if min_order_qty.strip() else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="minimum order quantity must be a whole number") from exc
+    if minimum is not None and minimum < 1:
+        raise HTTPException(status_code=400, detail="minimum order quantity must be at least one")
+    product = SupplierProduct(
+        id=str(uuid.uuid4()), supplier_id=supplier_id, catalog_item_id=catalog.id,
+        description=catalog.name, cost=_amount(cost, "supplier cost", positive=True),
+        min_order_qty=minimum,
+    )
+    session.add(product)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="that catalogue item is already linked to this supplier") from exc
+    record_event(session, actor_type="user", actor_id=user, action="supplier.product.link",
+                 resource_type="supplier_product", resource_id=product.id, outcome="success",
+                 correlation_id=supplier_id, details={"catalog_item_id": catalog.id})
     return RedirectResponse(f"/suppliers/{supplier_id}", status_code=303)
 
 

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from automation_control.api import app
@@ -10,8 +10,9 @@ from automation_control.auth import require_dashboard_user
 from automation_control.buying import traffic_light
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    BuyThresholdConfig, PotentialPurchase, PotentialPurchaseStatus, PurchaseLot,
-    PurchaseLotStatus, Retailer,
+    BuyThresholdConfig, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus,
+    PotentialPurchase, PotentialPurchaseStatus, PurchaseLot, PurchaseLotItem,
+    PurchaseLotStatus, Retailer, Supplier, SupplierProduct, SupplierStatus,
 )
 
 
@@ -59,7 +60,11 @@ def test_calculator_blank_form_shows_no_result(client):
     assert "Verdict" not in response.text
 
 
-def test_purchase_lot_lifecycle(client):
+def test_purchase_lot_lifecycle(client, session):
+    first_catalog = CatalogItem(id="lot-card-1", name="Kaido OP17", item_type=CatalogItemType.TCG_CARD)
+    second_catalog = CatalogItem(id="lot-card-2", name="Mihawk", item_type=CatalogItemType.TCG_CARD)
+    session.add_all([first_catalog, second_catalog])
+    session.commit()
     create = client.post(
         "/purchase-lots",
         data={"source": "FB Marketplace Collection", "seller": "Jane", "asking_price": "1000", "target_buy_pct": "55"},
@@ -68,8 +73,14 @@ def test_purchase_lot_lifecycle(client):
     assert create.status_code == 303
     lot_url = create.headers["location"]
 
-    client.post(f"{lot_url}/items", data={"description": "Kaido OP17", "market_value": "400", "quantity": "1"})
-    client.post(f"{lot_url}/items", data={"description": "Mihawk", "market_value": "100", "quantity": "1"})
+    client.post(f"{lot_url}/items", data={
+        "description": "Kaido OP17", "catalog_item_id": first_catalog.id,
+        "market_value": "400", "quantity": "1", "condition": "Near Mint",
+    })
+    client.post(f"{lot_url}/items", data={
+        "description": "Mihawk", "catalog_item_id": second_catalog.id,
+        "market_value": "100", "quantity": "1", "condition": "Near Mint",
+    })
 
     detail = client.get(lot_url)
     assert detail.status_code == 200
@@ -78,6 +89,10 @@ def test_purchase_lot_lifecycle(client):
 
     updated = client.post(f"{lot_url}/status", data={"status": PurchaseLotStatus.PURCHASED.value, "offered_price": "300"}, follow_redirects=False)
     assert updated.status_code == 303
+    inventory = session.scalars(select(InventoryItem).order_by(InventoryItem.catalog_item_id)).all()
+    assert len(inventory) == 2
+    assert sum(item.quantity for item in inventory) == 2
+    assert sum(line.allocated_total_cost for line in session.scalars(select(PurchaseLotItem))) == Decimal("300")
 
 
 def test_potential_stock_compatibility_route_points_to_market_watch(client, session):
@@ -126,6 +141,21 @@ def test_purchase_lot_detail_has_quick_price_widget(client):
     assert "data-price-field='market_value'" in detail.text
 
 
+def test_empty_purchase_lot_cannot_be_received(client):
+    create = client.post(
+        "/purchase-lots",
+        data={"source": "Empty lot", "seller": "Jane", "asking_price": "100", "target_buy_pct": "55"},
+        follow_redirects=False,
+    )
+    response = client.post(
+        f"{create.headers['location']}/status",
+        data={"status": "purchased", "offered_price": "80"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 409
+    assert "Add at least one" in response.text
+
+
 def test_automated_retailer_lot_is_read_only_on_purchase_lot_routes(client, session):
     retailer = Retailer(name="Test retailer")
     session.add(retailer)
@@ -155,3 +185,69 @@ def test_automated_retailer_lot_is_read_only_on_purchase_lot_routes(client, sess
     assert "Identify &amp; price" not in detail.text
     assert add.status_code == 409
     assert status.status_code == 409
+
+
+def test_supplier_purchase_lot_allocates_cost_and_receives_inventory_once(client, session):
+    supplier = Supplier(name="Integrated Supplier", account_status=SupplierStatus.ACTIVE)
+    first_catalog = CatalogItem(
+        id="supplier-item-1", name="Supplier Item One", item_type=CatalogItemType.SEALED_PRODUCT,
+    )
+    second_catalog = CatalogItem(
+        id="supplier-item-2", name="Supplier Item Two", item_type=CatalogItemType.SEALED_PRODUCT,
+    )
+    session.add_all([supplier, first_catalog, second_catalog])
+    session.flush()
+    first_product = SupplierProduct(
+        supplier_id=supplier.id, catalog_item_id=first_catalog.id,
+        description=first_catalog.name, cost=Decimal("10"), min_order_qty=1,
+    )
+    second_product = SupplierProduct(
+        supplier_id=supplier.id, catalog_item_id=second_catalog.id,
+        description=second_catalog.name, cost=Decimal("20"), min_order_qty=1,
+    )
+    session.add_all([first_product, second_product])
+    session.commit()
+    create = client.post("/purchase-lots", data={
+        "supplier_id": supplier.id, "source": "Wholesale order", "seller": "",
+        "asking_price": "100", "target_buy_pct": "55",
+    }, follow_redirects=False)
+    lot_url = create.headers["location"]
+    assert client.post(f"{lot_url}/items", data={
+        "supplier_product_id": first_product.id, "market_value": "30",
+        "quantity": "2", "condition": "Sealed",
+    }, follow_redirects=False).status_code == 303
+    assert client.post(f"{lot_url}/items", data={
+        "supplier_product_id": second_product.id, "market_value": "40",
+        "quantity": "1", "condition": "Sealed",
+    }, follow_redirects=False).status_code == 303
+
+    received = client.post(
+        f"{lot_url}/status", data={"status": "purchased", "offered_price": "90"},
+        follow_redirects=False,
+    )
+    repeated = client.post(
+        f"{lot_url}/status", data={"status": "purchased", "offered_price": "90"},
+        follow_redirects=False,
+    )
+
+    assert received.status_code == 303
+    assert repeated.status_code == 409
+    lot = session.get(PurchaseLot, lot_url.rsplit("/", 1)[-1])
+    lines = session.scalars(
+        select(PurchaseLotItem).where(PurchaseLotItem.purchase_lot_id == lot.id)
+        .order_by(PurchaseLotItem.description)
+    ).all()
+    inventory = session.scalars(select(InventoryItem).where(
+        InventoryItem.catalog_item_id.in_([first_catalog.id, second_catalog.id])
+    ).order_by(InventoryItem.catalog_item_id)).all()
+    assert lot.status == PurchaseLotStatus.PURCHASED
+    assert lot.inventory_received_at is not None
+    assert [line.allocated_total_cost for line in lines] == [Decimal("45"), Decimal("45")]
+    assert [line.allocated_unit_cost for line in lines] == [Decimal("22.50"), Decimal("45")]
+    assert [(item.quantity, item.allocated_cost_basis, item.status) for item in inventory] == [
+        (2, Decimal("22.50"), InventoryStatus.AVAILABLE),
+        (1, Decimal("45"), InventoryStatus.AVAILABLE),
+    ]
+    assert session.query(InventoryItem).filter(
+        InventoryItem.catalog_item_id.in_([first_catalog.id, second_catalog.id])
+    ).count() == 2

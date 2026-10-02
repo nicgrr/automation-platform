@@ -88,6 +88,14 @@ dashboard, analytics or customer lifetime value. Sales and customer records are
 now available through the command palette, with a temporary-database rehearsal
 covering the full flow without external calls.
 
+Suppliers and purchase lots now form a real stock-intake workflow rather than
+standalone reference forms. Supplier products must link to canonical catalogue
+items; supplier lots snapshot quoted costs, allocate the exact final purchase
+price proportionally across their lines, and receive inventory once with both
+line-total and per-unit cost evidence. Retailer-generated lots remain protected
+from manual edits. Suppliers and Purchase Lots are now available under Market
+Tools after a no-external-call transaction rehearsal passed.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in
