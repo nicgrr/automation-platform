@@ -14,7 +14,7 @@ from automation_control.audit import redact
 from automation_control.auth import create_session, hash_password, require_dashboard_user, verify_password, verify_session
 from automation_control.config import Settings
 from automation_control.database import get_session
-from automation_control.ebay_oauth import AUTH_URL, AUTH_URL_PRODUCTION, FULFILLMENT_READ_SCOPE, IDENTITY_READ_SCOPE, INVENTORY_WRITE_SCOPE, MARKET_SCOPE, SELLER_SCOPE, EbayOAuthClient, OAuthError, TokenCipher, authorization_url, configured_for_writes, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_runame, valid_user_access_token
+from automation_control.ebay_oauth import ACCOUNT_SCOPE, AUTH_URL, AUTH_URL_PRODUCTION, FULFILLMENT_READ_SCOPE, IDENTITY_READ_SCOPE, INVENTORY_WRITE_SCOPE, MARKET_SCOPE, SELLER_SCOPE, EbayOAuthClient, OAuthError, TokenCipher, authorization_url, configured_for_writes, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_runame, valid_user_access_token
 
 
 def test_oauth_state_validation_is_single_use_and_rejects_missing(session):
@@ -81,7 +81,10 @@ def test_sandbox_authorization_request_uses_runame_and_seller_scope():
         "client_id": ["example-SBX-client"],
         "redirect_uri": ["example-SBX-runame"],
         "response_type": ["code"],
-        "scope": [f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} {IDENTITY_READ_SCOPE}"],
+        "scope": [
+            f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} "
+            f"{IDENTITY_READ_SCOPE} {ACCOUNT_SCOPE}"
+        ],
         "state": ["opaque-state"],
     }
 
@@ -173,6 +176,15 @@ def test_configured_for_writes_requires_business_policies_on_top_of_oauth():
                     ebay_return_policy_id="r", ebay_merchant_location_key="loc-1")
     assert configured_for_writes(full)
 
+    placeholders = Settings(
+        **base,
+        ebay_payment_policy_id="unused-order-polling-only",
+        ebay_fulfillment_policy_id="unused-order-polling-only",
+        ebay_return_policy_id="unused-order-polling-only",
+        ebay_merchant_location_key="unused-order-polling-only",
+    )
+    assert not configured_for_writes(placeholders)
+
 
 def test_store_user_tokens_records_the_given_environment(session):
     from automation_control.models import EbayCredential
@@ -195,14 +207,34 @@ async def test_expired_token_is_refreshed_and_stored(session):
     class FakeOAuth:
         called = False
         environment = "sandbox"
-        async def refresh(self, refresh_token):
+        async def refresh(self, refresh_token, *, scope=None):
             self.called = True
             assert refresh_token == "refresh"
+            assert scope == SELLER_SCOPE
             return {"access_token": "new", "expires_in": 7200, "scope": SELLER_SCOPE}
 
     oauth = FakeOAuth()
     assert await valid_user_access_token(session, cipher, oauth) == "new"
     assert oauth.called
+
+
+async def test_refresh_preserves_an_older_tokens_original_scope_set(session):
+    cipher = TokenCipher(Fernet.generate_key().decode())
+    old_scope = f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE}"
+    store_user_tokens(session, cipher, {
+        "access_token": "old", "refresh_token": "refresh", "expires_in": -1,
+        "scope": old_scope,
+    })
+
+    class FakeOAuth:
+        environment = "sandbox"
+
+        async def refresh(self, refresh_token, *, scope=None):
+            assert refresh_token == "refresh"
+            assert scope == old_scope
+            return {"access_token": "new", "expires_in": 7200, "scope": old_scope}
+
+    assert await valid_user_access_token(session, cipher, FakeOAuth()) == "new"
 
 
 async def test_unexpired_token_does_not_refresh(session):
@@ -245,6 +277,7 @@ def test_seller_scope_includes_inventory_write_and_fulfillment_read():
     assert "sell.inventory.readonly" not in SELLER_SCOPE  # superseded, not additive
     assert "sell.fulfillment.readonly" in SELLER_SCOPE
     assert "commerce.identity.readonly" in SELLER_SCOPE
+    assert ACCOUNT_SCOPE in SELLER_SCOPE
 
 
 async def test_a_refresh_keeps_the_environment_it_was_connected_to(session):
@@ -263,7 +296,8 @@ async def test_a_refresh_keeps_the_environment_it_was_connected_to(session):
 
     class ProdOAuth:
         environment = "production"
-        async def refresh(self, refresh_token):
+        async def refresh(self, refresh_token, *, scope=None):
+            assert scope
             return {"access_token": "new", "expires_in": 7200, "scope": SELLER_SCOPE}
 
     assert await valid_user_access_token(session, cipher, ProdOAuth()) == "new"

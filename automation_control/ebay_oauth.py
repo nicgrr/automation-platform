@@ -29,12 +29,16 @@ from .models import EbayCredential, OAuthState
 INVENTORY_WRITE_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory"
 FULFILLMENT_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
 IDENTITY_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly"
+ACCOUNT_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.account"
 MARKET_SCOPE = "https://api.ebay.com/oauth/api_scope"
 # The base scope has to be requested alongside the specific ones -- a
 # real first attempt at this exact flow (2026-09-13) got "invalid_request"
 # from auth.ebay.com without it, even though every specific scope below
 # was already granted to the app in the Developer Portal.
-SELLER_SCOPE = f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} {IDENTITY_READ_SCOPE}"
+SELLER_SCOPE = (
+    f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} "
+    f"{IDENTITY_READ_SCOPE} {ACCOUNT_SCOPE}"
+)
 AUTH_URL = "https://auth.sandbox.ebay.com/oauth2/authorize"
 TOKEN_URL = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
 AUTH_URL_PRODUCTION = "https://auth.ebay.com/oauth2/authorize"
@@ -154,8 +158,8 @@ class EbayOAuthClient:
             raise OAuthError(f"eBay token exchange failed ({response.status_code})")
         return response.json()
 
-    async def refresh(self, refresh_token: str) -> dict:
-        response = await self.client.post(self.token_url, data={"grant_type": "refresh_token", "refresh_token": refresh_token, "scope": SELLER_SCOPE}, headers={"Authorization": self._basic(), "Content-Type": "application/x-www-form-urlencoded"})
+    async def refresh(self, refresh_token: str, *, scope: str | None = None) -> dict:
+        response = await self.client.post(self.token_url, data={"grant_type": "refresh_token", "refresh_token": refresh_token, "scope": scope or SELLER_SCOPE}, headers={"Authorization": self._basic(), "Content-Type": "application/x-www-form-urlencoded"})
         if response.status_code >= 400:
             raise OAuthError(f"eBay token refresh failed ({response.status_code})")
         return response.json()
@@ -201,7 +205,14 @@ async def valid_user_access_token(session: Session, cipher: TokenCipher, oauth: 
     expiry = record.access_token_expires_at.replace(tzinfo=UTC) if record.access_token_expires_at.tzinfo is None else record.access_token_expires_at
     if expiry > now + timedelta(seconds=60):
         return cipher.decrypt(record.encrypted_access_token)
-    payload = await oauth.refresh(cipher.decrypt(record.encrypted_refresh_token))
+    # A refresh token may request only its originally consented scopes or a
+    # subset. Passing today's broader SELLER_SCOPE to an older token makes
+    # refresh fail until the owner reconnects. Preserve the row's own scope
+    # set; a fresh authorization-code flow stores the newly granted set.
+    payload = await oauth.refresh(
+        cipher.decrypt(record.encrypted_refresh_token),
+        scope=record.scopes or SELLER_SCOPE,
+    )
     payload.setdefault("refresh_token", cipher.decrypt(record.encrypted_refresh_token))
     # Carry the record's own environment through. Without it this fell back
     # to the "sandbox" default and every refresh silently downgraded a
@@ -230,6 +241,14 @@ def configured(settings: Settings) -> bool:
     )
 
 
+def valid_write_prerequisite(value: str | None) -> bool:
+    """A real Seller Hub identifier, not a truthy deployment placeholder."""
+    if not value:
+        return False
+    clean = value.strip()
+    return bool(clean) and not clean.startswith("REPLACE_WITH_") and clean != "unused-order-polling-only"
+
+
 def configured_for_writes(settings: Settings) -> bool:
     """Whether the app can actually publish a listing, not just read prices.
     On top of the base OAuth setup, every createOffer call requires the
@@ -240,10 +259,10 @@ def configured_for_writes(settings: Settings) -> bool:
     each is completely different."""
     return bool(
         configured(settings)
-        and settings.ebay_payment_policy_id
-        and settings.ebay_fulfillment_policy_id
-        and settings.ebay_return_policy_id
-        and settings.ebay_merchant_location_key
+        and valid_write_prerequisite(settings.ebay_payment_policy_id)
+        and valid_write_prerequisite(settings.ebay_fulfillment_policy_id)
+        and valid_write_prerequisite(settings.ebay_return_policy_id)
+        and valid_write_prerequisite(settings.ebay_merchant_location_key)
     )
 
 

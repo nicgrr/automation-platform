@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from .auth import require_dashboard_user
 from .config import Settings
 from .database import get_session
-from .ebay_oauth import configured, configured_for_writes
+from .ebay_oauth import configured, configured_for_writes, valid_write_prerequisite
 from .models import EbayCredential
 from .release_info import application_revision, database_revision, expected_database_revision
 from .storefront_readiness import storefront_readiness_issues
@@ -115,7 +115,7 @@ def _ebay_rows(settings: Settings, session: Session) -> tuple[list[Row], str | N
             ("postage policy", settings.ebay_fulfillment_policy_id),
             ("returns policy", settings.ebay_return_policy_id),
             ("merchant location", settings.ebay_merchant_location_key),
-        ) if not value]
+        ) if not valid_write_prerequisite(value)]
         rows.append(Row("Listing prerequisites", BAD, "missing " + ", ".join(missing),
                         "eBay refuses to create an offer without these, so publishing stays blocked"))
     return rows, action

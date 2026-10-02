@@ -129,6 +129,15 @@ documented-looking empty offer list used by the mocks. The write adapter now map
 only that exact response to an empty result so new SKUs proceed to `createOffer`;
 all other 404 responses still fail closed.
 
+The first confirmed canary attempt stopped before offer creation because all four
+configured Seller Hub prerequisites were the explicit
+`unused-order-polling-only` placeholder. Write readiness now rejects placeholder
+values instead of checking only that they are non-empty. The OAuth consent flow
+also requests eBay's `sell.account` scope so, after the owner reconnects, existing
+business policies can be read and verified; refreshes preserve an older token's
+original scopes until that reconnection occurs. The staged inventory SKU remains
+private with zero offers and the failed local link is resumable.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in
