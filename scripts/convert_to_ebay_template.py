@@ -356,15 +356,15 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     parent (Trait=Value1;Value2;...) and the one specific value that row
     is on each child (Trait=Value).
 
-    The trait is "MPN" and the value is "001 - Pineco (N)" (padded number,
-    name, then an abbreviated printing tag) -- matching a real, live
-    competitor listing the user pointed to directly on 2026-09-21
-    (blitzkrieg1994's Vivid Voltage "Complete Your Master Set" listing,
-    values like "001 - Weedle (N)" / "001 - Weddle (RH)"). This replaced an
-    earlier "padded/total Name (Reverse Holo)" format inspected from a
-    different competitor ("Force Collectables") on 2026-09-14 -- dropping
-    the "/total" denominator and spelling out the printing in full both
-    made the value longer than this newer, live reference actually uses.
+    The trait is "MPN" and the value is buyer-facing card detail, for
+    example "001/162 - Pineco - Normal - Common": number/set total, card
+    name, printing, then rarity.  A promo or other set with no meaningful
+    printed total simply starts "8 - Golduck".  Earlier exports copied a
+    competitor's terse "001 - Weedle (N)" convention, but the abbreviations
+    and missing denominator/rarity made the only label eBay shows in its
+    mobile variation picker needlessly cryptic.  Prefer the complete values
+    EzBay already knows; only the card-name portion is shortened when the
+    category's hard 65-character limit requires it.
     "Card #" as the trait name was rejected before either reference was
     found ("Card Number is not allowed as a variation specific" -- Card
     Number is a required item specific in this category and can't double
@@ -420,13 +420,6 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
     set has none, same as before this whole investigation.
     """
     VARIATION_TRAIT = "MPN"
-    # Matches the reference listing's own tags exactly (N/RH); a printing
-    # this app tracks that reference never shows gets a short tag in the
-    # same style rather than the full word, for consistency in the picker.
-    VARIANT_TAGS = {
-        "Normal": "N", "Reverse Holo": "RH", "Holo": "H",
-        "Pokeball Pattern": "PB", "Masterball Pattern": "MB",
-    }
     values: list[str] = []
     seen: set[tuple[str, str]] = set()
     child_rows = []
@@ -448,14 +441,23 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
         seen.add(key)
         set_total = (card.get("set_total") or "").strip()
         padded = number.zfill(len(set_total)) if set_total else number
-        # "001 - Pineco (N)" -- bare "148" told a buyer nothing, and
-        # without the printing a buyer can't tell a Normal and a Reverse
-        # Holo of the same card apart in the picker. ; and | are eBay's
-        # own separators in this field, so real card text can't collide
-        # with them.
-        suffix = f" ({VARIANT_TAGS.get(variant, variant)})" if variant else ""
-        base = f"{padded} - {child.get('C:Card Name', '')}".strip()
+        number_detail = f"{padded}/{set_total}" if set_total else padded
+        # Spell out the details a buyer needs to distinguish the physical
+        # card.  The set is already the listing title, language is already
+        # split into a separate parent, and condition is common to every
+        # variation, so repeating those here would only consume eBay's
+        # 65-character allowance without adding useful choice information.
+        detail_parts = [part for part in (variant, (card.get("rarity") or "").strip()) if part]
+        suffix = "" if not detail_parts else " - " + " - ".join(detail_parts)
+        base = f"{number_detail} - {child.get('C:Card Name', '')}".strip()
         base = base.replace(";", ",").replace("|", "-")
+        suffix = suffix.replace(";", ",").replace("|", "-")
+        # Keep at least the full number and one character of the card name
+        # even if a future catalogue introduces an unexpectedly long
+        # rarity. Printing comes first in the suffix, so this last-resort
+        # shortening still preserves the variation's key distinction.
+        minimum_base_len = len(f"{number_detail} - ") + 1
+        suffix = _truncate(suffix, max(0, EBAY_ITEM_SPECIFIC_MAX_LEN - minimum_base_len))
         # eBay error 21920469 treats the JavaScript function token ``eval``
         # as active content even when it merely occurs inside an innocent
         # card name.  A real upload rejected both "Energy Retrieval" values
@@ -463,10 +465,10 @@ def build_variation_group(set_name: str, cards: list[dict], args) -> tuple[list[
         # break the same token safely should it occur in another name.
         base = re.sub(r"\bretrieval\b", "Retr.", base, flags=re.IGNORECASE)
         base = re.sub(r"eval", "e-val", base, flags=re.IGNORECASE)
-        # Truncate the name portion only, reserving room for the variant
-        # suffix -- truncating the combined value risked cutting the
-        # suffix itself off, which would make two different printings of
-        # an overly-long card name collide on an identical value (eBay's
+        # Truncate the name portion only, reserving room for the full
+        # printing/rarity suffix -- truncating the combined value risked
+        # cutting the distinguishing printing itself off, which would make
+        # two printings of an overly-long card name collide (eBay's
         # "Duplicate VariationSpecifics trait value" rejection, a
         # different real failure this same function already guards
         # against for the ordinary case via `seen`).
