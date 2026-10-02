@@ -13,7 +13,6 @@ is a real future need but out of scope here.
 """
 
 import json
-import mimetypes
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -29,11 +28,19 @@ from sqlalchemy.orm import Session
 from .audit import record_event
 from .auth import require_dashboard_user
 from .card_recognition import extract_collectible_details
+from .capture_workflow import (
+    capture_batch_status_response,
+    create_capture_batch,
+    next_pending_capture,
+    pending_captures,
+    run_capture_batch,
+    save_capture_bytes,
+)
 from .config import get_settings
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card, remove_background
 from .images import serve_image, serve_thumb
-from .models import CaptureBatch, CaptureBatchStatus, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
+from .models import CaptureBatch, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
 from .reverse_image_search import ReverseImageSearchError, search_image
 from . import vocabulary
 from .ui import brand_header, page, photo_field, pill
@@ -379,10 +386,7 @@ def collectible_capture_page(user: str = Depends(require_dashboard_user)) -> HTM
 def _save_collectible_photo(data: bytes, content_type: str | None, settings) -> Path:
     photo_id = str(uuid.uuid4())
     photo_dir = _collectible_capture_dir(settings) / photo_id
-    photo_dir.mkdir(parents=True, exist_ok=True)
-    extension = mimetypes.guess_extension(content_type or "") or ".jpg"
-    photo_path = photo_dir / f"photo{extension}"
-    photo_path.write_bytes(data)
+    photo_path = save_capture_bytes(data, content_type, photo_dir, stem="photo")
     try:
         auto_orient(photo_path)
     except Exception:
@@ -494,23 +498,14 @@ def _run_collectible_capture_batch(batch_id: str, photo_paths: list[Path], setti
     """Background task: extract + insert every photo in a batch using its own
     DB session, since the request-scoped session closes before this runs.
     One photo's failure is recorded on the batch and the rest still proceed."""
-    with SessionLocal() as session:
-        batch = session.get(CaptureBatch, batch_id)
-        failure_details = dict(batch.failure_details or {})
-        for photo_path in photo_paths:
-            try:
-                records = _process_collectible_photo(photo_path, settings, session, user)
-                batch.cards_created += len(records)
-            except Exception as exc:
-                batch.failed_photos += 1
-                failure_details[str(photo_path)] = str(exc)
-                record_event(session, actor_type="user", actor_id=user, action="collectible.capture", resource_type="captured_collectible", resource_id=None, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc), "path": str(photo_path)})
-            batch.processed_photos += 1
-            batch.failure_details = failure_details
-            session.commit()
-        batch.status = CaptureBatchStatus.DONE
-        batch.finished_at = datetime.now(UTC)
-        session.commit()
+    run_capture_batch(
+        batch_id, photo_paths, settings, user,
+        session_factory=SessionLocal,
+        process_one=_process_collectible_photo,
+        item_label=str,
+        audit_action="collectible.capture",
+        resource_type="captured_collectible",
+    )
 
 
 @router.get("/collectibles/capture/bulk", response_class=HTMLResponse)
@@ -548,15 +543,9 @@ async def collectible_capture_bulk_submit(
             save_failures[photo.filename or "unnamed"] = str(exc)
             record_event(session, actor_type="user", actor_id=user, action="collectible.capture", resource_type="captured_collectible", resource_id=None, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc), "filename": photo.filename})
 
-    batch = CaptureBatch(
-        total_photos=len(photo_paths) + len(save_failures),
-        processed_photos=len(save_failures),
-        failed_photos=len(save_failures),
-        failure_details=save_failures,
-        started_by=user,
+    batch = create_capture_batch(
+        session, saved_count=len(photo_paths), save_failures=save_failures, user=user,
     )
-    session.add(batch)
-    session.commit()
 
     background_tasks.add_task(_run_collectible_capture_batch, batch.id, photo_paths, settings, user)
     return RedirectResponse(f"/collectibles/capture/bulk/status/{batch.id}", status_code=303)
@@ -568,37 +557,13 @@ def collectible_capture_bulk_status(batch_id: str, user: str = Depends(require_d
     if batch is None:
         raise HTTPException(status_code=404, detail="batch not found")
 
-    done = batch.status == CaptureBatchStatus.DONE
-    head_extra = "" if done else "<meta http-equiv='refresh' content='3'>"
-
-    failure_html = ""
-    if batch.failure_details:
-        items = "".join(f"<li>{escape(str(key))}: {escape(str(err))}</li>" for key, err in batch.failure_details.items())
-        failure_html = f"<div class='panel'><h2>{batch.failed_photos} photo(s) failed</h2><ul class='events'>{items}</ul></div>"
-
-    if done:
-        status_line = (
-            f"<p>{batch.cards_created} figure(s) captured from {batch.total_photos} photo(s), queued for review.</p>"
-            + "<p><a class='btn' href='/collectibles/review'>Go to review queue</a></p>"
-        )
-    else:
-        status_line = f"<p>Processing in the background &mdash; {batch.processed_photos} of {batch.total_photos} photo(s) done so far. This page refreshes automatically; feel free to close it and check back later.</p>"
-
-    body = (
-        brand_header("Bulk capture" + (" — done" if done else " — processing"))
-        + f"<div class='panel'><h2>{'Done' if done else 'Processing...'}</h2>{status_line}</div>"
-        + failure_html
-        + _STYLE
+    return capture_batch_status_response(
+        batch, captured_noun="figure", review_url="/collectibles/review", style=_STYLE,
     )
-    return HTMLResponse(page("EzBay — Bulk capture status", body, head_extra=head_extra))
 
 
 def _pending(session: Session) -> list[CapturedCollectible]:
-    return session.scalars(
-        select(CapturedCollectible)
-        .where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)
-        .order_by(CapturedCollectible.captured_at, CapturedCollectible.id)
-    ).all()
+    return pending_captures(session, CapturedCollectible)
 
 
 def _next_after(session: Session, current: CapturedCollectible | None) -> CapturedCollectible | None:
@@ -609,16 +574,7 @@ def _next_after(session: Session, current: CapturedCollectible | None) -> Captur
     most of the work. Wraps to the top so a skipped figure comes back
     round rather than being stranded at the end of the queue.
     """
-    queue = _pending(session)
-    if not queue:
-        return None
-    if current is None:
-        return queue[0]
-    ids = [c.id for c in queue]
-    if current.id in ids:
-        index = ids.index(current.id)
-        return queue[(index + 1) % len(queue)] if len(queue) > 1 else None
-    return queue[0]
+    return next_pending_capture(session, CapturedCollectible, current)
 
 
 def _queue_done_page() -> HTMLResponse:

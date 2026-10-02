@@ -12,7 +12,6 @@ item's brand/type/pack-size is normally legible right off the packaging in
 the photo itself, unlike a figure's series name).
 """
 
-import mimetypes
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -27,11 +26,19 @@ from sqlalchemy.orm import Session
 from .audit import record_event
 from .auth import require_dashboard_user
 from .card_recognition import extract_accessory_details
+from .capture_workflow import (
+    capture_batch_status_response,
+    create_capture_batch,
+    next_pending_capture,
+    pending_captures,
+    run_capture_batch,
+    save_capture_bytes,
+)
 from .config import get_settings
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card, remove_background
 from .images import serve_image
-from .models import AccessoryProduct, CaptureBatch, CaptureBatchStatus, CapturedAccessory, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, InventoryItem
+from .models import AccessoryProduct, CaptureBatch, CapturedAccessory, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, InventoryItem
 from .ui import brand_header, page, photo_field
 
 router = APIRouter(tags=["accessories"])
@@ -151,10 +158,7 @@ def accessory_capture_page(user: str = Depends(require_dashboard_user)) -> HTMLR
 def _save_accessory_photo(data: bytes, content_type: str | None, settings) -> Path:
     photo_id = str(uuid.uuid4())
     photo_dir = _accessory_capture_dir(settings) / photo_id
-    photo_dir.mkdir(parents=True, exist_ok=True)
-    extension = mimetypes.guess_extension(content_type or "") or ".jpg"
-    photo_path = photo_dir / f"photo{extension}"
-    photo_path.write_bytes(data)
+    photo_path = save_capture_bytes(data, content_type, photo_dir, stem="photo")
     try:
         auto_orient(photo_path)
     except Exception:
@@ -256,23 +260,14 @@ async def accessory_capture_submit(
 
 
 def _run_accessory_capture_batch(batch_id: str, photo_paths: list[Path], settings, user: str) -> None:
-    with SessionLocal() as session:
-        batch = session.get(CaptureBatch, batch_id)
-        failure_details = dict(batch.failure_details or {})
-        for photo_path in photo_paths:
-            try:
-                records = _process_accessory_photo(photo_path, settings, session, user)
-                batch.cards_created += len(records)
-            except Exception as exc:
-                batch.failed_photos += 1
-                failure_details[str(photo_path)] = str(exc)
-                record_event(session, actor_type="user", actor_id=user, action="accessory.capture", resource_type="captured_accessory", resource_id=None, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc), "path": str(photo_path)})
-            batch.processed_photos += 1
-            batch.failure_details = failure_details
-            session.commit()
-        batch.status = CaptureBatchStatus.DONE
-        batch.finished_at = datetime.now(UTC)
-        session.commit()
+    run_capture_batch(
+        batch_id, photo_paths, settings, user,
+        session_factory=SessionLocal,
+        process_one=_process_accessory_photo,
+        item_label=str,
+        audit_action="accessory.capture",
+        resource_type="captured_accessory",
+    )
 
 
 @router.get("/accessories/capture/bulk", response_class=HTMLResponse)
@@ -310,15 +305,9 @@ async def accessory_capture_bulk_submit(
             save_failures[photo.filename or "unnamed"] = str(exc)
             record_event(session, actor_type="user", actor_id=user, action="accessory.capture", resource_type="captured_accessory", resource_id=None, outcome="failed", correlation_id=str(uuid.uuid4()), details={"error": str(exc), "filename": photo.filename})
 
-    batch = CaptureBatch(
-        total_photos=len(photo_paths) + len(save_failures),
-        processed_photos=len(save_failures),
-        failed_photos=len(save_failures),
-        failure_details=save_failures,
-        started_by=user,
+    batch = create_capture_batch(
+        session, saved_count=len(photo_paths), save_failures=save_failures, user=user,
     )
-    session.add(batch)
-    session.commit()
 
     background_tasks.add_task(_run_accessory_capture_batch, batch.id, photo_paths, settings, user)
     return RedirectResponse(f"/accessories/capture/bulk/status/{batch.id}", status_code=303)
@@ -330,50 +319,17 @@ def accessory_capture_bulk_status(batch_id: str, user: str = Depends(require_das
     if batch is None:
         raise HTTPException(status_code=404, detail="batch not found")
 
-    done = batch.status == CaptureBatchStatus.DONE
-    head_extra = "" if done else "<meta http-equiv='refresh' content='3'>"
-
-    failure_html = ""
-    if batch.failure_details:
-        items = "".join(f"<li>{escape(str(key))}: {escape(str(err))}</li>" for key, err in batch.failure_details.items())
-        failure_html = f"<div class='panel'><h2>{batch.failed_photos} photo(s) failed</h2><ul class='events'>{items}</ul></div>"
-
-    if done:
-        status_line = (
-            f"<p>{batch.cards_created} item(s) captured from {batch.total_photos} photo(s), queued for review.</p>"
-            + "<p><a class='btn' href='/accessories/review'>Go to review queue</a></p>"
-        )
-    else:
-        status_line = f"<p>Processing in the background &mdash; {batch.processed_photos} of {batch.total_photos} photo(s) done so far. This page refreshes automatically; feel free to close it and check back later.</p>"
-
-    body = (
-        brand_header("Bulk capture" + (" — done" if done else " — processing"))
-        + f"<div class='panel'><h2>{'Done' if done else 'Processing...'}</h2>{status_line}</div>"
-        + failure_html
-        + _STYLE
+    return capture_batch_status_response(
+        batch, captured_noun="item", review_url="/accessories/review", style=_STYLE,
     )
-    return HTMLResponse(page("EzBay — Bulk capture status", body, head_extra=head_extra))
 
 
 def _pending(session: Session) -> list[CapturedAccessory]:
-    return session.scalars(
-        select(CapturedAccessory)
-        .where(CapturedAccessory.status == CardCaptureStatus.PENDING_REVIEW)
-        .order_by(CapturedAccessory.captured_at, CapturedAccessory.id)
-    ).all()
+    return pending_captures(session, CapturedAccessory)
 
 
 def _next_after(session: Session, current: CapturedAccessory | None) -> CapturedAccessory | None:
-    queue = _pending(session)
-    if not queue:
-        return None
-    if current is None:
-        return queue[0]
-    ids = [c.id for c in queue]
-    if current.id in ids:
-        index = ids.index(current.id)
-        return queue[(index + 1) % len(queue)] if len(queue) > 1 else None
-    return queue[0]
+    return next_pending_capture(session, CapturedAccessory, current)
 
 
 def _queue_done_page() -> HTMLResponse:

@@ -1,4 +1,3 @@
-import mimetypes
 import uuid
 from datetime import UTC, datetime
 from html import escape
@@ -12,10 +11,18 @@ from sqlalchemy.orm import Session
 from .audit import record_event
 from .auth import require_dashboard_user
 from .card_recognition import extract_card_details
+from .capture_workflow import (
+    capture_batch_status_response,
+    create_capture_batch,
+    next_pending_capture,
+    pending_captures,
+    run_capture_batch,
+    save_capture_bytes,
+)
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card
 from .images import serve_image
-from .models import CaptureBatch, CaptureBatchStatus, CapturedCard, CardCaptureStatus
+from .models import CaptureBatch, CapturedCard, CardCaptureStatus
 from .ui import brand_header, page, photo_field
 
 router = APIRouter(prefix="/cards", tags=["cards"])
@@ -32,10 +39,7 @@ def _has_content(upload: UploadFile | None) -> bool:
 
 
 def _save_upload(upload: UploadFile, card_dir: Path, name: str, data: bytes) -> Path:
-    extension = mimetypes.guess_extension(upload.content_type or "") or ".jpg"
-    path = card_dir / f"{name}{extension}"
-    path.write_bytes(data)
-    return path
+    return save_capture_bytes(data, upload.content_type, card_dir, stem=name)
 
 
 async def _save_photo_pair(front: UploadFile, back: UploadFile | None, settings) -> tuple[Path, Path | None]:
@@ -148,23 +152,18 @@ def _run_capture_batch(batch_id: str, saved_photos: list[tuple[Path, Path | None
     upload response is sent -- long before this runs. One photo's failure is
     recorded on the batch and the rest still proceed.
     """
-    with SessionLocal() as session:
-        batch = session.get(CaptureBatch, batch_id)
-        failure_details = dict(batch.failure_details or {})
-        for front_path, back_path in saved_photos:
-            try:
-                records = _process_photo(front_path, back_path, settings, session, user)
-                batch.cards_created += len(records)
-            except Exception as exc:
-                batch.failed_photos += 1
-                failure_details[str(front_path)] = str(exc)
-                record_event(session, actor_type="user", actor_id=user, action="card.capture", resource_type="captured_card", resource_id=None, outcome="failed", correlation_id=_correlation_id(), details={"error": str(exc), "path": str(front_path)})
-            batch.processed_photos += 1
-            batch.failure_details = failure_details
-            session.commit()
-        batch.status = CaptureBatchStatus.DONE
-        batch.finished_at = datetime.now(UTC)
-        session.commit()
+    def process(saved, current_settings, session, actor):
+        front_path, back_path = saved
+        return _process_photo(front_path, back_path, current_settings, session, actor)
+
+    run_capture_batch(
+        batch_id, saved_photos, settings, user,
+        session_factory=SessionLocal,
+        process_one=process,
+        item_label=lambda saved: str(saved[0]),
+        audit_action="card.capture",
+        resource_type="captured_card",
+    )
 
 
 @router.get("/capture", response_class=HTMLResponse)
@@ -242,15 +241,9 @@ async def capture_bulk_submit(
             save_failures[photo.filename or "unnamed"] = str(exc)
             record_event(session, actor_type="user", actor_id=user, action="card.capture", resource_type="captured_card", resource_id=None, outcome="failed", correlation_id=_correlation_id(), details={"error": str(exc), "filename": photo.filename})
 
-    batch = CaptureBatch(
-        total_photos=len(saved_photos) + len(save_failures),
-        processed_photos=len(save_failures),
-        failed_photos=len(save_failures),
-        failure_details=save_failures,
-        started_by=user,
+    batch = create_capture_batch(
+        session, saved_count=len(saved_photos), save_failures=save_failures, user=user,
     )
-    session.add(batch)
-    session.commit()
 
     background_tasks.add_task(_run_capture_batch, batch.id, saved_photos, settings, user)
 
@@ -263,42 +256,17 @@ def capture_bulk_status(batch_id: str, user: str = Depends(require_dashboard_use
     if not batch:
         raise HTTPException(status_code=404, detail="batch not found")
 
-    done = batch.status == CaptureBatchStatus.DONE
-    head_extra = "" if done else "<meta http-equiv='refresh' content='3'>"
-
-    failure_html = ""
-    if batch.failure_details:
-        items = "".join(f"<li>{escape(str(key))}: {escape(str(err))}</li>" for key, err in batch.failure_details.items())
-        failure_html = f"<div class='panel'><h2>{batch.failed_photos} photo(s) failed</h2><ul class='events'>{items}</ul></div>"
-
-    if done:
-        status_line = (
-            f"<p>{batch.cards_created} card(s) captured from {batch.total_photos} photo(s), queued for review.</p>"
-            + "<p><a class='btn' href='/cards/review'>Go to review queue</a></p>"
-        )
-    else:
-        status_line = f"<p>Processing in the background &mdash; {batch.processed_photos} of {batch.total_photos} photo(s) done so far. This page refreshes automatically; feel free to close it and check back later.</p>"
-
-    body = (
-        brand_header("Bulk capture" + (" — done" if done else " — processing"))
-        + f"<div class='panel'><h2>{'Done' if done else 'Processing...'}</h2>{status_line}</div>"
-        + failure_html
-    )
-    return HTMLResponse(page("EzBay — Bulk capture status", body, head_extra=head_extra))
+    return capture_batch_status_response(batch, captured_noun="card", review_url="/cards/review")
 
 
 def _next_pending_card_id(session: Session, exclude_id: str) -> str | None:
-    return session.scalars(
-        select(CapturedCard.id)
-        .where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW, CapturedCard.id != exclude_id)
-        .order_by(CapturedCard.captured_at)
-        .limit(1)
-    ).first()
+    nxt = next_pending_capture(session, CapturedCard, None)
+    return nxt.id if nxt and nxt.id != exclude_id else None
 
 
 @router.get("/review", response_class=HTMLResponse)
 def review_list(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> str:
-    cards = session.scalars(select(CapturedCard).where(CapturedCard.status == CardCaptureStatus.PENDING_REVIEW).order_by(CapturedCard.captured_at)).all()
+    cards = pending_captures(session, CapturedCard)
     rows = "".join(
         f"<li><a href='/cards/review/{c.id}'>{escape(c.character or '(unread) ')} — {escape(c.set_name or '?')} #{escape(c.card_number or '?')}</a></li>"
         for c in cards

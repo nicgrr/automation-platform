@@ -73,8 +73,10 @@ reliability and rollback improve before business workflows or schemas are remove
     specifics/condition descriptor/duration and crash-safe offer resumption.
   - [ ] Publish one owner-approved production canary and verify it in the live
     eBay mirror before declaring direct publishing fully validated.
-- [ ] Extract shared capture/review mechanics for cards, collectibles and accessories
-  without changing their external routes.
+- [x] Extract shared capture/review mechanics for cards, collectibles and accessories
+  without changing their external routes; upload persistence, background-batch
+  accounting/status and pending-queue traversal now share one implementation,
+  while extraction fields and catalogue-creation rules remain type-specific.
 
 ## Phase 4 — channel readiness
 

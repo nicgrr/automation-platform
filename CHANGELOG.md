@@ -47,6 +47,12 @@ and recovery path; no production canary was published automatically. The old,
 unwired `listing_pipeline/publish.py` placeholder was removed so there is only
 one real direct-publish implementation.
 
+Card, collectible and accessory photo capture now share the common mechanics
+for saving uploads, settling background batches, rendering batch status and
+advancing pending-review queues. Their existing URLs, recognition fields and
+catalogue/inventory decisions remain independent; this removes duplicated
+plumbing without pretending the three stock types have identical business rules.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in
