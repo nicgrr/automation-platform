@@ -28,6 +28,7 @@ captured_cards/
 /backups/*.sqlite3
 /backups/review-crops-*/
 /backups/*relink*.json
+/backups/ebay-variation-labels-*.json
 *.egg-info/
 *.db-wal
 *.db-shm
