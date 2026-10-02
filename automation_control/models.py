@@ -1559,8 +1559,12 @@ class ShopOrder(Base):
     tracking_number: Mapped[str | None] = mapped_column(String(128))
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    stock_reserved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stock_restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ShopOrderItem(Base):
@@ -1573,6 +1577,7 @@ class ShopOrderItem(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     order_id: Mapped[str] = mapped_column(ForeignKey("shop_orders.id"), index=True)
     listing_id: Mapped[str | None] = mapped_column(ForeignKey("shop_listings.id"), index=True)
+    bulk_lot_id: Mapped[str | None] = mapped_column(ForeignKey("bulk_lots.id"), index=True)
     title: Mapped[str] = mapped_column(String(256))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     quantity: Mapped[int] = mapped_column(Integer, default=1)

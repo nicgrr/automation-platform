@@ -81,8 +81,9 @@ reliability and rollback improve before business workflows or schemas are remove
 ## Phase 4 — channel readiness
 
 - [ ] Complete NL Vault legal/business details.
-- [ ] Exercise checkout, webhook, reservation, stock decrement, fulfilment,
-  cancellation and refund in a controlled transaction.
+- [x] Exercise checkout, signed webhook, atomic reservation, stock decrement,
+  fulfilment, cancellation and refund in a controlled temporary-database
+  transaction; the repeatable drill makes no Stripe/eBay calls or real charges.
 - [x] Add storefront health to the dashboard before public launch.
 - [ ] Prepare Whatnot inventory, show, sale and customer integration and rehearse a
   show workflow before first use.

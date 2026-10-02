@@ -280,22 +280,21 @@ def test_the_order_total_is_the_discounted_amount(client, session):
     assert order.grand_total == Decimal("38.45")  # + $9.95 AU shipping
 
 
-def test_decrementing_stock_skips_the_discount_line(client, session):
+def test_reserving_stock_skips_the_discount_line(client, session):
     """A negative-price line must never be treated as a real product when
-    stock comes off at payment confirmation."""
+    stock is reserved at checkout."""
     import json
 
     from sqlalchemy import select
 
     from automation_control.models import ShopListing, ShopOrder
-    from storefront.checkout import _decrement_stock
 
     ids = [add_card(session, f"Card {n}", price="10.00", quantity=1) for n in "ABC"]
     client.cookies.set(CART_COOKIE, json.dumps({i: 1 for i in ids}))
     client.post("/checkout", data={"email": "a@b.com", "name": "A B", "address": "1 St", "zone": "au"})
 
     order = session.scalars(select(ShopOrder)).one()
-    _decrement_stock(session, order)  # must not raise
+    assert order.stock_reserved_at is not None
     for listing_id in ids:
         listing = session.get(ShopListing, listing_id)
         assert listing.quantity == 0

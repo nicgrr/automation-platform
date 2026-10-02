@@ -10,8 +10,9 @@ tested, but with no STRIPE_SECRET_KEY configured the checkout button
 explains that payments aren't live yet rather than half-failing. An order
 is still written first in either case, so nothing is lost.
 
-Stock is decremented only once payment is confirmed, never at "add to
-cart" -- an abandoned cart must not quietly remove things from sale.
+Stock is reserved atomically when an order is placed, before the shopper
+leaves for Stripe. Payment finalises that reservation without subtracting a
+second time. A cancelled/expired order restores the exact reservation once.
 
 Payment is confirmed two ways, and only Stripe's own word counts as
 confirmation for either:
@@ -40,7 +41,7 @@ import json
 import secrets
 import string
 import time
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from decimal import Decimal
 from html import escape
 
@@ -53,9 +54,11 @@ from automation_control.config import get_settings
 from automation_control.database import get_session
 from automation_control.ebay_sync import sync_ebay_after_sale
 from automation_control.models import (
-    BulkLot, ShippingZone, ShopListing, ShopListingStatus, ShopOrder, ShopOrderItem, ShopOrderStatus,
+    ShippingZone, ShopOrder, ShopOrderItem, ShopOrderStatus,
 )
-from automation_control.stock import decrement_listing_quantity
+from automation_control.order_stock import (
+    StockUnavailable, cancel_pending_order, mark_order_paid, reserve_order_stock,
+)
 
 from . import discounts
 from .common import CART_COOKIE, cart_lines, nav_links, read_cart, shipping_for
@@ -69,10 +72,20 @@ REFERENCE_ALPHABET = string.ascii_uppercase + string.digits
 WEBHOOK_TOLERANCE_SECONDS = 300  # Stripe's own default replay-protection window
 
 
+@dataclass(frozen=True)
+class StripeCheckoutSession:
+    id: str
+    url: str
+
+
 def stripe_secret() -> str | None:
     """Read at call time rather than import time so adding the key to
-    .env.local and restarting is all that's needed to go live."""
-    return getattr(get_settings(), "stripe_secret_key", None) or None
+    .env.local and restarting is all that's needed to go live. Checkout is
+    enabled only when its authoritative webhook is configured too."""
+    settings = get_settings()
+    if not getattr(settings, "stripe_webhook_secret", None):
+        return None
+    return getattr(settings, "stripe_secret_key", None) or None
 
 
 def stripe_webhook_secret() -> str | None:
@@ -118,13 +131,16 @@ def verify_stripe_signature(payload: bytes, sig_header: str, secret: str,
     """
     if not sig_header or not secret:
         return False
-    parts: dict[str, str] = {}
+    timestamp = None
+    signatures: list[str] = []
     for piece in sig_header.split(","):
         if "=" in piece:
             key, _, value = piece.partition("=")
-            parts[key] = value
-    timestamp, v1 = parts.get("t"), parts.get("v1")
-    if not timestamp or not v1:
+            if key == "t":
+                timestamp = value
+            elif key == "v1":
+                signatures.append(value)
+    if not timestamp or not signatures:
         return False
     try:
         age = abs(time.time() - int(timestamp))
@@ -134,7 +150,7 @@ def verify_stripe_signature(payload: bytes, sig_header: str, secret: str,
         return False
     signed_payload = f"{timestamp}.".encode() + payload
     expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, v1)
+    return any(hmac.compare_digest(expected, signature) for signature in signatures)
 
 
 def order_reference() -> str:
@@ -238,13 +254,19 @@ async def _create_discount_coupon(secret: str, currency: str, amount: Decimal, c
     }, auth=(secret, ""))
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="payment provider rejected the discount")
-    return response.json().get("id")
+    try:
+        coupon_id = response.json().get("id")
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="payment provider returned an invalid discount") from exc
+    if not coupon_id:
+        raise HTTPException(status_code=502, detail="payment provider returned an incomplete discount")
+    return coupon_id
 
 
 async def create_stripe_session(
     order: ShopOrder, lines: list[dict], ship_cost: Decimal, base_url: str,
     discount_total: Decimal = Decimal("0"),
-) -> str | None:
+) -> StripeCheckoutSession | None:
     """Hand the basket to Stripe and get back a URL to send the shopper to.
     Amounts are sent in cents, recomputed from the order we just wrote --
     never from anything the browser supplied."""
@@ -276,20 +298,30 @@ async def create_stripe_session(
             (f"line_items[{index}][quantity]", "1"),
         ]
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        coupon_id = await _create_discount_coupon(secret, order.currency, discount_total, client)
-        if coupon_id:
-            data.append(("discounts[0][coupon]", coupon_id))
-        response = await client.post(STRIPE_API, data=data, auth=(secret, ""))
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            coupon_id = await _create_discount_coupon(secret, order.currency, discount_total, client)
+            if coupon_id:
+                data.append(("discounts[0][coupon]", coupon_id))
+            response = await client.post(STRIPE_API, data=data, auth=(secret, ""))
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="could not reach the payment provider") from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="payment provider rejected the request")
-    payload = response.json()
-    return payload.get("url")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="payment provider returned an invalid session") from exc
+    session_id, url = payload.get("id"), payload.get("url")
+    if not session_id or not url:
+        raise HTTPException(status_code=502, detail="payment provider returned an incomplete session")
+    return StripeCheckoutSession(id=session_id, url=url)
 
 
 @router.post("/checkout")
 async def checkout_submit(
     request: Request,
+    background_tasks: BackgroundTasks,
     email: str = Form(...), name: str = Form(...), address: str = Form(...),
     country: str = Form("Australia"), zone: str = Form("au"),
     session: Session = Depends(get_session),
@@ -318,6 +350,7 @@ async def checkout_submit(
         session.add(ShopOrderItem(
             order_id=order.id,
             listing_id=None if line["is_lot"] else line["listing"].id,
+            bulk_lot_id=line["listing"].id if line["is_lot"] else None,
             title=line["listing"].title,
             unit_price=Decimal(str(line["listing"].price)),
             quantity=line["quantity"],
@@ -332,38 +365,43 @@ async def checkout_submit(
             title=f"Set discount — {group.label} ({group.quantity} items, {group.discount_pct:.0f}% off)",
             unit_price=-group.discount_amount, quantity=1,
         ))
-    session.commit()
-
-    base_url = str(request.base_url).rstrip("/")
-    pay_url = await create_stripe_session(order, lines, ship_cost, base_url, discount_total)
-    if pay_url:
-        order.stripe_session_id = pay_url.rsplit("/", 1)[-1]
+    session.flush()
+    try:
+        reserve_order_stock(session, order)
         session.commit()
-        return RedirectResponse(pay_url, status_code=303)
+    except StockUnavailable as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    base_url = str(request.base_url).rstrip("/")
+    try:
+        stripe_session = await create_stripe_session(order, lines, ship_cost, base_url, discount_total)
+    except HTTPException:
+        _cancelled, _restored = cancel_pending_order(session, order)
+        session.commit()
+        raise
+    if stripe_session:
+        order.stripe_session_id = stripe_session.id
+        session.commit()
+        return RedirectResponse(stripe_session.url, status_code=303)
 
     # No payment provider configured: the order still exists, and the
     # shopper is told plainly rather than dropped on an error page.
     return RedirectResponse(f"/checkout/complete?ref={order.reference}", status_code=303)
 
 
-def _mark_paid(session: Session, order: ShopOrder) -> list[tuple[str, int]]:
+def _mark_paid(session: Session, order: ShopOrder, stripe_payload: dict | None = None) -> tuple[bool, list[tuple[str, int]]]:
     """The one place an order becomes PAID. Guarded on the caller side by
     a PENDING_PAYMENT check, so calling this from both the redirect page
     and the webhook is safe -- whichever gets there first wins, and the
     second call's guard simply doesn't fire rather than double-decrementing
     stock or double-recording a payment time.
 
-    Returns the (listing_id, new_quantity) pairs that actually changed, so
-    callers can schedule an eBay sync push for each -- see
-    automation_control.ebay_sync.sync_ebay_after_sale. This function itself
-    stays eBay-agnostic; every caller is responsible for firing that sync
-    as a background task, never inline, so a slow or failing eBay call can
-    never delay or fail this commit."""
-    order.status = ShopOrderStatus.PAID
-    order.paid_at = datetime.now(UTC)
-    changed = _decrement_stock(session, order)
+    Returns whether this call performed the transition. Stock was already
+    removed from sale at reservation time, so payment cannot double-decrement
+    it even if Stripe retries a webhook."""
+    result = mark_order_paid(session, order, stripe_payload)
     session.commit()
-    return changed
+    return result
 
 
 @router.get("/checkout/complete", response_class=HTMLResponse)
@@ -382,15 +420,22 @@ async def checkout_complete(
     if order.status == ShopOrderStatus.PENDING_PAYMENT and secret and order.stripe_session_id:
         payload = await fetch_checkout_session(secret, order.stripe_session_id)
         if payload and _is_stripe_session_paid(payload):
-            for listing_id, new_quantity in _mark_paid(session, order):
+            _claimed, changed = _mark_paid(session, order, payload)
+            for listing_id, new_quantity in changed:
                 background_tasks.add_task(sync_ebay_after_sale, listing_id, new_quantity)
         else:
             still_confirming = True
 
-    paid = order.status == ShopOrderStatus.PAID
+    paid = order.status in (ShopOrderStatus.PAID, ShopOrderStatus.PACKED, ShopOrderStatus.SHIPPED)
     if paid:
         headline = "Thank you — order confirmed"
         note = "<p class='muted'>We'll be in touch when it's on its way.</p>"
+    elif order.status == ShopOrderStatus.CANCELLED:
+        headline = "Order cancelled"
+        note = "<div class='notice'>This order was cancelled and its stock was released.</div>"
+    elif order.status == ShopOrderStatus.REFUNDED:
+        headline = "Order refunded"
+        note = "<div class='notice'>This order has been recorded as refunded.</div>"
     elif still_confirming:
         headline = "Confirming your payment"
         note = (
@@ -444,6 +489,8 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks, se
         event = json.loads(body)
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid payload")
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="invalid payload")
 
     # Any event type not handled below is acknowledged, not rejected --
     # Stripe retries on anything but 2xx, and there's no reason to make it
@@ -454,37 +501,17 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks, se
         if reference and _is_stripe_session_paid(payload):
             order = session.query(ShopOrder).filter_by(reference=reference).one_or_none()
             if order is not None and order.status == ShopOrderStatus.PENDING_PAYMENT:
-                for listing_id, new_quantity in _mark_paid(session, order):
+                _claimed, changed = _mark_paid(session, order, payload)
+                for listing_id, new_quantity in changed:
                     background_tasks.add_task(sync_ebay_after_sale, listing_id, new_quantity)
 
+    elif event.get("type") == "checkout.session.expired":
+        payload = (event.get("data") or {}).get("object") or {}
+        reference = payload.get("client_reference_id")
+        if reference:
+            order = session.query(ShopOrder).filter_by(reference=reference).one_or_none()
+            if order is not None and order.status == ShopOrderStatus.PENDING_PAYMENT:
+                _cancelled, _restored = cancel_pending_order(session, order)
+                session.commit()
+
     return {"received": True}
-
-
-def _decrement_stock(session: Session, order: ShopOrder) -> list[tuple[str, int]]:
-    """Take sold quantity off the listing, marking it sold out at zero.
-    Bulk lots aren't matched back by id (an order line keeps only its
-    title once the lot is gone), so they're handled by title match --
-    imprecise, but a lot is a one-off product and this is only ever a
-    convenience for the operator, not an accounting record. Bulk lots
-    have no eBay presence, so they're not part of the returned list.
-
-    Returns (listing_id, new_quantity) for every ShopListing this order
-    actually reduced -- the set of listings a caller should push an eBay
-    sync for."""
-    changed: list[tuple[str, int]] = []
-    for item in session.query(ShopOrderItem).filter_by(order_id=order.id).all():
-        if item.unit_price < 0:
-            continue  # a set-discount line, not a real stock line
-        if item.listing_id:
-            listing = session.get(ShopListing, item.listing_id)
-            if listing is not None:
-                new_quantity = decrement_listing_quantity(session, listing, item.quantity)
-                if new_quantity is not None:
-                    changed.append((listing.id, new_quantity))
-        else:
-            lot = session.query(BulkLot).filter_by(title=item.title).one_or_none()
-            if lot is not None:
-                lot.quantity = max(0, lot.quantity - item.quantity)
-                if lot.quantity == 0:
-                    lot.status = ShopListingStatus.SOLD_OUT
-    return changed

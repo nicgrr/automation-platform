@@ -1,6 +1,7 @@
 import json
 import time
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -79,6 +80,14 @@ def test_checkout_shows_totals_and_says_payments_are_not_live(client, session):
     assert "aren't switched on yet" in body
 
 
+def test_checkout_is_not_enabled_without_the_authoritative_webhook(monkeypatch):
+    monkeypatch.undo()
+    monkeypatch.setattr(checkout, "get_settings", lambda: SimpleNamespace(
+        stripe_secret_key="sk_test_fake", stripe_webhook_secret=None,
+    ))
+    assert checkout.stripe_secret() is None
+
+
 # --- placing an order -------------------------------------------------------
 
 def test_order_is_written_even_without_a_payment_provider(client, session):
@@ -109,15 +118,31 @@ def test_international_orders_are_charged_the_higher_rate(client, session):
     assert order.grand_total == Decimal("109.95")
 
 
-def test_stock_is_not_touched_before_payment(client, session):
-    """An abandoned or unpaid order must not quietly take stock off sale."""
+def test_stock_is_reserved_before_payment(client, session):
+    """A placed order must remove its units from sale before Stripe."""
     listing = _listing(session, quantity=2)
     _fill_cart(client, listing.id)
     client.post("/checkout", data=_order_details(), follow_redirects=False)
 
     session.refresh(listing)
-    assert listing.quantity == 2
+    assert listing.quantity == 1
     assert listing.status == ShopListingStatus.ACTIVE
+    assert session.query(ShopOrder).one().stock_reserved_at is not None
+
+
+def test_second_checkout_cannot_take_the_last_reserved_item(client, session):
+    listing = _listing(session, quantity=1)
+    _fill_cart(client, listing.id)
+
+    first = client.post("/checkout", data=_order_details(), follow_redirects=False)
+    second = client.post("/checkout", data=_order_details(), follow_redirects=False)
+
+    assert first.status_code == 303
+    assert second.status_code == 303
+    assert second.headers["location"] == "/cart"
+    assert session.query(ShopOrder).count() == 1
+    session.refresh(listing)
+    assert listing.quantity == 0
 
 
 # --- with Stripe configured -------------------------------------------------
@@ -127,12 +152,38 @@ def test_configured_stripe_redirects_to_the_hosted_page(client, session, monkeyp
     listing = _listing(session)
     _fill_cart(client, listing.id)
 
-    fake = AsyncMock(return_value="https://checkout.stripe.com/c/pay/cs_test_123")
+    fake = AsyncMock(return_value=checkout.StripeCheckoutSession(
+        id="cs_test_123", url="https://checkout.stripe.com/c/pay/cs_test_123"
+    ))
     with patch.object(checkout, "create_stripe_session", new=fake):
         resp = client.post("/checkout", data=_order_details(), follow_redirects=False)
 
     assert resp.status_code == 303
     assert resp.headers["location"].startswith("https://checkout.stripe.com/")
+
+
+def test_stripe_network_failure_cancels_order_and_restores_reservation(client, session, monkeypatch):
+    import httpx as httpx_module
+
+    monkeypatch.setattr(checkout, "stripe_secret", lambda: "sk_test_fake")
+    listing = _listing(session, quantity=1)
+    _fill_cart(client, listing.id)
+
+    class BoomClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, *args, **kwargs): raise httpx_module.ConnectError("offline")
+
+    monkeypatch.setattr(checkout.httpx, "AsyncClient", lambda **kwargs: BoomClient())
+    response = client.post("/checkout", data=_order_details(), follow_redirects=False)
+
+    assert response.status_code == 502
+    order = session.query(ShopOrder).one()
+    session.refresh(listing)
+    assert order.status == ShopOrderStatus.CANCELLED
+    assert order.stock_restored_at is not None
+    assert listing.quantity == 1
+    assert listing.status == ShopListingStatus.ACTIVE
 
 
 def test_stripe_line_items_are_built_in_cents_from_the_order(session, monkeypatch):
@@ -150,7 +201,7 @@ def test_stripe_line_items_are_built_in_cents_from_the_order(session, monkeypatc
 
         @staticmethod
         def json():
-            return {"url": "https://checkout.stripe.com/c/pay/cs_test"}
+            return {"id": "cs_test", "url": "https://checkout.stripe.com/c/pay/cs_test"}
 
     class FakeClient:
         async def __aenter__(self):
@@ -167,9 +218,10 @@ def test_stripe_line_items_are_built_in_cents_from_the_order(session, monkeypatc
     monkeypatch.setattr(checkout.httpx, "AsyncClient", lambda **kw: FakeClient())
 
     import asyncio
-    url = asyncio.run(checkout.create_stripe_session(order, lines, Decimal("9.95"), "https://shop.test"))
+    stripe_session = asyncio.run(checkout.create_stripe_session(order, lines, Decimal("9.95"), "https://shop.test"))
 
-    assert url.startswith("https://checkout.stripe.com/")
+    assert stripe_session.url.startswith("https://checkout.stripe.com/")
+    assert stripe_session.id == "cs_test"
     assert captured["data"]["line_items[0][price_data][unit_amount]"] == "8000"   # $80.00
     assert captured["data"]["line_items[1][price_data][unit_amount]"] == "995"    # $9.95 postage
     assert captured["data"]["line_items[1][price_data][product_data][name]"] == "Shipping"
@@ -223,7 +275,7 @@ def test_landing_on_the_success_url_is_not_by_itself_proof_of_payment(client, se
     session.refresh(order)
     session.refresh(listing)
     assert order.status == ShopOrderStatus.PENDING_PAYMENT
-    assert listing.quantity == 2  # nothing decremented for an unconfirmed payment
+    assert listing.quantity == 1  # reserved, but not decremented again as a sale
     assert "confirming your payment" in body.lower()
 
 
@@ -305,7 +357,7 @@ def test_completion_without_stripe_leaves_the_order_unpaid(client, session):
     session.refresh(order)
     session.refresh(listing)
     assert order.status == ShopOrderStatus.PENDING_PAYMENT
-    assert listing.quantity == 2          # nothing sold, nothing decremented
+    assert listing.quantity == 1          # reserved pending manually arranged payment
     assert "arrange payment" in body
 
 
@@ -325,6 +377,19 @@ def test_a_valid_signature_verifies(monkeypatch):
     sig = hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
     header = f"t={ts},v1={sig}"
     assert checkout.verify_stripe_signature(body, header, secret) is True
+
+
+def test_signature_rotation_accepts_any_valid_v1_signature():
+    import hashlib
+    import hmac
+    import time
+
+    secret, body = "whsec_new", b"payload"
+    ts = str(int(time.time()))
+    valid = hmac.new(secret.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    assert checkout.verify_stripe_signature(
+        body, f"t={ts},v1=old-invalid-signature,v1={valid}", secret
+    ) is True
 
 
 def test_a_tampered_body_fails_verification():
@@ -392,6 +457,14 @@ def test_webhook_rejects_a_bad_signature(client, monkeypatch):
     monkeypatch.setattr(checkout, "stripe_webhook_secret", lambda: "whsec_test")
     resp = client.post("/webhooks/stripe", content=b"{}", headers={"stripe-signature": "t=1,v1=bad"})
     assert resp.status_code == 400
+
+
+def test_webhook_rejects_a_signed_non_object_payload(client, monkeypatch):
+    monkeypatch.setattr(checkout, "stripe_webhook_secret", lambda: "whsec_test")
+    body = b"[]"
+    response = client.post("/webhooks/stripe", content=body,
+                           headers={"stripe-signature": _sign("whsec_test", body)})
+    assert response.status_code == 400
 
 
 def test_webhook_marks_the_order_paid_and_decrements_stock(client, session, monkeypatch):
@@ -478,6 +551,30 @@ def test_webhook_does_not_double_process_a_retried_event(client, session, monkey
     assert listing.quantity == 1  # decremented once
 
 
+def test_expired_stripe_session_cancels_and_restores_once(client, session, monkeypatch):
+    monkeypatch.setattr(checkout, "stripe_webhook_secret", lambda: "whsec_test")
+    listing = _listing(session, quantity=1)
+    order = _checkout_with_a_stripe_session(client, session, listing)
+    session.refresh(listing)
+    assert listing.quantity == 0
+
+    event = json.dumps({
+        "type": "checkout.session.expired",
+        "data": {"object": {"client_reference_id": order.reference, "id": "cs_test_123"}},
+    }).encode()
+    headers = {"stripe-signature": _sign("whsec_test", event)}
+    client.post("/webhooks/stripe", content=event, headers=headers)
+    client.post("/webhooks/stripe", content=event, headers=headers)
+
+    session.refresh(order)
+    session.refresh(listing)
+    assert order.status == ShopOrderStatus.CANCELLED
+    assert order.cancelled_at is not None
+    assert order.stock_restored_at is not None
+    assert listing.quantity == 1
+    assert listing.status == ShopListingStatus.ACTIVE
+
+
 def test_fetch_checkout_session_returns_none_on_a_network_error(monkeypatch):
     import httpx as httpx_module
 
@@ -512,4 +609,33 @@ def test_a_bulk_lot_can_be_checked_out(client, session):
     item = session.query(ShopOrderItem).one()
     assert order.items_total == Decimal("12.00")
     assert item.listing_id is None          # a lot isn't a single listing
+    assert item.bulk_lot_id == lot.id
     assert "bulk lot" in item.title
+    session.refresh(lot)
+    assert lot.quantity == 0
+    assert lot.status == ShopListingStatus.SOLD_OUT
+
+
+def test_expired_bulk_lot_order_restores_the_exact_lot(client, session, monkeypatch):
+    monkeypatch.setattr(checkout, "stripe_webhook_secret", lambda: "whsec_test")
+    lot = BulkLot(title="Same title", card_count=10, market_value=Decimal("20"),
+                  price=Decimal("12.00"), quantity=1, status=ShopListingStatus.ACTIVE)
+    other = BulkLot(title="Same title", card_count=20, market_value=Decimal("30"),
+                    price=Decimal("14.00"), quantity=1, status=ShopListingStatus.ACTIVE)
+    session.add_all([lot, other])
+    session.commit()
+    _fill_cart(client, f"B:{lot.id}")
+    client.post("/checkout", data=_order_details(), follow_redirects=False)
+    order = session.query(ShopOrder).one()
+
+    event = json.dumps({
+        "type": "checkout.session.expired",
+        "data": {"object": {"client_reference_id": order.reference}},
+    }).encode()
+    client.post("/webhooks/stripe", content=event,
+                headers={"stripe-signature": _sign("whsec_test", event)})
+
+    session.refresh(lot)
+    session.refresh(other)
+    assert lot.quantity == 1
+    assert other.quantity == 1

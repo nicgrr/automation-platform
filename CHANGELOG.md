@@ -53,6 +53,15 @@ advancing pending-review queues. Their existing URLs, recognition fields and
 catalogue/inventory decisions remain independent; this removes duplicated
 plumbing without pretending the three stock types have identical business rules.
 
+NL Vault checkout now reserves listing, physical-inventory and bulk-lot stock
+atomically before redirecting to Stripe. Payment, expiry and cancellation race
+through guarded one-time transitions, so webhook retries cannot double-subtract,
+restore twice or cancel a payment that already won. The operator can confirm a
+manual payment, safely expire and cancel an open Stripe session, or record a
+completed refund with optional restocking only after the returned goods are back
+in hand. A temporary-database transaction drill covers checkout, signed webhook,
+packing, shipping, cancellation and refund without external calls or real money.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

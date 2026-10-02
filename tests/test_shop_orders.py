@@ -1,4 +1,6 @@
+from datetime import UTC, datetime
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +11,8 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    CardSet, CardVariant, CatalogItem, CatalogItemType, InventoryItem, ShopListing, ShopListingStatus,
+    CardSet, CardVariant, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus,
+    ShopListing, ShopListingStatus,
     ShopOrder, ShopOrderItem, ShopOrderStatus, StorageLocation, TcgCard,
 )
 
@@ -51,12 +54,12 @@ def test_requires_auth():
     assert resp.status_code in (401, 403, 307, 302)
 
 
-def test_lists_orders_that_need_action_by_default(client, session):
+def test_lists_paid_and_pending_orders_that_need_action_by_default(client, session):
     make_order(session, status=ShopOrderStatus.PAID, reference="NLV-PAID0001")
     make_order(session, status=ShopOrderStatus.PENDING_PAYMENT, reference="NLV-PEND0001")
     body = client.get("/shop-orders").text
     assert "NLV-PAID0001" in body
-    assert "NLV-PEND0001" not in body
+    assert "NLV-PEND0001" in body
 
 
 def test_all_filter_shows_everything(client, session):
@@ -113,6 +116,14 @@ def test_marking_shipped_records_the_tracking_number(client, session):
     assert order.shipped_at is not None
 
 
+def test_marking_shipped_rejects_blank_or_overlong_tracking(client, session):
+    order = make_order(session, status=ShopOrderStatus.PACKED)
+    assert client.post(f"/shop-orders/{order.id}/ship", data={"tracking_number": "   "}).status_code == 400
+    assert client.post(f"/shop-orders/{order.id}/ship", data={"tracking_number": "X" * 129}).status_code == 400
+    session.refresh(order)
+    assert order.status == ShopOrderStatus.PACKED
+
+
 def test_cannot_mark_shipped_from_pending_payment(client, session):
     """A guard against skipping straight from unpaid to shipped."""
     order = make_order(session, status=ShopOrderStatus.PENDING_PAYMENT)
@@ -131,6 +142,95 @@ def test_cannot_mark_packed_twice(client, session):
 
 def test_unknown_order_id_404s(client):
     assert client.post("/shop-orders/does-not-exist/pack").status_code == 404
+
+
+def make_reserved_order(session, *, reference="NLV-RESERVE1"):
+    session.add(CatalogItem(id="reserved-card", name="Reserved card", item_type=CatalogItemType.TCG_CARD))
+    inventory = InventoryItem(id="reserved-inv", catalog_item_id="reserved-card", quantity=0,
+                              status=InventoryStatus.RESERVED)
+    listing = ShopListing(id="reserved-listing", catalog_item_id="reserved-card",
+                          inventory_item_id="reserved-inv", title="Reserved card",
+                          price=Decimal("20.00"), quantity=0, status=ShopListingStatus.SOLD_OUT)
+    order = ShopOrder(reference=reference, email="buyer@example.test", ship_to_name="A Buyer",
+                      ship_to_address="1 Test St", ship_to_country="Australia",
+                      items_total=Decimal("20.00"), shipping_total=Decimal("9.95"),
+                      grand_total=Decimal("29.95"), currency="AUD",
+                      status=ShopOrderStatus.PENDING_PAYMENT, stock_reserved_at=datetime.now(UTC))
+    session.add_all([inventory, listing, order])
+    session.flush()
+    session.add(ShopOrderItem(order_id=order.id, listing_id=listing.id, title=listing.title,
+                              unit_price=listing.price, quantity=1))
+    session.commit()
+    return order, listing, inventory
+
+
+def test_manual_payment_finalises_a_reservation_without_decrementing_twice(client, session):
+    order, listing, inventory = make_reserved_order(session)
+    client.post(f"/shop-orders/{order.id}/paid", data={"payment_confirmed": "true"},
+                follow_redirects=False)
+    session.refresh(order)
+    session.refresh(listing)
+    session.refresh(inventory)
+    assert order.status == ShopOrderStatus.PAID
+    assert listing.quantity == 0
+    assert inventory.quantity == 0
+    assert inventory.status == InventoryStatus.SOLD
+
+
+def test_manual_payment_requires_funds_received_confirmation(client, session):
+    order, _listing, _inventory = make_reserved_order(session)
+    response = client.post(f"/shop-orders/{order.id}/paid", follow_redirects=False)
+    assert response.status_code == 400
+    session.refresh(order)
+    assert order.status == ShopOrderStatus.PENDING_PAYMENT
+
+
+def test_cancelling_pending_order_restores_stock_exactly_once(client, session):
+    order, listing, inventory = make_reserved_order(session)
+    client.post(f"/shop-orders/{order.id}/cancel", follow_redirects=False)
+    client.post(f"/shop-orders/{order.id}/cancel", follow_redirects=False)
+    session.refresh(order)
+    session.refresh(listing)
+    session.refresh(inventory)
+    assert order.status == ShopOrderStatus.CANCELLED
+    assert listing.quantity == 1
+    assert listing.status == ShopListingStatus.ACTIVE
+    assert inventory.quantity == 1
+    assert inventory.status == InventoryStatus.LISTED
+
+
+def test_stripe_backed_cancel_expires_session_before_restoring(client, session):
+    order, listing, _inventory = make_reserved_order(session)
+    order.stripe_session_id = "cs_test_cancel"
+    session.commit()
+    with patch("automation_control.shop_orders._expire_stripe_session", new=AsyncMock()) as expire:
+        client.post(f"/shop-orders/{order.id}/cancel", follow_redirects=False)
+    expire.assert_awaited_once_with("cs_test_cancel")
+    session.refresh(listing)
+    assert listing.quantity == 1
+
+
+def test_refund_requires_confirmation_and_only_restocks_when_confirmed(client, session):
+    order, listing, inventory = make_reserved_order(session)
+    client.post(f"/shop-orders/{order.id}/paid", data={"payment_confirmed": "true"},
+                follow_redirects=False)
+
+    denied = client.post(f"/shop-orders/{order.id}/refund", data={}, follow_redirects=False)
+    assert denied.status_code == 400
+    session.refresh(order)
+    assert order.status == ShopOrderStatus.PAID
+
+    client.post(f"/shop-orders/{order.id}/refund",
+                data={"refund_confirmed": "true", "restock": "true", "reason": "Returned"},
+                follow_redirects=False)
+    session.refresh(order)
+    session.refresh(listing)
+    session.refresh(inventory)
+    assert order.status == ShopOrderStatus.REFUNDED
+    assert order.refunded_at is not None
+    assert listing.quantity == 1
+    assert inventory.quantity == 1
+    assert "Returned" in order.notes
 
 
 def test_shipped_order_shows_its_tracking_number(client, session):
