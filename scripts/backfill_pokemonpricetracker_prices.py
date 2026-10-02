@@ -21,12 +21,12 @@ import time
 from collections import defaultdict
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerRateLimited
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
-from automation_control.models import CardPrice, CatalogCard, InventoryItem
+from automation_control.models import CardPrice, CatalogCard, InventoryItem, TcgCard
 from automation_control.scan_ingest.pricing import POKEMONPRICETRACKER_SOURCE_NAME, fetch_all_pokemonpricetracker_variants
 
 DEFAULT_MAX_CARDS = 25
@@ -49,12 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     searched = 0
 
     with SessionLocal() as session:
-        # The canonical inventory identity is populated for every item type,
-        # so join CatalogCard explicitly to keep this Pokemon-only job from
-        # spending time or API credits on collectibles.
+        # CatalogCard began as Pokemon-only, but now also contains scanned
+        # Dragon Ball references. Join the canonical TCG detail and filter the
+        # game explicitly: otherwise a Pokemon-only API search burns the daily
+        # allowance on guaranteed misses before reaching newly held Pokemon.
+        # Quantity zero is no longer held stock and must not consume a credit.
         held = session.execute(
             select(InventoryItem.catalog_item_id, InventoryItem.variant)
             .join(CatalogCard, CatalogCard.id == InventoryItem.catalog_item_id)
+            .join(TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id)
+            .where(TcgCard.game == "pokemon", InventoryItem.quantity > 0)
             .distinct()
         ).all()
         already_priced = set(
@@ -75,7 +79,24 @@ def main(argv: list[str] | None = None) -> int:
             print("Everything held already has a pokemonpricetracker.com price. Nothing to do.")
             return 0
 
-        card_ids = sorted(variants_needed)
+        # Spend scarce daily searches where they can close a real pricing gap
+        # first. A card with no observation from any source precedes one that
+        # already has eBay/catalogue coverage; among covered cards the oldest
+        # observation goes first. Lexicographic IDs used to leave newly held,
+        # completely unpriced cards behind months of already-covered backlog.
+        last_prices = dict(session.execute(
+            select(CardPrice.catalog_item_id, func.max(CardPrice.fetched_at))
+            .where(CardPrice.catalog_item_id.in_(variants_needed))
+            .group_by(CardPrice.catalog_item_id)
+        ).all())
+        card_ids = sorted(
+            variants_needed,
+            key=lambda card_id: (
+                last_prices.get(card_id) is not None,
+                last_prices[card_id].timestamp() if last_prices.get(card_id) is not None else float("-inf"),
+                card_id,
+            ),
+        )
         client = httpx.Client()
         try:
             for card_id in card_ids:

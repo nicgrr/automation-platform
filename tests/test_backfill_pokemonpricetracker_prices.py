@@ -15,7 +15,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from automation_control.adapters.pokemonpricetracker import PokemonPriceTrackerRateLimited
 from automation_control.database import Base
-from automation_control.models import CardPrice, CardSet, CardVariant, CatalogCard, InventoryItem
+from automation_control.models import (
+    CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CatalogItemType,
+    InventoryItem, TcgCard,
+)
 from automation_control.scan_ingest import pricing as pricing_mod
 from scripts import backfill_pokemonpricetracker_prices as backfill_mod
 
@@ -32,11 +35,13 @@ def session_factory(tmp_path):
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _seed(session_factory, cards: list[tuple[str, str]]):
+def _seed(session_factory, cards: list[tuple[str, str]], *, game: str = "pokemon"):
     with session_factory() as session:
         session.add(CardSet(id="xy11", name="Steam Siege"))
         for card_id, number in cards:
+            session.add(CatalogItem(id=card_id, item_type=CatalogItemType.TCG_CARD, name=f"Card {number}"))
             session.add(CatalogCard(id=card_id, set_id="xy11", number=number, name=f"Card {number}"))
+            session.add(TcgCard(catalog_item_id=card_id, game=game, set_id="xy11", number=number))
             session.add(InventoryItem(card_id=card_id, variant=CardVariant.NORMAL))
         session.commit()
 
@@ -118,3 +123,52 @@ def test_a_collectible_in_inventory_does_not_crash_the_run(monkeypatch, session_
         priced = session.scalars(select(CardPrice.catalog_item_id)).all()
     # The card is priced; the collectible is simply not this script's job.
     assert priced == ["xy11-1"]
+
+
+def test_non_pokemon_catalog_cards_do_not_spend_pokemon_api_credits(monkeypatch, session_factory):
+    _seed(session_factory, [("xy11-1", "1")])
+    with session_factory() as session:
+        session.add(CatalogItem(id="dragon-1", item_type=CatalogItemType.TCG_CARD, name="Dragon card"))
+        session.add(CatalogCard(id="dragon-1", set_id="xy11", number="2", name="Dragon card"))
+        session.add(TcgCard(catalog_item_id="dragon-1", game="dragon_ball_carddass", set_id="xy11", number="2"))
+        session.add(InventoryItem(card_id="dragon-1", variant=CardVariant.HOLO))
+        session.commit()
+
+    monkeypatch.setattr(backfill_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(backfill_mod, "get_settings", lambda: FakeSettings())
+    calls = []
+
+    def fake_search(api_key, *, search=None, **kwargs):
+        calls.append(search)
+        return [{"cardNumber": "1/198", "variants": {"Normal": {"marketPrice": 1.23}}}]
+
+    monkeypatch.setattr(pricing_mod, "search_cards", fake_search)
+
+    assert backfill_mod.main(["--max-cards", "5"]) == 0
+    assert calls == ["Card 1"]
+
+    with session_factory() as session:
+        assert session.scalars(select(CardPrice.catalog_item_id)).all() == ["xy11-1"]
+
+
+def test_completely_unpriced_cards_are_searched_before_covered_backlog(monkeypatch, session_factory):
+    _seed(session_factory, [("xy11-1", "1"), ("xy11-2", "2")])
+    with session_factory() as session:
+        session.add(CardPrice(
+            catalog_item_id="xy11-1", variant=CardVariant.NORMAL,
+            source="ebay_active_median", price=Decimal("2.00"), currency="AUD",
+        ))
+        session.commit()
+
+    monkeypatch.setattr(backfill_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(backfill_mod, "get_settings", lambda: FakeSettings())
+    calls = []
+
+    def fake_search(api_key, *, search=None, **kwargs):
+        calls.append(search)
+        return [{"cardNumber": "2/198", "variants": {"Normal": {"marketPrice": 1.23}}}]
+
+    monkeypatch.setattr(pricing_mod, "search_cards", fake_search)
+
+    assert backfill_mod.main(["--max-cards", "1"]) == 0
+    assert calls == ["Card 2"]

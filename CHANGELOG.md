@@ -109,6 +109,12 @@ files live under `docs/history/` with explicit historical labels. The acceptance
 journeys for stock intake, eBay, NL Vault and verified recovery are documented
 against the consolidated platform.
 
+The PokemonPriceTracker backfill now proves a held card is actually a Pokémon
+printing before spending a search credit. `catalog_cards` also contains scanned
+Dragon Ball references, so the older table-based assumption was consuming the
+daily allowance on guaranteed misses. Zero-quantity stock is excluded and cards
+with no price from any source are prioritized ahead of already-covered backlog.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in
