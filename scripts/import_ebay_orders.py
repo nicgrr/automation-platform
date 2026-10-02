@@ -37,7 +37,7 @@ from automation_control.adapters.ebay import EbayApiError
 from automation_control.adapters.ebay_write import EbayWriteAdapter
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
-from automation_control.ebay_oauth import configured_for_writes, ebay_services, valid_user_access_token
+from automation_control.ebay_oauth import configured, ebay_services, valid_user_access_token
 from automation_control.models import BulkLot, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus, ShopListing
 from automation_control.stock import decrement_listing_quantity
 
@@ -91,10 +91,10 @@ async def _reconcile(session, adapter) -> tuple[int, int]:
 
 async def run(args) -> int:
     settings = get_settings()
-    if not configured_for_writes(settings):
+    if not configured(settings):
         raise SystemExit(
-            "eBay is not configured for writes -- see ebay_oauth.configured_for_writes "
-            "(OAuth connection + the ebay_*_policy_id / ebay_merchant_location_key settings)."
+            "eBay OAuth is not configured -- order import needs a connected account, "
+            "but does not require listing business-policy IDs."
         )
 
     cipher, oauth = ebay_services(settings)

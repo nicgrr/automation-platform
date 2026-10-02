@@ -94,11 +94,26 @@ def _patch_common(monkeypatch, Session, orders_payload, *, adapter_overrides=Non
     return adapter
 
 
-def test_refuses_to_run_when_not_configured_for_writes(monkeypatch, Session):
+def test_refuses_to_run_when_oauth_is_not_configured(monkeypatch, Session):
     monkeypatch.setattr(script, "SessionLocal", Session)
     monkeypatch.setattr(script, "get_settings", Settings)  # bare defaults -- not configured
     with pytest.raises(SystemExit):
         script.main([])
+
+
+def test_order_polling_does_not_require_listing_business_policies(monkeypatch, Session):
+    _seed_listing(Session, quantity=3)
+    oauth_only = Settings(
+        ebay_env="sandbox", ebay_client_id="app-SBX-x", ebay_runame="app-SBX-runame",
+        ebay_client_secret="s", ebay_token_encryption_key="k",
+        app_public_base_url="https://example.test",
+    )
+    orders = {"orders": []}
+    adapter = _patch_common(monkeypatch, Session, orders)
+    monkeypatch.setattr(script, "get_settings", lambda: oauth_only)
+
+    assert script.main([]) == 0
+    adapter.get_orders.assert_awaited_once()
 
 
 def test_applies_a_new_order_and_decrements_the_listing(monkeypatch, Session):

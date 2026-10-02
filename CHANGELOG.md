@@ -138,6 +138,12 @@ business policies can be read and verified; refreshes preserve an older token's
 original scopes until that reconnection occurs. The staged inventory SKU remains
 private with zero offers and the failed local link is resumable.
 
+Order importing now gates only on the OAuth connection it actually uses. It no
+longer inherits the stricter live-publication check for Seller Hub business
+policies and merchant location, so sales continue to flow into local stock while
+new listing publication remains safely blocked until those write prerequisites
+are real and verified.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in
