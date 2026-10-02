@@ -35,13 +35,11 @@ for name in "${required_vars[@]}"; do
     fi
 done
 
-# Production was deliberately unlocked on 2026-09-07 for read-only market
-# pricing (Browse API). This still rejects anything that isn't one of the
-# two known values, so a typo can't silently start the service in an
-# unintended mode. Note what production does NOT unlock: the eBay adapter
-# has no mutation methods and listing_pipeline/publish.py is still an
-# unimplemented placeholder, so no code path can create or edit a listing
-# regardless of this setting.
+# Production was deliberately unlocked on 2026-09-07. This still rejects
+# anything that isn't one of the two known values, so a typo can't silently
+# start the service in an unintended mode. Production eBay writes are now
+# available only through ebay_publish.py's per-listing preflight, confirmation
+# and Approval record; setting EBAY_ENV by itself never publishes anything.
 if [[ "${EBAY_ENV}" != "sandbox" && "${EBAY_ENV}" != "production" ]]; then
     printf 'Error: EBAY_ENV must be sandbox or production\n' >&2
     exit 1

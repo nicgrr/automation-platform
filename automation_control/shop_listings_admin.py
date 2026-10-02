@@ -212,10 +212,19 @@ def _row(listing: ShopListing, set_name: str | None, ebay_link: EbayListingLink 
             "onsubmit=\"return confirm('Withdraw this listing?');\">"
             "<button class='btn small ghost'>Withdraw</button></form>"
         )
-    if ebay_link is None or ebay_link.status in (EbayListingLinkStatus.FAILED, EbayListingLinkStatus.ENDED):
+    if ebay_link is None or ebay_link.status in (
+        EbayListingLinkStatus.PUBLISHING, EbayListingLinkStatus.FAILED, EbayListingLinkStatus.ENDED,
+    ):
+        label = "Review eBay"
+        if ebay_link and ebay_link.status == EbayListingLinkStatus.PUBLISHING:
+            label = "Resume eBay"
+        elif ebay_link:
+            label = "Retry eBay"
+        # Never make the cost-bearing production POST directly from a row.
+        # The preview runs readiness checks and requires an explicit live-
+        # publication acknowledgement first.
         actions.append(
-            f"<form method='post' action='/shop-listings/{escape(listing.id)}/publish-to-ebay'>"
-            f"<button class='btn small ghost'>{'Retry eBay' if ebay_link else 'Publish to eBay'}</button></form>"
+            f"<a class='btn small ghost' href='/shop-listings/{escape(listing.id)}/ebay-preview'>{label}</a>"
         )
     else:
         actions.append(pill(f"eBay: {ebay_link.status.value}", _EBAY_LINK_PILLS.get(ebay_link.status, "neutral")))

@@ -24,6 +24,7 @@ async def test_upsert_inventory_item_puts_the_full_payload_to_the_sku_path():
         assert request.method == "PUT"
         assert request.url.path == "/sell/inventory/v1/inventory_item/listing-1"
         assert request.headers["Authorization"] == "Bearer tok"
+        assert request.headers["Content-Language"] == "en-AU"
         return httpx.Response(204)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -64,6 +65,45 @@ async def test_create_offer_returns_the_new_offer_id():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     adapter = EbayWriteAdapter("tok", client)
     assert await adapter.create_offer({"sku": "listing-1"}) == "offer-123"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_offers_filters_by_sku_and_returns_the_offer_list():
+    async def handler(request: httpx.Request):
+        assert request.method == "GET"
+        assert request.url.path == "/sell/inventory/v1/offer"
+        assert request.url.params["sku"] == "listing-1"
+        return httpx.Response(200, json={"offers": [{"offerId": "offer-123", "sku": "listing-1"}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = EbayWriteAdapter("tok", client)
+    assert await adapter.get_offers("listing-1") == [{"offerId": "offer-123", "sku": "listing-1"}]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_update_offer_replaces_the_existing_offer():
+    async def handler(request: httpx.Request):
+        assert request.method == "PUT"
+        assert request.url.path == "/sell/inventory/v1/offer/offer-123"
+        assert b'"listingDuration":"GTC"' in request.content
+        return httpx.Response(204)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = EbayWriteAdapter("tok", client)
+    await adapter.update_offer("offer-123", {"listingDuration": "GTC"})
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_offer_rejects_a_success_response_without_offer_id():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(201, json={}),
+    ))
+    adapter = EbayWriteAdapter("tok", client)
+    with pytest.raises(EbayApiError, match="offerId"):
+        await adapter.create_offer({"sku": "listing-1"})
     await client.aclose()
 
 

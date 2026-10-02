@@ -68,6 +68,11 @@ reliability and rollback improve before business workflows or schemas are remove
   during the observation window.
 - [ ] Validate direct eBay publishing end to end; retain CSV as fallback and for
   large/recovery batches.
+  - [x] Validate the complete Inventory API request contract locally, add a
+    read-only production preflight, explicit live confirmation, required item
+    specifics/condition descriptor/duration and crash-safe offer resumption.
+  - [ ] Publish one owner-approved production canary and verify it in the live
+    eBay mirror before declaring direct publishing fully validated.
 - [ ] Extract shared capture/review mechanics for cards, collectibles and accessories
   without changing their external routes.
 

@@ -37,6 +37,16 @@ The historical `pending_listings` table had zero production rows; its build/list
 endpoints now route to canonical drafts, while legacy detail handling and schema
 remain available during the observation window.
 
+Direct eBay publishing now has a read-only per-listing production preflight and
+an explicit live-publication confirmation page. Its Inventory API payload now
+includes the required item specifics, ungraded-card condition descriptor,
+Content-Language header and GTC duration. Retries discover and reuse an offer by
+SKU, including reconciling a publish that succeeded just before a process crash,
+so retrying cannot casually create a second offer. CSV remains the labelled bulk
+and recovery path; no production canary was published automatically. The old,
+unwired `listing_pipeline/publish.py` placeholder was removed so there is only
+one real direct-publish implementation.
+
 ## 2026-10-01 — Platform review, truthful health and schema baseline
 
 Completed the head-to-toe platform review and recorded all 19 owner decisions in

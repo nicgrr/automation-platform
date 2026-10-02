@@ -5,11 +5,10 @@ tests/test_ebay_adapter.py, which asserts the read adapter has neither
 possibly-billable, possibly-irreversible call against whichever
 environment it's constructed for.
 
-Nothing in this module is wired into any route or script yet -- see
-automation_control/ebay_publish.py (Phase 3) and automation_control/
-ebay_sync.py (Phase 4) for the call sites, both of which gate the
-listing-creation path behind an Approval record per the existing
-convention in automation_control/approvals.py.
+The call sites are automation_control/ebay_publish.py (explicitly confirmed
+listing creation), automation_control/ebay_sync.py (quantity reduction after
+a sale), and the order importer. Only the listing-creation path is cost-bearing,
+and it is gated by a preflight, confirmation and Approval record.
 """
 
 from typing import Any
@@ -25,12 +24,26 @@ class EbayWriteAdapter:
     def __init__(self, access_token: str | None = None, client: httpx.AsyncClient | None = None, *, environment: str = "sandbox"):
         self._access_token = access_token
         self.base_url = _BASE_URLS[environment]
+        self._owns_client = client is None
         self.client = client or httpx.AsyncClient(timeout=15.0)
 
     def _headers(self) -> dict[str, str]:
         if not self._access_token:
             raise EbayNotConfigured("eBay access token is not configured")
-        return {"Authorization": f"Bearer {self._access_token}", "Accept": "application/json", "Content-Type": "application/json"}
+        # Inventory writes require Content-Language in addition to the
+        # ordinary JSON headers.  eBay accepts BCP-47 here; every listing
+        # this adapter currently serves is on EBAY_AU.
+        return {
+            "Authorization": f"Bearer {self._access_token}",
+            "Accept": "application/json",
+            "Accept-Language": "en-AU",
+            "Content-Language": "en-AU",
+            "Content-Type": "application/json",
+        }
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self.client.aclose()
 
     async def _get(self, path: str, **kwargs: Any) -> dict:
         headers = {**self._headers(), **kwargs.pop("headers", {})}
@@ -76,11 +89,30 @@ class EbayWriteAdapter:
 
     async def create_offer(self, payload: dict) -> str:
         response = await self._post("/sell/inventory/v1/offer", json=payload)
-        return response["offerId"]
+        offer_id = response.get("offerId")
+        if not offer_id:
+            raise EbayApiError("eBay createOffer response did not contain offerId")
+        return offer_id
+
+    async def get_offer(self, offer_id: str) -> dict:
+        return await self._get(f"/sell/inventory/v1/offer/{offer_id}")
+
+    async def get_offers(self, sku: str) -> list[dict]:
+        response = await self._get("/sell/inventory/v1/offer", params={"sku": sku})
+        offers = response.get("offers", [])
+        if not isinstance(offers, list):
+            raise EbayApiError("eBay getOffers response did not contain an offers list")
+        return offers
+
+    async def update_offer(self, offer_id: str, payload: dict) -> None:
+        await self._put(f"/sell/inventory/v1/offer/{offer_id}", json=payload)
 
     async def publish_offer(self, offer_id: str) -> str:
         response = await self._post(f"/sell/inventory/v1/offer/{offer_id}/publish")
-        return response["listingId"]
+        listing_id = response.get("listingId")
+        if not listing_id:
+            raise EbayApiError("eBay publishOffer response did not contain listingId")
+        return listing_id
 
     async def withdraw_offer(self, offer_id: str) -> None:
         await self._post(f"/sell/inventory/v1/offer/{offer_id}/withdraw")
