@@ -156,6 +156,30 @@ def test_queue_shows_the_matcher_s_suggestion(client, media, session, tmp_path):
     assert "name='number' value='31'" in resp.text
 
 
+def test_exact_bandai_code_is_suggested_even_when_foil_art_hash_is_outside_limit(
+    client, media, session, tmp_path,
+):
+    card_id = _cache_card(
+        session, tmp_path, set_id="op-1", set_name="One Piece",
+        number="OP09-046", name="Crocodile", seed=1,
+    )
+    session.get(CardSet, "op-1").game = "one_piece"
+    session.add(TcgCard(
+        catalog_item_id=card_id, game="one_piece", set_id="op-1",
+        number="OP09-046", character="Crocodile", language="English",
+    ))
+    session.commit()
+    # Deliberately unrelated pixels: the exact printed code retained in the
+    # filename must beat the pHash cutoff, while still leaving base/parallel
+    # choice to the artwork ranking if more than one shares that code.
+    _queue(media, "sheet-a-card1-OP09-046-Crocodile.jpg", seed=99)
+
+    resp = client.get("/review")
+
+    assert "Crocodile" in resp.text
+    assert "name='number' value='OP09-046'" in resp.text
+
+
 def test_queue_shows_name_set_rarity_and_cost_for_the_top_match(client, media, session, tmp_path):
     """The matched record is a real editor, prefilled from the catalogue."""
     _cache_card(session, tmp_path, set_id="xy11", number="31", name="Dewott", seed=7, rarity="Uncommon")
@@ -172,6 +196,22 @@ def test_queue_shows_name_set_rarity_and_cost_for_the_top_match(client, media, s
     assert "name='language' value='English'" in resp.text
     assert "name='condition'" in resp.text
     assert "Confirm" in resp.text
+
+
+def test_queue_shows_ebay_listing_prices_and_bulk_checkboxes(client, media, session, tmp_path):
+    _cache_card(session, tmp_path, set_id="xy11", number="31", name="Dewott", seed=7)
+    session.add_all([
+        CardPrice(catalog_item_id="xy11-31", source="ebay_active_low", price="4.20", currency="AUD"),
+        CardPrice(catalog_item_id="xy11-31", source="ebay_active_median", price="9.50", currency="AUD"),
+    ])
+    session.commit()
+    _queue(media, "sheet-a-card1-unidentified.jpg", seed=7)
+
+    resp = client.get("/review")
+    assert "eBay AU active listings: low <b>$4.20</b>" in resp.text
+    assert "median <b>$9.50</b>" in resp.text
+    assert "class='bulk-check'" in resp.text
+    assert "id='bulk-save'" in resp.text
 
 
 def test_queue_shows_an_empty_price_field_with_no_price_on_file(client, media, session, tmp_path):

@@ -22,6 +22,7 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import imagehash
 import numpy as np
@@ -58,7 +59,12 @@ from .reverse_image_search import ReverseImageSearchError, search_image
 from .scan_feed import _archived_sheet
 from .scan_ingest import catalog
 from .scan_ingest.commit import CommitRefused, commit_card
-from .scan_ingest.identify import Identification, Source, _phash_confidence, art_phash
+from .scan_ingest.foil import catalogue_variant
+from .scan_ingest.identify import (
+    Identification, Source, _phash_confidence, art_phash,
+    detect_card_code, detect_card_game, detect_card_language, reference_language,
+    reference_matches_game,
+)
 from .scan_ingest.session import _load_all_catalogs, start_or_resume
 from .ui import brand_header, page, pill
 
@@ -126,6 +132,12 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
                 art_bits.append(imagehash.hex_to_hash(art).hash.flatten() if art else None)
     if not entries:
         return {crop: None for crop in crops}
+    catalog_languages = {reference_language(reference) for _, reference in entries} - {None}
+    by_printed_code: dict[str, list[int]] = {}
+    for index, (_, reference) in enumerate(entries):
+        number = (reference.number or "").upper().replace(" ", "")
+        if re.fullmatch(r"[A-Z0-9]+-\d{2,3}", number):
+            by_printed_code.setdefault(number, []).append(index)
     matrix = np.array(bits, dtype=bool)
     # Reverse holos barely resemble their flat reference art anywhere except
     # the artwork window, so that window is matched as its own signal rather
@@ -175,9 +187,51 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
             """A card's distance on whichever signal found it best."""
             return min(int(distances[i]), art_lookup.get(i, 64))
 
-        order = sorted(order, key=score)
+        detected_game = detect_card_game(crop)
+        if detected_game:
+            matching_game = [i for i in order if reference_matches_game(entries[i][1], detected_game)]
+            if matching_game:
+                order = matching_game
+
+        detected_language = detect_card_language(crop) if len(catalog_languages) > 1 else None
+        if detected_language:
+            matching = [
+                i for i in order
+                if reference_language(entries[i][1]) == detected_language
+            ]
+            if matching and any(
+                reference_language(entries[i][1]) not in {None, detected_language}
+                for i in order
+            ):
+                order = matching
+
+        printed_code = detect_card_code(crop)
+        exact_code_indices = list(by_printed_code.get(printed_code or "", []))
+        if detected_game:
+            exact_code_indices = [
+                i for i in exact_code_indices
+                if reference_matches_game(entries[i][1], detected_game)
+            ]
+        if detected_language:
+            same_language_codes = [
+                i for i in exact_code_indices
+                if reference_language(entries[i][1]) == detected_language
+            ]
+            if same_language_codes:
+                exact_code_indices = same_language_codes
+        exact_code_set = set(exact_code_indices)
+        if exact_code_indices:
+            exact_code_indices.sort(key=lambda i: (score(i), int(distances[i])))
+            order = exact_code_indices + [i for i in order if i not in exact_code_set]
+
+        # Whole-card distance breaks equal art-window scores. That matters
+        # for same-art language printings even when OCR was inconclusive.
+        order = sorted(
+            order,
+            key=lambda i: (0 if i in exact_code_set else 1, score(i), int(distances[i])),
+        )
         best = score(order[0]) if order else 64
-        if best > settings.scan_phash_max_distance:
+        if best > settings.scan_phash_max_distance and not exact_code_indices:
             out[crop] = None
             continue
 
@@ -191,7 +245,7 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
         candidates = []
         for i in order:
             distance = score(i)
-            if distance > settings.scan_phash_max_distance:
+            if distance > settings.scan_phash_max_distance and i not in exact_code_set:
                 break
             set_id, reference = entries[i]
             if reference.card_id in seen:
@@ -212,8 +266,10 @@ def _suggestions(crops: list[Path], catalogs, totals: dict, settings) -> dict[Pa
                 set_id,
                 Identification(
                     card_id=reference.card_id, number=reference.number, name=reference.name,
-                    source=Source.PHASH,
-                    confidence=_phash_confidence(distance, margin, settings.scan_phash_max_distance),
+                    source=Source.OCR if i in exact_code_set else Source.PHASH,
+                    confidence=(0.9 if i in exact_code_set else _phash_confidence(
+                        distance, margin, settings.scan_phash_max_distance
+                    )),
                     phash_distance=distance, phash_margin=margin,
                     note=reference.rarity or None,
                 ),
@@ -335,12 +391,23 @@ def review_page(
         if identification.card_id
     ]
     prices = _best_prices(session, candidate_card_ids)
+    ebay_stats = _ebay_listing_stats(session, candidate_card_ids)
     languages = dict(
         session.execute(
             select(TcgCard.catalog_item_id, TcgCard.language)
             .where(TcgCard.catalog_item_id.in_(candidate_card_ids))
         ).all()
     ) if candidate_card_ids else {}
+    candidate_cards = {
+        card.id: card for card in session.scalars(
+            select(CatalogCard).where(CatalogCard.id.in_(candidate_card_ids))
+        )
+    } if candidate_card_ids else {}
+    variants = {
+        card_id: known.value
+        for card_id, card in candidate_cards.items()
+        if (known := catalogue_variant(card)[0]) is not None
+    }
 
     def _form_context_for(crop: Path, candidates) -> tuple[str, str]:
         # Priority: (1) this crop's own top guess -- strongest signal when
@@ -364,7 +431,8 @@ def review_page(
         cards.append(
             _card_html(
                 crop, candidates, names, number_options, position, prices,
-                seeded_set=seeded_set, languages=languages,
+                seeded_set=seeded_set, languages=languages, variants=variants,
+                ebay_stats=ebay_stats,
             )
         )
 
@@ -383,14 +451,37 @@ def review_page(
         + f"<div class='stat-card'><div class='label'>Cached sets to match against</div><div class='value'>{len(catalogs)}</div></div>"
         + "</div>"
         + f"<div class='toolbar'>{''.join(nav)}</div>"
+        + _BULK_TOOLBAR
         + f"<div class='review-grid'>{''.join(cards)}</div>"
-        + _STYLE + _SCRIPT
+        + _STYLE + _SCRIPT + _BULK_SCRIPT
     )
     return HTMLResponse(page("EzBay — Review queue", body))
 
 
 
 _SHEET_MATCHED_RE = re.compile(r"^Sheet (sheet-[\d-]+)\.png: matched .+? \(([\w\d]+)\), rotation")
+
+
+def _ebay_listing_stats(session: Session, card_ids: list[str]) -> dict[str, tuple[Decimal, Decimal | None]]:
+    """Latest eBay active-listing (low, median) per card, from the price import."""
+    if not card_ids:
+        return {}
+    rows = session.execute(
+        select(CardPrice.catalog_item_id, CardPrice.source, CardPrice.price)
+        .where(
+            CardPrice.catalog_item_id.in_(card_ids),
+            CardPrice.source.in_(("ebay_active_low", "ebay_active_median")),
+            CardPrice.price > 0,
+        )
+        .order_by(CardPrice.fetched_at.desc())
+    ).all()
+    latest: dict[str, dict[str, Decimal]] = {}
+    for card_id, source, price in rows:
+        latest.setdefault(card_id, {}).setdefault(source, Decimal(str(price)))
+    return {
+        card_id: (found["ebay_active_low"], found.get("ebay_active_median"))
+        for card_id, found in latest.items() if "ebay_active_low" in found
+    }
 
 
 def _sheet_set_id(stem: str) -> str | None:
@@ -508,9 +599,13 @@ def _card_html(
     *,
     seeded_set: str = "",
     languages: dict[str, str] | None = None,
+    variants: dict[str, str] | None = None,
+    ebay_stats: dict[str, tuple[Decimal, Decimal | None]] | None = None,
 ) -> str:
+    ebay_stats = ebay_stats or {}
     prices = prices or {}
     languages = languages or {}
+    variants = variants or {}
     name = crop.name
     position_html = f"<div class='review-position'>#{position}</div>" if position else ""
     # Cache-busted by mtime: a recrop overwrites this same filename in
@@ -549,6 +644,7 @@ def _card_html(
             f"data-name='{escape(identification.name or '')}' "
             f"data-rarity='{escape(identification.note or '')}' "
             f"data-language='{escape(languages.get(card_id, 'English'))}' "
+            f"data-variant='{escape(variants.get(card_id, ''))}' "
             f"data-price='{escape(str(price) if price is not None else '')}'"
         )
         if primary:
@@ -634,6 +730,30 @@ def _card_html(
         "<div class='details-shot-status' role='status' aria-live='polite'></div>"
         "</div>"
     )
+    research_query = " ".join(value for value in (
+        top_name, top_number, set_names.get(default_set, ""), top_language,
+    ) if value)
+    ebay_low_median = ebay_stats.get(top_card_id) if candidates else None
+    ebay_line = ""
+    if ebay_low_median:
+        low, median = ebay_low_median
+        median_text = f" &middot; median <b>${median:,.2f}</b>" if median is not None else ""
+        ebay_line = (
+            f"<div class='ebay-active'>eBay AU active listings: low <b>${low:,.2f}</b>{median_text} "
+            "<span class='muted'>(asking prices, not sold; the median can include parallels)</span></div>"
+        )
+    price_research = (
+        "<div class='price-research'><div class='details-shot-title'>Check sold-market value</div>"
+        + ebay_line
+        + "<div class='details-shot-help'>PriceCharting is the primary estimate because it aggregates completed "
+        "sales. Verify scarce or high-value cards against eBay sold results, then use the screenshot reader above "
+        "to import the exact ungraded AUD value.</div>"
+        f"<a class='pricecharting-link chip' target='_blank' rel='noopener' "
+        f"href='https://www.pricecharting.com/search-products?q={quote_plus(research_query)}&amp;type=prices'>PriceCharting estimate</a> "
+        f"<a class='ebay-sold-link chip' target='_blank' rel='noopener' "
+        f"href='https://www.ebay.com.au/sch/i.html?_nkw={quote_plus(research_query)}&amp;LH_Sold=1&amp;LH_Complete=1'>eBay sold results</a>"
+        "</div>"
+    )
     title_import = (
         "<div class='title-import'>"
         "<div class='details-shot-title'>Paste a listing title</div>"
@@ -647,6 +767,7 @@ def _card_html(
     return (
         "<div class='review-card'>"
         + position_html
+        + "<label class='bulk-pick'><input type='checkbox' class='bulk-check'> Select</label>"
         + f"<a class='review-face' href='{image_url}' target='_blank' rel='noopener'>{thumb}</a>"
         + sheet_html
         + "<form method='post' action='/review/decide' class='review-form'>"
@@ -657,9 +778,10 @@ def _card_html(
         + "<input type='hidden' name='review_form_version' value='2'>"
         + title_import
         + screenshot_import
+        + price_research
         + details
         + candidate_html
-        + _printing_picker()
+        + _printing_picker(CardVariant(variants[top_card_id]) if top_card_id in variants else CardVariant.NORMAL)
         + _condition_picker()
         + f"<div class='filename' title='{escape(name)}'>{escape(name)}</div>"
         + "<div class='manual'>"
@@ -724,6 +846,7 @@ def review_parse_listing_title(
         "set_name": card_set.name if card_set else card.set_id,
         "number": card.number, "name": display_name, "rarity": card.rarity or "",
         "language": tcg.language if tcg else ("Japanese" if "japanese" in title.casefold() else "English"),
+        "variant": (known.value if (known := catalogue_variant(card)[0]) else ""),
         "price": "", "apply_fields": apply_fields, "warnings": [], "source_site": "pasted listing title",
     }
 
@@ -853,6 +976,10 @@ def review_decide(
         printing = CardVariant(variant) if variant else CardVariant.NORMAL
     except ValueError:
         raise HTTPException(status_code=400, detail=f"unknown printing: {variant!r}")
+    matched_card = session.get(CatalogCard, match.card_id)
+    known_printing, _ = catalogue_variant(matched_card) if matched_card is not None else (None, None)
+    if known_printing is not None:
+        printing = known_printing
 
     condition = condition.strip() or "Near Mint"
     if condition not in _CONDITIONS:
@@ -1432,6 +1559,7 @@ def _screenshot_details_payload(session: Session, details: ExtractedCardDetailsS
         "number": number,
         "rarity": rarity,
         "language": language,
+        "variant": (known.value if card is not None and (known := catalogue_variant(card)[0]) else ""),
         "price": price,
         "currency": "AUD" if price else (details.currency or "").strip().upper(),
         "source_site": source,
@@ -1842,6 +1970,11 @@ def review_catalog(
             .where(TcgCard.catalog_item_id.in_(card_ids))
         ).all()
     ) if card_ids else {}
+    variants = {
+        card.id: known.value
+        for card in cards
+        if (known := catalogue_variant(card)[0]) is not None
+    }
     total = card_set.printed_total
     return {
         "set_id": set_id,
@@ -1853,6 +1986,7 @@ def review_catalog(
                 "n": card.name,
                 "rarity": card.rarity or "",
                 "language": languages.get(card.id, "English"),
+                "variant": variants.get(card.id, ""),
                 "price": str(prices[card.id]) if card.id in prices else "",
             }
             for card in cards
@@ -1865,7 +1999,22 @@ def review_image(name: str, user: str = Depends(require_dashboard_user)):
     return FileResponse(_safe_crop(name), headers={"Cache-Control": "private, max-age=300"})
 
 
+_BULK_TOOLBAR = (
+    "<div class='toolbar bulk-toolbar'>"
+    "<label class='chip'><input type='checkbox' id='bulk-all'> Select all on page</label>"
+    "<button type='button' id='bulk-save' disabled>Save &amp; add selected (0)</button>"
+    "<span id='bulk-status' class='muted' role='status' aria-live='polite'></span>"
+    "</div>"
+)
+
 _STYLE = """<style>
+.bulk-pick{display:inline-flex;gap:6px;align-items:center;font-size:13px;font-weight:600;cursor:pointer}
+.bulk-pick input,.bulk-toolbar input{width:18px;height:18px}
+.bulk-toolbar button{padding:10px 16px;border-radius:10px;cursor:pointer;font-size:15px}
+.bulk-toolbar button:disabled{opacity:.5;cursor:not-allowed}
+.review-card.bulk-failed{outline:2px solid var(--danger)}
+.bulk-error{color:var(--danger);font-size:13px;margin-top:6px}
+.ebay-active{font-size:14px;margin:4px 0 8px}
 .toolbar{display:flex;gap:10px;align-items:center;margin:0 0 18px;flex-wrap:wrap}
 .chip{display:inline-flex;align-items:center;padding:10px 16px;border-radius:999px;font-size:14px;
   border:1px solid var(--panel-border);color:var(--text-dim);text-decoration:none;background:var(--surface-sunken)}
@@ -2074,6 +2223,7 @@ _SCRIPT = """<script>
     var rarityInput = form.querySelector('input[name="rarity"]');
     var languageInput = form.querySelector('input[name="language"]');
     var priceInput = form.querySelector('input[name="price"]');
+    var variantInput = form.querySelector('select[name="variant"]');
     var setSelect = form.querySelector('select[name="set_id"]');
     var selectedId = form.querySelector('input[name="selected_card_id"]');
     var detailsId = form.querySelector('input[name="details_card_id"]');
@@ -2088,6 +2238,8 @@ _SCRIPT = """<script>
     var titleImportInput = form.querySelector('.title-import-input');
     var titleImportGo = form.querySelector('.title-import-go');
     var titleImportStatus = form.querySelector('.title-import-status');
+    var pricechartingLink = form.querySelector('.pricecharting-link');
+    var ebaySoldLink = form.querySelector('.ebay-sold-link');
     if (!wrap || !numberInput || !list || !setSelect) return;
 
     var options = [];
@@ -2112,6 +2264,10 @@ _SCRIPT = """<script>
       rarityInput.value = opt.rarity || '';
       languageInput.value = opt.language || 'English';
       priceInput.value = opt.price || '';
+      if (variantInput && opt.variant) variantInput.value = opt.variant;
+      var researchQuery = [opt.n, opt.number, opt.language].filter(Boolean).join(' ');
+      if (pricechartingLink) pricechartingLink.href = 'https://www.pricecharting.com/search-products?q=' + encodeURIComponent(researchQuery) + '&type=prices';
+      if (ebaySoldLink) ebaySoldLink.href = 'https://www.ebay.com.au/sch/i.html?_nkw=' + encodeURIComponent(researchQuery) + '&LH_Sold=1&LH_Complete=1';
       selectedId.value = opt.id || '';
       detailsId.value = opt.id || '';
       dirtyInput.value = '';
@@ -2131,6 +2287,7 @@ _SCRIPT = """<script>
           n: button.dataset.name,
           rarity: button.dataset.rarity,
           language: button.dataset.language,
+          variant: button.dataset.variant,
           price: button.dataset.price
         });
         // Keep search suggestions aligned if this alternate came from a
@@ -2224,6 +2381,7 @@ _SCRIPT = """<script>
       if (data.rarity) rarityInput.value = data.rarity;
       if (data.language) languageInput.value = data.language;
       if (data.price) priceInput.value = data.price;
+      if (variantInput && data.variant) variantInput.value = data.variant;
       selectedId.value = data.catalog_item_id || '';
       detailsId.value = data.catalog_item_id || '';
       dirtyInput.value = '';
@@ -2383,5 +2541,76 @@ _SCRIPT = """<script>
     }
     if (claudeSuggestRead && detailsStatus) claudeSuggestRead.addEventListener('click', askClaude);
   });
+})();
+</script>"""
+
+
+_BULK_SCRIPT = """<script>
+(function () {
+  var saveBtn = document.getElementById('bulk-save');
+  var allBox = document.getElementById('bulk-all');
+  var status = document.getElementById('bulk-status');
+  if (!saveBtn) return;
+  function checked() { return Array.prototype.slice.call(document.querySelectorAll('.bulk-check:checked')); }
+  function refresh() {
+    var n = checked().length;
+    saveBtn.textContent = 'Save & add selected (' + n + ')';
+    saveBtn.disabled = n === 0;
+  }
+  document.addEventListener('change', function (evt) {
+    if (evt.target.classList && evt.target.classList.contains('bulk-check')) refresh();
+  });
+  allBox.addEventListener('change', function () {
+    document.querySelectorAll('.bulk-check').forEach(function (box) { box.checked = allBox.checked; });
+    refresh();
+  });
+  function bodyFor(form) {
+    var data = new FormData(form);
+    data.set('action', 'accept');
+    var primary = form.querySelector('button.pick-primary');
+    var numberInput = form.querySelector("input[name='number']");
+    var setSelect = form.querySelector("[name='set_id']");
+    if (primary && numberInput && numberInput.value === primary.dataset.number &&
+        (!setSelect || setSelect.value === primary.dataset.setId)) {
+      data.set('pick', primary.value);
+    }
+    return data;
+  }
+  saveBtn.addEventListener('click', function () {
+    var boxes = checked();
+    if (!boxes.length) return;
+    if (!window.confirm('Save ' + boxes.length + ' card(s) to inventory using the values shown on each card?')) return;
+    saveBtn.disabled = true;
+    var done = 0, failed = 0, index = 0;
+    function next() {
+      if (index >= boxes.length) {
+        status.textContent = 'Saved ' + done + (failed ? ', ' + failed + ' need attention' : '') + '.';
+        if (!failed) { window.location.reload(); } else { refresh(); }
+        return;
+      }
+      var box = boxes[index++];
+      var card = box.closest('.review-card');
+      var form = card.querySelector('form.review-form');
+      status.textContent = 'Saving ' + index + ' of ' + boxes.length + '…';
+      fetch('/review/decide', {method: 'POST', body: bodyFor(form), redirect: 'follow'})
+        .then(function (response) {
+          if (response.ok) { done++; card.remove(); return; }
+          return response.json().catch(function () { return {}; }).then(function (payload) {
+            failed++;
+            card.classList.add('bulk-failed');
+            var old = card.querySelector('.bulk-error'); if (old) old.remove();
+            var note = document.createElement('div');
+            note.className = 'bulk-error';
+            note.textContent = payload.detail || ('Could not save (HTTP ' + response.status + ')');
+            form.appendChild(note);
+            box.checked = false;
+          });
+        })
+        .catch(function () { failed++; box.checked = false; })
+        .then(next);
+    }
+    next();
+  });
+  refresh();
 })();
 </script>"""

@@ -75,6 +75,16 @@ def test_a_live_candidate_still_shows_once_the_dead_one_is_filtered(session, cac
     assert [c["item_id"] for c in pending] == ["live-item"]
 
 
+def test_a_cached_candidate_fixed_since_refresh_is_dropped(session, cache_path):
+    session.add(CatalogCard(id="xy11-1", set_id="xy11", number="1", name="Fixed Card"))
+    session.add(InventoryItem(id="fixed-item", card_id="xy11-1", variant=CardVariant.HOLO,
+                              condition="Near Mint", quantity=1))
+    session.commit()
+    _write_cache(cache_path, [_candidate("fixed-item")])
+
+    assert _pending(session) == []
+
+
 def test_foil_review_page_skips_a_stale_candidate_and_shows_the_real_one(client, session, cache_path):
     session.add(CatalogCard(id="xy11-1", set_id="xy11", number="1", name="Live Card"))
     session.add(InventoryItem(id="live-item", card_id="xy11-1", variant=CardVariant.NORMAL,

@@ -22,18 +22,25 @@ from sqlalchemy import select
 from automation_control.audit import record_event
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
-from automation_control.models import CatalogCard, InventoryItem
+from automation_control.models import CardVariant, CatalogCard, InventoryItem
 from automation_control.scan_ingest.commit import _image_quality, _store_scan_image
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Move a misfiled inventory item onto the card its photo shows")
     parser.add_argument("--item-id", required=True, help="the InventoryItem.id currently filed wrong")
-    parser.add_argument("--correct-set-id", required=True, help="the CardSet.id the photo actually belongs to")
-    parser.add_argument("--correct-number", required=True, help="the card number within that set")
+    parser.add_argument("--correct-card-id", help="exact CatalogCard.id (preferred when a number has base/parallel printings)")
+    parser.add_argument("--correct-set-id", help="the CardSet.id the photo actually belongs to")
+    parser.add_argument("--correct-number", help="the card number within that set")
+    parser.add_argument(
+        "--correct-variant", choices=[variant.value for variant in CardVariant],
+        help="also correct the printing in the same audited transaction",
+    )
     parser.add_argument("--reason", required=True, help="why -- goes into the audit log, not optional")
     parser.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     args = parser.parse_args(argv)
+    if not args.correct_card_id and not (args.correct_set_id and args.correct_number):
+        parser.error("provide --correct-card-id, or both --correct-set-id and --correct-number")
 
     media_dir = Path(get_settings().scan_media_dir)
 
@@ -44,23 +51,43 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         wrong_card = session.get(CatalogCard, item.catalog_item_id)
 
-        correct_card = session.scalar(
-            select(CatalogCard).where(CatalogCard.set_id == args.correct_set_id, CatalogCard.number == args.correct_number)
-        )
+        if args.correct_card_id:
+            correct_card = session.get(CatalogCard, args.correct_card_id)
+        else:
+            matches = session.scalars(
+                select(CatalogCard).where(
+                    CatalogCard.set_id == args.correct_set_id,
+                    CatalogCard.number == args.correct_number,
+                )
+            ).all()
+            if len(matches) > 1:
+                print(
+                    f"{len(matches)} printings share {args.correct_set_id}#{args.correct_number}; "
+                    "use --correct-card-id: " + ", ".join(card.id for card in matches)
+                )
+                return 1
+            correct_card = matches[0] if matches else None
         if correct_card is None:
-            print(f"no catalog card {args.correct_set_id}#{args.correct_number} -- is that set cached?")
+            label = args.correct_card_id or f"{args.correct_set_id}#{args.correct_number}"
+            print(f"no catalog card {label} -- is that set cached?")
             return 1
         if correct_card.id == item.catalog_item_id:
-            print("item is already filed under that card -- nothing to do")
-            return 0
+            if not args.correct_variant or item.variant == CardVariant(args.correct_variant):
+                print("item is already filed under that card/printing -- nothing to do")
+                return 0
+
+        original_variant = item.variant
+        correct_variant = CardVariant(args.correct_variant) if args.correct_variant else item.variant
 
         print(f"{wrong_card.card_set.name if wrong_card.card_set else wrong_card.set_id} #{wrong_card.number} {wrong_card.name}"
-              f"  ->  {correct_card.card_set.name if correct_card.card_set else correct_card.set_id} #{correct_card.number} {correct_card.name}")
+              f" [{original_variant.value}]  ->  "
+              f"{correct_card.card_set.name if correct_card.card_set else correct_card.set_id} "
+              f"#{correct_card.number} {correct_card.name} [{correct_variant.value}]")
 
         existing = session.scalar(
             select(InventoryItem).where(
                 InventoryItem.catalog_item_id == correct_card.id,
-                InventoryItem.variant == item.variant,
+                InventoryItem.variant == correct_variant,
                 InventoryItem.condition == item.condition,
             )
         )
@@ -79,16 +106,17 @@ def main(argv: list[str] | None = None) -> int:
                 not existing.scan_image_path
                 or _image_quality(Path(item.scan_image_path)) > _image_quality(Path(existing.scan_image_path))
             ):
-                stored = _store_scan_image(Path(item.scan_image_path), media_dir, set_code, correct_card.number, item.variant, item.condition)
+                stored = _store_scan_image(Path(item.scan_image_path), media_dir, set_code, correct_card.number, correct_variant, item.condition)
                 existing.scan_image_path = str(stored)
             session.delete(item)
             result_id = existing.id
         else:
             if item.scan_image_path:
-                stored = _store_scan_image(Path(item.scan_image_path), media_dir, set_code, correct_card.number, item.variant, item.condition)
+                stored = _store_scan_image(Path(item.scan_image_path), media_dir, set_code, correct_card.number, correct_variant, item.condition)
                 item.scan_image_path = str(stored)
             item.card_id = correct_card.id
             item.catalog_item_id = correct_card.id
+            item.variant = correct_variant
             result_id = item.id
 
         session.commit()
@@ -99,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
             details={
                 "from": f"{wrong_card.set_id}#{wrong_card.number} {wrong_card.name}",
                 "to": f"{correct_card.set_id}#{correct_card.number} {correct_card.name}",
+                "from_variant": original_variant.value,
+                "to_variant": correct_variant.value,
                 "reason": args.reason,
             },
         )

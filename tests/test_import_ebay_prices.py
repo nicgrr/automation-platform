@@ -65,6 +65,19 @@ def test_build_query_prefers_set_code_and_number():
     assert script.build_query(item, tcg) == ("Divine Departure OP13-076", "Divine Departure")
 
 
+def test_build_query_does_not_repeat_the_set_code_when_number_is_the_full_code():
+    item = CatalogItem(id="x", item_type=CatalogItemType.TCG_CARD, name="Basil Hawkins")
+    tcg = TcgCard(catalog_item_id="x", game="one_piece", set_code="OP07", number="OP07-029")
+    assert script.build_query(item, tcg) == ("Basil Hawkins OP07-029", "Basil Hawkins")
+
+
+def test_build_query_strips_catalogue_decoration_and_adds_japanese():
+    item = CatalogItem(id="x", item_type=CatalogItemType.TCG_CARD, name="Zamasu - FB11-063")
+    tcg = TcgCard(catalog_item_id="x", game="dragon_ball_fusion_world", set_code="FB11",
+                  number="FB11-063", language="Japanese")
+    assert script.build_query(item, tcg) == ("Zamasu - FB11-063 Japanese", "Zamasu")
+
+
 def test_build_query_uses_set_name_for_pokemon_rows_without_a_set_code():
     # every pokemon row has set_id + card_sets rather than a set_code, so
     # without this they all degraded to a bare, useless name search

@@ -24,6 +24,7 @@ sudo journalctl -u ezbay -f
 
 | Timer | Schedule | What |
 |---|---|---|
+| `tcgcsv-pricing-sync.timer` | daily, approximately 08:17 | Imports the free TCGCSV catalogue/prices once when its daily build changes |
 | `inventory-audit.timer` | hourly, 22:00→14:00 | Photo-identity audit (read-only) |
 | `scanbd-restart.timer` | daily, 00:00 | Restarts `scanbd` pre-emptively |
 | `pokemonpricetracker-backfill.timer` | daily, 12:00 | Prices already-scanned inventory via the paid API — **rate-limit-sensitive, see below** |

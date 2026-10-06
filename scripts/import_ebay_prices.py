@@ -109,15 +109,23 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
         clean_name = re.sub(r"\s*\([^)]*\)\s*$", "", item.name).strip()
         return f"{collectible.brand} {clean_name}{secret}".strip(), collectible.brand
     if tcg is not None:
+        # Catalogue names carry a " - FB11-002" suffix or a "(048)" / "(Reprint)"
+        # tag that real listing titles never contain verbatim, which made the
+        # relevance filter throw away every genuine result.
+        base_name = re.sub(r"\s+-\s+[A-Z0-9]+-\d+\b.*$", "", item.name).strip()
+        base_name = re.sub(r"\s*\((?:\d+|reprint)\)\s*$", "", base_name, flags=re.I).strip() or item.name
+        language = " Japanese" if (tcg.language or "").lower() == "japanese" else ""
         if tcg.set_code and tcg.number:
-            code = f"{tcg.set_code}-{tcg.number}"
+            # Some rows store the full printed code ("OP07-029") as the number.
+            number = tcg.number
+            code = number if number.upper().startswith(f"{tcg.set_code.upper()}-") else f"{tcg.set_code}-{number}"
             # A collector-export row's own name sometimes already carries
             # the code ("Piccolo - FB03-070 (Alternate Art)") -- appending
             # it again produced a garbled, zero-result query like
             # "... FB03-070 FB03-070".
             if code.lower() in item.name.lower():
-                return item.name, item.name
-            return f"{item.name} {code}".strip(), item.name
+                return f"{item.name}{language}".strip(), base_name
+            return f"{base_name} {code}{language}".strip(), base_name
         if set_name and tcg.number:
             return f"{item.name} {set_name} {tcg.number}".strip(), item.name
         if tcg.number:
@@ -173,7 +181,7 @@ def _price_values(listings: list[dict], must_contain: str | None = None, exclude
 
 def _targets(session, *, price_all: bool, game: str | None, limit: int,
              collectibles: bool = False, brand: str | None = None, status: str | None = None,
-             sealed: bool = False):
+             sealed: bool = False, card_ids: list[str] | None = None):
     query = (
         select(CatalogItem, TcgCard, CardSet.name, CollectibleProduct, SealedProduct)
         .join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id, isouter=True)
@@ -187,7 +195,9 @@ def _targets(session, *, price_all: bool, game: str | None, limit: int,
     # it's a reference product you want a market price for regardless, to
     # decide whether to buy it or to check a deal against (see
     # deal_check.py's sealed-product matching).
-    if collectibles or brand:
+    if card_ids:
+        query = query.where(CatalogItem.id.in_(card_ids))
+    elif collectibles or brand:
         query = query.where(CatalogItem.item_type == CatalogItemType.COLLECTIBLE)
         if brand:
             query = query.where(CollectibleProduct.brand.ilike(brand))
@@ -255,7 +265,8 @@ async def run(args) -> int:
     priced = skipped = failed = 0
     with SessionLocal() as session:
         targets = _targets(session, price_all=args.all, game=args.game, limit=args.limit,
-                           collectibles=args.collectibles, brand=args.brand, status=args.status, sealed=args.sealed)
+                           collectibles=args.collectibles, brand=args.brand, status=args.status, sealed=args.sealed,
+                           card_ids=[c.strip() for c in (args.card_ids or '').split(',') if c.strip()])
         if not targets:
             print("no matching cards to price.")
             return 0
@@ -316,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--status", help="only price owned items with this InventoryStatus, e.g. personal_collection")
     parser.add_argument("--sealed", action="store_true",
                         help="price sealed products (ETBs, booster boxes) by catalogue, not just what you own")
+    parser.add_argument("--card-ids", help="comma-separated catalogue ids to price (e.g. cards still in the review queue)")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"max cards to price this run (default {DEFAULT_LIMIT})")
     parser.add_argument("--marketplace", default="EBAY_AU", help="eBay marketplace id (default EBAY_AU)")
     args = parser.parse_args(argv)

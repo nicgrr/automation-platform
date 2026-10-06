@@ -8,7 +8,8 @@ from PIL import Image
 from automation_control.card_recognition import ExtractedCard
 from automation_control.scan_ingest import identify as identify_mod
 from automation_control.scan_ingest.identify import (
-    Identification, ReferenceCard, Source, detect_sheet_set_and_rotation, identify_card,
+    Identification, ReferenceCard, Source, detect_card_code, detect_card_game, detect_card_language,
+    detect_sheet_set_and_rotation, identify_card,
     identify_card_via_vision, read_card_number, resolve_vision_extraction,
 )
 
@@ -71,6 +72,41 @@ def test_read_card_number_survives_missing_tesseract(tmp_path):
 
 def test_read_card_number_handles_unreadable_file(tmp_path):
     assert read_card_number(tmp_path / "missing.jpg") == (None, None)
+
+
+def test_language_detector_proves_english_from_rules_text(tmp_path):
+    image = _write_image(tmp_path / "c.jpg", 1)
+    with patch.object(
+        identify_mod.pytesseract,
+        "image_to_string",
+        return_value="[Activate: Main] Return one CHARACTER card from your hand",
+    ):
+        assert detect_card_language(image) == "English"
+
+
+def test_language_detector_does_not_call_failed_english_ocr_japanese(tmp_path):
+    image = _write_image(tmp_path / "c.jpg", 1)
+    with patch.object(identify_mod.pytesseract, "image_to_string", return_value="7y\u30b5x 2%"):
+        assert detect_card_language(image) is None
+
+
+def test_game_detector_uses_printed_bandai_code(tmp_path):
+    image = _write_image(tmp_path / "c.jpg", 1)
+    with patch.object(identify_mod.pytesseract, "image_to_string", return_value="CHARACTER Sabo PRB02-014"):
+        assert detect_card_game(image) == "one_piece"
+        assert detect_card_code(image) == "PRB02-014"
+
+
+def test_phash_excludes_same_art_japanese_row_when_english_text_is_proven(tmp_path):
+    scan = _write_image(tmp_path / "scan.jpg", 12)
+    same_hash = _phash_of(scan)
+    refs = [
+        ReferenceCard("opjp-op17-005", "OP17-005", "Edward.Newgate", same_hash, set_id="opjp-op17"),
+        ReferenceCard("one-piece-op17-005", "OP17-005", "Edward.Newgate", same_hash, set_id="one-piece-op17"),
+    ]
+    with patch.object(identify_mod, "detect_card_language", return_value="English"):
+        ranked = identify_mod._rank_by_phash(scan, refs)
+    assert [reference.card_id for _, reference in ranked] == ["one-piece-op17-005"]
 
 
 # --- reconciliation ---

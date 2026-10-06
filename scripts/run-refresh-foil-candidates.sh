@@ -10,4 +10,7 @@ if [[ ! -x "${venv_dir}/bin/python" ]]; then
 fi
 
 cd -- "${project_dir}"
-exec "${venv_dir}/bin/python" -m scripts.refresh_foil_candidates "$@"
+# A full texture-classifier pass takes longer than the hourly timer interval
+# once inventory reaches ~1,800 photos. Refresh one resumable slice per run;
+# the cache merger preserves other slices and cycles back to zero when done.
+exec "${venv_dir}/bin/python" -m scripts.refresh_foil_candidates_chunked --stateful --limit 250 "$@"

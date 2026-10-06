@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync TCGCSV bulk prices daily
+
+[Timer]
+# TCGCSV publishes around 20:00 UTC. 08:17 Sydney is safely after that in
+# both AEST and AEDT, while the upstream build timestamp prevents duplicate
+# downloads if Persistent catches up or the timer is started twice.
+OnCalendar=*-*-* 08:17:00 Australia/Sydney
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

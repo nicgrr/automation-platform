@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""Cache Bandai's official Japanese FB09 catalogue and reference images.
+"""Cache Bandai's official Japanese Fusion World catalogue images.
 
 The English TCGplayer cache is a different physical printing, so these use a
 separate set id and Japanese-language catalogue rows. Re-runnable: existing
 images are reused and database records are refreshed in place.
 
-    .venv/bin/python -m scripts.cache_bandai_fb09_japanese --dry-run
-    .venv/bin/python -m scripts.cache_bandai_fb09_japanese
+    .venv/bin/python -m scripts.cache_bandai_fb09_japanese --set FB11 --dry-run
+    .venv/bin/python -m scripts.cache_bandai_fb09_japanese --set FB11
 """
 
 import argparse
@@ -24,17 +24,38 @@ from automation_control.database import SessionLocal
 from automation_control.models import CardSet, CatalogCard, CatalogItem, CatalogItemType, TcgCard
 from automation_control.scan_ingest.catalog import _compute_phashes
 
-LIST_URL = "https://www.dbs-cardgame.com/fw/jp/cardlist/?category%5B0%5D=584009&search=true"
-SET_ID = "dbfw-jp-fb09"
-SET_NAME = "Dual Evolution (Japanese)"
-RELEASE_DATE = "2026-03-14"
+LIST_BASE = "https://www.dbs-cardgame.com/fw/jp/cardlist/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EzBay private catalogue cache)"}
 
 
-def english_display_names(session) -> dict[str, str]:
-    """Return FB09's English names while leaving the physical cards Japanese."""
-    rows = session.query(CatalogCard).filter(CatalogCard.set_id == "dbfw-24569").all()
+@dataclass(frozen=True)
+class JapaneseSet:
+    code: str
+    category: str
+    set_id: str
+    name: str
+    release_date: str
+    english_set_id: str
+    printed_total: int
+
+    @property
+    def list_url(self) -> str:
+        return f"{LIST_BASE}?category%5B0%5D={self.category}&search=true"
+
+
+SETS = {
+    "FB09": JapaneseSet("FB09", "584009", "dbfw-jp-fb09", "Dual Evolution (Japanese)",
+                         "2026-03-14", "dbfw-24569", 123),
+    "FB11": JapaneseSet("FB11", "584011", "dbfw-jp-fb11", "Brightness of Hope (Japanese)",
+                         "2026-09-12", "dbfw-24716", 123),
+}
+
+
+def english_metadata(session, english_set_id: str = "dbfw-24569") -> dict[str, tuple[str, str | None]]:
+    """Return English names/rarities while leaving the physical cards Japanese."""
+    rows = session.query(CatalogCard).filter(CatalogCard.set_id == english_set_id).all()
     names: dict[str, str] = {}
+    rarities: dict[str, str | None] = {}
     for card in rows:
         # The English cache may contain separate "(Alternate Art)" records.
         # The Japanese catalogue already records that distinction as Parallel,
@@ -43,7 +64,13 @@ def english_display_names(session) -> dict[str, str]:
         current = names.get(card.number)
         if current is None or "(Alternate Art)" not in card.name:
             names[card.number] = clean
-    return names
+            rarities[card.number] = getattr(card, "rarity", None)
+    return {number: (name, rarities.get(number)) for number, name in names.items()}
+
+
+def english_display_names(session) -> dict[str, str]:
+    """Backward-compatible FB09 name helper used by the original tests."""
+    return {number: name for number, (name, _) in english_metadata(session).items()}
 
 
 @dataclass(frozen=True)
@@ -60,10 +87,10 @@ class OfficialCard:
         return f"dbfw-jp-{slug}"
 
 
-def parse_card_list(html: str) -> list[OfficialCard]:
+def parse_card_list(html: str, set_code: str = "FB09") -> list[OfficialCard]:
     pattern = re.compile(
-        r'data-src=["\'](?P<src>[^"\']*/jp/(?P<file>FB09-[^"\']+?\.webp))["\']\s+'
-        r'alt=["\'](?P<number>FB09-\d{3})\s+(?P<name>[^"\']+)["\']',
+        rf'data-src=["\'](?P<src>[^"\']*/jp/(?P<file>{re.escape(set_code)}-[^"\']+?\.webp))["\']\s+'
+        rf'alt=["\'](?P<number>{re.escape(set_code)}-\d{{3}})\s+(?P<name>[^"\']+)["\']',
         re.I,
     )
     cards = []
@@ -77,7 +104,7 @@ def parse_card_list(html: str) -> list[OfficialCard]:
         variant = "Super Parallel" if stem.endswith("_p2") else "Parallel" if stem.endswith("_p1") else None
         cards.append(OfficialCard(
             number=match.group("number").upper(), name=match.group("name").strip(),
-            image_url=urljoin(LIST_URL, match.group("src")), image_stem=stem, variant=variant,
+            image_url=urljoin(LIST_BASE, match.group("src")), image_stem=stem, variant=variant,
         ))
     return cards
 
@@ -96,43 +123,46 @@ async def _download_missing(cards: list[OfficialCard], directory: Path) -> None:
         await asyncio.gather(*(download(card) for card in cards))
 
 
-async def run(dry_run: bool = False) -> int:
+async def run(dry_run: bool = False, set_code: str = "FB09") -> int:
+    set_info = SETS[set_code]
     async with httpx.AsyncClient(timeout=30, headers=HEADERS, follow_redirects=True) as client:
-        response = await client.get(LIST_URL)
+        response = await client.get(set_info.list_url)
         response.raise_for_status()
-    cards = parse_card_list(response.text)
+    cards = parse_card_list(response.text, set_info.code)
     if len(cards) < 120:
-        raise SystemExit(f"Bandai page yielded only {len(cards)} FB09 cards; refusing a partial cache")
-    print(f"official Japanese FB09 records found: {len(cards)}")
+        raise SystemExit(f"Bandai page yielded only {len(cards)} {set_info.code} cards; refusing a partial cache")
+    print(f"official Japanese {set_info.code} records found: {len(cards)}")
     if dry_run:
         print("--dry-run: no images downloaded and no database rows written")
         return 0
 
-    directory = Path(get_settings().scan_cache_dir) / SET_ID
+    directory = Path(get_settings().scan_cache_dir) / set_info.set_id
     directory.mkdir(parents=True, exist_ok=True)
     await _download_missing(cards, directory)
 
     now = datetime.now(UTC)
     with SessionLocal() as session:
-        english_names = english_display_names(session)
-        card_set = session.get(CardSet, SET_ID)
+        metadata = english_metadata(session, set_info.english_set_id)
+        card_set = session.get(CardSet, set_info.set_id)
         if card_set is None:
-            card_set = CardSet(id=SET_ID)
+            card_set = CardSet(id=set_info.set_id)
             session.add(card_set)
-        card_set.name, card_set.code, card_set.series = SET_NAME, "FB09-JP", "Fusion World Japanese"
-        card_set.release_date, card_set.printed_total, card_set.total = RELEASE_DATE, 123, len(cards)
+        card_set.name, card_set.code, card_set.series = set_info.name, f"{set_info.code}-JP", "Fusion World Japanese"
+        card_set.release_date, card_set.printed_total, card_set.total = (
+            set_info.release_date, set_info.printed_total, len(cards)
+        )
         card_set.cached_at, card_set.game = now, "dragon_ball_fusion_world"
 
         for card in cards:
-            display_name = english_names.get(card.number, card.name)
+            display_name, rarity = metadata.get(card.number, (card.name, None))
             local = directory / f"{card.card_id}.webp"
             phash, art = _compute_phashes(local)
             record = session.get(CatalogCard, card.card_id)
             if record is None:
-                record = CatalogCard(id=card.card_id, set_id=SET_ID)
+                record = CatalogCard(id=card.card_id, set_id=set_info.set_id)
                 session.add(record)
             record.number, record.name = card.number, display_name
-            record.rarity, record.supertype = card.variant, "Dragon Ball Fusion World Card"
+            record.rarity, record.supertype = rarity, "Dragon Ball Fusion World Card"
             record.image_url, record.local_image_path = card.image_url, str(local)
             record.phash, record.art_phash = phash, art
 
@@ -146,20 +176,21 @@ async def run(dry_run: bool = False) -> int:
             if tcg is None:
                 tcg = TcgCard(catalog_item_id=card.card_id, game="dragon_ball_fusion_world")
                 session.add(tcg)
-            tcg.set_id, tcg.set_code, tcg.number = SET_ID, "FB09", card.number
-            tcg.character, tcg.rarity = display_name, card.variant
+            tcg.set_id, tcg.set_code, tcg.number = set_info.set_id, set_info.code, card.number
+            tcg.character, tcg.rarity = display_name, rarity
             tcg.variant, tcg.parallel = card.variant, card.variant
-            tcg.language, tcg.release_date = "Japanese", RELEASE_DATE
+            tcg.language, tcg.release_date = "Japanese", set_info.release_date
         session.commit()
-    print(f"cached {len(cards)} Japanese FB09 records with reference images in {directory}")
+    print(f"cached {len(cards)} Japanese {set_info.code} records with reference images in {directory}")
     return 0
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--set", default="FB09", choices=sorted(SETS), dest="set_code")
     args = parser.parse_args(argv)
-    return asyncio.run(run(args.dry_run))
+    return asyncio.run(run(args.dry_run, args.set_code))
 
 
 if __name__ == "__main__":

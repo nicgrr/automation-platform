@@ -19,6 +19,8 @@ from sqlalchemy import select
 from automation_control.database import SessionLocal
 from automation_control.foil_review import IDENTITY_MISMATCH_THRESHOLD, _cache_path, assess_foil
 from automation_control.models import CardSet, CatalogCard, InventoryItem
+from automation_control.scan_ingest.commit import _make_group_writable
+from automation_control.scan_ingest.foil import catalogue_variant
 
 
 def _candidates_for_slice(session, offset: int, limit: int | None) -> tuple[list[dict], int, set[str]]:
@@ -38,6 +40,9 @@ def _candidates_for_slice(session, offset: int, limit: int | None) -> tuple[list
             continue
         card = cards_by_id.get(item.catalog_item_id)
         if card is None:
+            continue
+        known_variant, _ = catalogue_variant(card)
+        if known_variant is not None and known_variant == item.variant:
             continue
         assessment = assess_foil(path, card)
         if assessment.suggestion is None or assessment.suggestion == item.variant:
@@ -63,7 +68,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--stateful", action="store_true",
+        help="resume from the previous scheduled slice and advance its offset",
+    )
     args = parser.parse_args()
+
+    state_path = _cache_path().with_name("foil_refresh_offset.txt")
+    if args.stateful:
+        try:
+            args.offset = max(0, int(state_path.read_text().strip()))
+        except (OSError, ValueError):
+            args.offset = 0
 
     with SessionLocal() as session:
         new_candidates, total, window_ids = _candidates_for_slice(session, args.offset, args.limit)
@@ -82,6 +98,12 @@ def main() -> int:
     merged.sort(key=lambda c: -c["magnitude"])
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(merged))
+    _make_group_writable(cache_path)
+
+    if args.stateful:
+        next_offset = args.offset + len(window_ids)
+        state_path.write_text(str(0 if next_offset >= total or not window_ids else next_offset))
+        _make_group_writable(state_path)
 
     print(f"slice {args.offset}..{args.offset + len(window_ids)} of {total}: "
           f"{len(new_candidates)} candidate(s) in this slice, {len(merged)} total cached now.")

@@ -38,7 +38,7 @@ from .database import get_session
 from .images import serve_image
 from .models import CardSet, CardVariant, CatalogCard, FoilLabel, InventoryItem
 from .scan_ingest.commit import _image_quality, _store_scan_image
-from .scan_ingest.foil import assess_foil
+from .scan_ingest.foil import assess_foil, catalogue_variant
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/foil-review", tags=["foil-review"])
@@ -104,6 +104,14 @@ def _compute_candidates(session: Session) -> list[dict]:
         card = cards_by_id.get(item.catalog_item_id)
         if card is None:
             continue
+        # Most catalogue-established printings are already filed correctly.
+        # Do not run image metrics (and, for Pokemon, the expensive texture
+        # classifier) merely to rediscover that the suggestion equals the
+        # held variant. This cuts the scheduled full refresh from many
+        # minutes to the genuinely ambiguous/mismatched subset.
+        known_variant, _ = catalogue_variant(card)
+        if known_variant is not None and known_variant == item.variant:
+            continue
         assessment = assess_foil(path, card)
         if assessment.suggestion is None or assessment.suggestion == item.variant:
             continue
@@ -132,7 +140,7 @@ def _compute_candidates(session: Session) -> list[dict]:
 def _pending(session: Session) -> list[dict]:
     candidates = _load_or_compute(session)
     labeled = _labeled_item_ids(session)
-    still_held = set(session.scalars(select(InventoryItem.id)))
+    held_variants = {item.id: item.variant.value for item in session.scalars(select(InventoryItem))}
     # A cached candidate whose InventoryItem has since been deleted or
     # merged elsewhere (another decide's merge-or-create, a manual
     # cleanup) is a dead end -- and since the page only ever renders
@@ -142,7 +150,15 @@ def _pending(session: Session) -> list[dict]:
     # the item, deleted after this cache was built). Filtered here rather
     # than only fixed by a manual rescan, so a future deletion elsewhere
     # can't wedge this page again.
-    return [c for c in candidates if c["item_id"] not in labeled and c["item_id"] in still_held]
+    return [
+        c for c in candidates
+        if c["item_id"] not in labeled
+        and c["item_id"] in held_variants
+        # A catalogue cleanup or another correction can fix an item between
+        # scheduled cache runs. Never show the old suggestion as still live.
+        and c.get("filed") == held_variants[c["item_id"]]
+        and c.get("suggested") != held_variants[c["item_id"]]
+    ]
 
 
 @router.get("", response_class=HTMLResponse)

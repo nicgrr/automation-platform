@@ -110,6 +110,15 @@ class Settings(BaseSettings):
     # pricing per specific printing, not pokemontcg.io's snapshot data (see
     # scan_ingest/pricing.py's docstring: flagged unreliable, twice).
     pokemonpricetracker_api_key: str | None = None
+    # Multi-source pricing is deliberately free-by-default. A provider call
+    # carrying a non-zero estimated cost is rejected unless this explicit
+    # kill switch is enabled; configuring an API key alone cannot spend.
+    allow_paid_pricing: bool = False
+    pricing_ebay_daily_budget: int = 300
+    pricing_active_cache_hours: int = 12
+    pricing_high_value_cache_hours: int = 24
+    pricing_standard_cache_days: int = 7
+    pricing_bulk_cache_days: int = 30
     # Bulk scan ingest (automation_control/scan_ingest/). watch_dir is the
     # folder scanned sheets land in -- shared to the scanning PC over Samba
     # -- and the rest are local working directories the CLI manages itself.

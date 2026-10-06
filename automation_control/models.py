@@ -61,6 +61,39 @@ class PricingStatus(str, enum.Enum):
     PRICE_REJECTED = "price_rejected"
 
 
+class PricingSourceKind(str, enum.Enum):
+    """What a normalized pricing observation actually represents."""
+
+    BULK_MARKET = "bulk_market"
+    ACTIVE_LISTING = "active_listing"
+    SOLD_LISTING = "sold_listing"
+    RETAIL_ASK = "retail_ask"
+    BUYLIST = "buylist"
+    MANUAL = "manual"
+
+
+class PricingQueueStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class PricingSyncStatus(str, enum.Enum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
+class PricingProviderHealth(str, enum.Enum):
+    UNKNOWN = "unknown"
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNAVAILABLE = "unavailable"
+
+
 class CapturePromotionStatus(str, enum.Enum):
     """Result of handing a priced photo capture to the normal sell pipeline."""
 
@@ -1308,6 +1341,9 @@ class InventoryItem(Base):
     status: Mapped[InventoryStatus] = mapped_column(Enum(InventoryStatus), default=InventoryStatus.AVAILABLE, index=True)
     allocated_cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     grading_company: Mapped[str | None] = mapped_column(String(64))
+    # Kept separate from condition: "Near Mint" and "PSA 10" are not two
+    # spellings of one fact and must never share pricing comparisons.
+    grade: Mapped[str | None] = mapped_column(String(32), index=True)
     certification_number: Mapped[str | None] = mapped_column(String(64))
 
     card: Mapped[CatalogCard | None] = relationship()
@@ -1390,6 +1426,355 @@ class CardPrice(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     catalog_item: Mapped[CatalogItem] = relationship()
+
+
+class PricingProvider(Base):
+    """Non-secret provider configuration and current operational health."""
+
+    __tablename__ = "pricing_providers"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(128))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    configuration: Mapped[dict] = mapped_column(JSON, default=dict)
+    commercial_use_status: Mapped[str] = mapped_column(String(32), default="unverified")
+    health_status: Mapped[PricingProviderHealth] = mapped_column(
+        Enum(PricingProviderHealth), default=PricingProviderHealth.UNKNOWN, index=True,
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PricingExternalId(Base):
+    """Resolve an EzBay product once and reuse stable provider identifiers."""
+
+    __tablename__ = "pricing_external_ids"
+    __table_args__ = (
+        UniqueConstraint(
+            "catalog_item_id", "provider_key", "provider_product_id", "provider_variant_id",
+            name="uq_pricing_external_identity",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    catalog_item_id: Mapped[str] = mapped_column(
+        ForeignKey("catalog_items.id", ondelete="CASCADE"), index=True,
+    )
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    provider_product_id: Mapped[str] = mapped_column(String(128), index=True)
+    provider_group_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    provider_variant_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    external_ids: Mapped[dict] = mapped_column(JSON, default=dict)
+    match_confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("1"))
+    match_method: Mapped[str] = mapped_column(String(32), default="exact")
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PricingObservation(Base):
+    """One normalized provider fact, retained independently of valuations."""
+
+    __tablename__ = "pricing_observations"
+    __table_args__ = (
+        Index("ix_pricing_observation_identity_time", "catalog_item_id", "observed_at"),
+        Index("ix_pricing_observation_provider_item", "provider_key", "source_item_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    catalog_item_id: Mapped[str] = mapped_column(
+        ForeignKey("catalog_items.id", ondelete="CASCADE"), index=True,
+    )
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    external_id_id: Mapped[str | None] = mapped_column(
+        ForeignKey("pricing_external_ids.id", ondelete="SET NULL"), index=True,
+    )
+    provider_product_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    source_item_id: Mapped[str | None] = mapped_column(String(256))
+    source_kind: Mapped[PricingSourceKind] = mapped_column(Enum(PricingSourceKind), index=True)
+    marketplace: Mapped[str | None] = mapped_column(String(32), index=True)
+    query: Mapped[str | None] = mapped_column(String(512))
+    product_type: Mapped[str | None] = mapped_column(String(64), index=True)
+    listing_type: Mapped[str | None] = mapped_column(String(64))
+    card_name: Mapped[str | None] = mapped_column(String(256))
+    set_name: Mapped[str | None] = mapped_column(String(256))
+    set_code: Mapped[str | None] = mapped_column(String(64))
+    card_number: Mapped[str | None] = mapped_column(String(64))
+    variant: Mapped[str | None] = mapped_column(String(64), index=True)
+    language: Mapped[str | None] = mapped_column(String(32), index=True)
+    condition: Mapped[str | None] = mapped_column(String(64), index=True)
+    grading_company: Mapped[str | None] = mapped_column(String(64), index=True)
+    grade: Mapped[str | None] = mapped_column(String(32), index=True)
+    title: Mapped[str | None] = mapped_column(String(512))
+    original_price: Mapped[Decimal] = mapped_column(Numeric(14, 4))
+    original_currency: Mapped[str] = mapped_column(String(3))
+    aud_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    shipping_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    total_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    listed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    item_url: Mapped[str | None] = mapped_column(String(1024))
+    image_url: Mapped[str | None] = mapped_column(String(1024))
+    match_confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("1"), index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    ignored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    ignored_by: Mapped[str | None] = mapped_column(String(128))
+    ignore_reason: Mapped[str | None] = mapped_column(String(512))
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PricingValuation(Base):
+    """A derived valuation snapshot for one exact product identity."""
+
+    __tablename__ = "pricing_valuations"
+    __table_args__ = (Index("ix_pricing_valuation_identity_time", "catalog_item_id", "valued_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    catalog_item_id: Mapped[str] = mapped_column(
+        ForeignKey("catalog_items.id", ondelete="CASCADE"), index=True,
+    )
+    identity_key: Mapped[str] = mapped_column(String(64), index=True)
+    variant: Mapped[str | None] = mapped_column(String(64), index=True)
+    language: Mapped[str | None] = mapped_column(String(32), index=True)
+    condition: Mapped[str | None] = mapped_column(String(64), index=True)
+    grading_company: Mapped[str | None] = mapped_column(String(64), index=True)
+    grade: Mapped[str | None] = mapped_column(String(32), index=True)
+    market_value_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    global_market_value_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    australian_market_value_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    sold_median_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    active_median_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    expected_private_sale_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    expected_ebay_sale_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    quick_sale_value_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    store_buylist_value_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    low_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    high_aud: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    comp_count: Mapped[int] = mapped_column(Integer, default=0)
+    provider_count: Mapped[int] = mapped_column(Integer, default=0)
+    confidence_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
+    confidence_label: Mapped[str] = mapped_column(String(16), default="low", index=True)
+    confidence_components: Mapped[dict] = mapped_column(JSON, default=dict)
+    calculation_version: Mapped[str] = mapped_column(String(32), default="v1")
+    valued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class PricingProviderUsage(Base):
+    __tablename__ = "pricing_provider_usage"
+    __table_args__ = (
+        UniqueConstraint("provider_key", "quota_type", "period_start", name="uq_pricing_provider_usage_period"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    quota_type: Mapped[str] = mapped_column(String(32), default="requests")
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    quota_limit: Mapped[int | None] = mapped_column(Integer)
+    used: Mapped[int] = mapped_column(Integer, default=0)
+    results: Mapped[int] = mapped_column(Integer, default=0)
+    cache_hits: Mapped[int] = mapped_column(Integer, default=0)
+    cache_misses: Mapped[int] = mapped_column(Integer, default=0)
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
+    actual_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PricingCacheEntry(Base):
+    __tablename__ = "pricing_cache_entries"
+    __table_args__ = (UniqueConstraint("provider_key", "cache_key", name="uq_pricing_cache_provider_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    cache_key: Mapped[str] = mapped_column(String(64), index=True)
+    endpoint: Mapped[str] = mapped_column(String(128))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    negative: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class PricingRefreshQueue(Base):
+    __tablename__ = "pricing_refresh_queue"
+    __table_args__ = (
+        UniqueConstraint("catalog_item_id", "identity_key", name="uq_pricing_refresh_identity"),
+        Index("ix_pricing_refresh_ready", "status", "available_at", "priority"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    catalog_item_id: Mapped[str] = mapped_column(
+        ForeignKey("catalog_items.id", ondelete="CASCADE"), index=True,
+    )
+    identity_key: Mapped[str] = mapped_column(String(64))
+    identity: Mapped[dict] = mapped_column(JSON, default=dict)
+    reason: Mapped[str] = mapped_column(String(64), index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
+    status: Mapped[PricingQueueStatus] = mapped_column(
+        Enum(PricingQueueStatus), default=PricingQueueStatus.PENDING, index=True,
+    )
+    requested_manually: Mapped[bool] = mapped_column(Boolean, default=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PricingSyncRun(Base):
+    __tablename__ = "pricing_sync_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    job_kind: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[PricingSyncStatus] = mapped_column(Enum(PricingSyncStatus), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    products_seen: Mapped[int] = mapped_column(Integer, default=0)
+    observations_written: Mapped[int] = mapped_column(Integer, default=0)
+    cache_hits: Mapped[int] = mapped_column(Integer, default=0)
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
+    actual_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
+    error: Mapped[str | None] = mapped_column(String(1024))
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PricingFxRate(Base):
+    __tablename__ = "pricing_fx_rates"
+    __table_args__ = (
+        UniqueConstraint("base_currency", "quote_currency", "observed_at", name="uq_pricing_fx_observation"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    base_currency: Mapped[str] = mapped_column(String(3), index=True)
+    quote_currency: Mapped[str] = mapped_column(String(3), index=True)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    source: Mapped[str] = mapped_column(String(64))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class PricingProviderCategory(Base):
+    """A provider's game/category, retained locally for bulk discovery."""
+
+    __tablename__ = "pricing_provider_categories"
+    __table_args__ = (
+        UniqueConstraint("provider_key", "provider_category_id", name="uq_pricing_provider_category"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    provider_category_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    display_name: Mapped[str | None] = mapped_column(String(256))
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PricingProviderGroup(Base):
+    """A provider set/group; products belong to exactly one imported group."""
+
+    __tablename__ = "pricing_provider_groups"
+    __table_args__ = (
+        UniqueConstraint("provider_key", "provider_group_id", name="uq_pricing_provider_group"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    category_id: Mapped[str] = mapped_column(
+        ForeignKey("pricing_provider_categories.id", ondelete="CASCADE"), index=True,
+    )
+    provider_group_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    abbreviation: Mapped[str | None] = mapped_column(String(64), index=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PricingProviderProduct(Base):
+    """Provider catalogue product, including singles and sealed products."""
+
+    __tablename__ = "pricing_provider_products"
+    __table_args__ = (
+        UniqueConstraint("provider_key", "provider_product_id", name="uq_pricing_provider_product"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    group_id: Mapped[str] = mapped_column(
+        ForeignKey("pricing_provider_groups.id", ondelete="CASCADE"), index=True,
+    )
+    provider_product_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(512), index=True)
+    clean_name: Mapped[str | None] = mapped_column(String(512))
+    product_type: Mapped[str] = mapped_column(String(64), default="unknown", index=True)
+    card_number: Mapped[str | None] = mapped_column(String(64), index=True)
+    rarity: Mapped[str | None] = mapped_column(String(128), index=True)
+    printing: Mapped[str | None] = mapped_column(String(128), index=True)
+    image_url: Mapped[str | None] = mapped_column(String(1024))
+    item_url: Mapped[str | None] = mapped_column(String(1024))
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PricingProviderQuote(Base):
+    """Append-only bulk price row for a provider product/printing."""
+
+    __tablename__ = "pricing_provider_quotes"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_key", "provider_product_id", "subtype", "source_updated_at",
+            name="uq_pricing_provider_quote_build",
+        ),
+        Index("ix_pricing_provider_quote_latest", "provider_key", "provider_product_id", "observed_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    product_id: Mapped[str] = mapped_column(
+        ForeignKey("pricing_provider_products.id", ondelete="CASCADE"), index=True,
+    )
+    provider_product_id: Mapped[str] = mapped_column(String(128), index=True)
+    subtype: Mapped[str] = mapped_column(String(128), index=True)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    low_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    mid_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    high_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    market_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    direct_low_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    source_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class MarketWatchTerm(Base):

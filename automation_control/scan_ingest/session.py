@@ -21,7 +21,7 @@ import cv2
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import CardSet, CardVariant, CatalogCard, ScanSession, ScanSessionStatus
+from ..models import CardSet, CardVariant, CatalogCard, ScanSession, ScanSessionStatus, TcgCard
 from . import catalog
 from .commit import CommitRefused, _make_group_writable, commit_card, inventory_totals
 from .detect import detect_cards
@@ -552,15 +552,11 @@ def process_sheet(
 
         identified_card = db.get(CatalogCard, identification.card_id) if identification.card_id else None
         card_variant = variant
-        # The foil classifier and its catalogue facts are Pokemon-specific;
-        # One Piece / Dragon Ball parallels are separate catalogue cards,
-        # so the art match has already told the printings apart.
-        if identified_card is not None and (game_info is None or game_info.key == "pokemon_japan"):
-            # The classifier is Pokemon-specific but texture-based (holo
-            # shimmer, not language), so it still applies to Japanese
-            # prints; it's skipped only for the TCGplayer games, whose
-            # parallels are already separate catalogue cards -- see the
-            # comment where identified_card is resolved.
+        # Catalogue finish facts apply to every game. assess_foil itself
+        # restricts the image classifier to Pokemon; One Piece and Dragon
+        # Ball are decided only by exact product subtype, rarity and official
+        # parallel metadata, never by a Pokemon-trained texture guess.
+        if identified_card is not None:
             foil_assessment = assess_foil(crop_path, identified_card)
             summary = foil_assessment.log_summary()
             if identification.foil_observation:
@@ -608,7 +604,7 @@ def process_sheet(
             continue
         outcome.committed += 1
         priced_card = db.get(CatalogCard, decided.card_id)
-        quote = price_and_record(db, price_source, priced_card, variant) if priced_card else None
+        quote = price_and_record(db, price_source, priced_card, card_variant) if priced_card else None
         prompter.notify(f"  Card {index}: {result.summary} -- {_format_quote(quote)}")
 
     scan_session.sheets_scanned += 1
@@ -623,10 +619,12 @@ def _load_all_catalogs(db: Session) -> dict[str, list[ReferenceCard]]:
     `_run_session_auto` probes each new sheet against so it never has to be
     told up front which set (or which way up) a pile is."""
     catalogs: dict[str, list[ReferenceCard]] = {}
+    languages = dict(db.execute(select(TcgCard.catalog_item_id, TcgCard.language)).all())
     for card_set in catalog.cached_sets(db):
         refs = [
             ReferenceCard(card_id=c.id, number=c.number, name=c.name, phash=c.phash,
-                      art_phash=c.art_phash, rarity=c.rarity, set_id=c.set_id)
+                      art_phash=c.art_phash, rarity=c.rarity, set_id=c.set_id,
+                      game=card_set.game, language=languages.get(c.id))
             for c in catalog.get_cached_cards(db, card_set.id) if c.phash
         ]
         if refs:
@@ -870,9 +868,13 @@ def run_session(
         raise ValueError(f"set {set_id!r} is not cached -- run: scan-ingest cache-set --set-id {set_id}")
 
     card_set = db.get(CardSet, set_id)
+    languages = dict(db.execute(
+        select(TcgCard.catalog_item_id, TcgCard.language).where(TcgCard.set_id == set_id)
+    ).all())
     references = [
         ReferenceCard(card_id=c.id, number=c.number, name=c.name, phash=c.phash,
-                      art_phash=c.art_phash, rarity=c.rarity)
+                      art_phash=c.art_phash, rarity=c.rarity, set_id=c.set_id,
+                      game=card_set.game if card_set else None, language=languages.get(c.id))
         for c in catalog.get_cached_cards(db, set_id) if c.phash
     ]
     if not references:

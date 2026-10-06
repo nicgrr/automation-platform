@@ -184,6 +184,12 @@ def test_collectible_market_watch_is_one_of_the_monitored_jobs():
     assert "Collectible market watches" in [job.label for job in JOBS]
 
 
+def test_tcgcsv_bulk_pricing_is_one_of_the_monitored_jobs():
+    from automation_control.job_health import JOBS
+
+    assert "TCGCSV bulk prices" in [job.label for job in JOBS]
+
+
 @pytest.mark.parametrize("label", [
     "Scanner button",
     "Scanner recovery",

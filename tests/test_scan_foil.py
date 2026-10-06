@@ -1,9 +1,9 @@
 import cv2
 import numpy as np
 
-from automation_control.models import CardVariant, CatalogCard
+from automation_control.models import CardSet, CardVariant, CatalogCard
 from automation_control.scan_ingest import foil as foil_mod
-from automation_control.scan_ingest.foil import ART_REGION, _surface_metrics, assess_foil, available_variants
+from automation_control.scan_ingest.foil import ART_REGION, _surface_metrics, assess_foil, available_variants, catalogue_variant
 
 
 def _card(prices, **kwargs):
@@ -32,6 +32,63 @@ def test_missing_catalogue_data_is_unknown_not_normal(tmp_path):
     result = assess_foil(path, _card({}))
     assert result.candidates == ()
     assert result.suggestion is None
+
+
+def _game_card(game, *, card_id, set_id, rarity, prices=None):
+    card = CatalogCard(
+        id=card_id, set_id=set_id, number="001", name="Test", rarity=rarity,
+        raw_prices={"tcgplayer": {"prices": prices}} if prices is not None else None,
+    )
+    card.card_set = CardSet(id=set_id, name="Test set", game=game)
+    return card
+
+
+def test_one_piece_rare_and_super_rare_are_catalogue_holo():
+    for rarity in ("R", "SR", "SEC", "L"):
+        card = _game_card("one_piece", card_id=f"opjp-test-{rarity.lower()}", set_id="opjp-test", rarity=rarity)
+        assert catalogue_variant(card)[0] is CardVariant.HOLO
+
+
+def test_one_piece_official_common_base_is_normal_but_parallel_is_holo():
+    base = _game_card("one_piece", card_id="opjp-op01-001", set_id="opjp-test", rarity="C")
+    parallel = _game_card("one_piece", card_id="opjp-op01-001-p1", set_id="opjp-test", rarity="C")
+    assert catalogue_variant(base)[0] is CardVariant.NORMAL
+    assert catalogue_variant(parallel)[0] is CardVariant.HOLO
+
+
+def test_fusion_world_rare_and_super_rare_are_catalogue_holo():
+    for rarity in ("Rare", "Super Rare", "Secret Rare"):
+        card = _game_card("dragon_ball_fusion_world", card_id="dragon-ball-fusion-world-test", set_id="dbfw-test", rarity=rarity)
+        assert catalogue_variant(card)[0] is CardVariant.HOLO
+
+
+def test_masters_plain_rare_with_both_printings_stays_undecided():
+    card = _game_card(
+        "dragon_ball_super", card_id="dragon-ball-super-test", set_id="dbs-test", rarity="Rare",
+        prices={"normal": {"market": 1}, "holofoil": {"market": 2}},
+    )
+    assert catalogue_variant(card)[0] is None
+
+
+def test_masters_special_rare_wins_over_bad_normal_marketplace_subtype():
+    card = _game_card(
+        "dragon_ball_super", card_id="tcgp-test", set_id="dbs-test", rarity="Special Rare",
+        prices={"normal": {"market": 1}},
+    )
+    assert catalogue_variant(card)[0] is CardVariant.HOLO
+
+
+def test_non_pokemon_ambiguous_finish_never_uses_pokemon_texture_model(tmp_path, monkeypatch):
+    card = _game_card(
+        "dragon_ball_super", card_id="dragon-ball-super-test", set_id="dbs-test", rarity="Rare",
+        prices={"normal": {"market": 1}, "holofoil": {"market": 2}},
+    )
+    monkeypatch.setattr(foil_mod.foil_features, "extract_features", lambda *_: (_ for _ in ()).throw(AssertionError("must not run")))
+    path = tmp_path / "card.jpg"
+    cv2.imwrite(str(path), np.full((200, 140, 3), 120, dtype=np.uint8))
+    result = assess_foil(path, card)
+    assert result.suggestion is None
+    assert "catalogue" in result.reason
 
 
 def _glare_patch_image(glare_in_art: bool) -> np.ndarray:

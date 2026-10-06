@@ -14,6 +14,7 @@ call rather than a shaky guess.
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 
 import cv2
 import imagehash
@@ -59,6 +60,80 @@ def available_variants(card: CatalogCard) -> tuple[CardVariant, ...]:
     if prices.get("holofoil") or prices.get("1stEditionHolofoil"):
         variants.append(CardVariant.HOLO)
     return tuple(variants)
+
+
+def _game_key(card: CatalogCard) -> str | None:
+    """Game without requiring every unit-test card to have a loaded set row."""
+    try:
+        if card.card_set and card.card_set.game:
+            return card.card_set.game
+    except Exception:
+        pass
+    if card.set_id.startswith(("op-", "opjp-")):
+        return "one_piece"
+    if card.set_id.startswith("dbfw-"):
+        return "dragon_ball_fusion_world"
+    if card.set_id.startswith("dbs-"):
+        return "dragon_ball_super"
+    return None
+
+
+def catalogue_variant(card: CatalogCard) -> tuple[CardVariant | None, str | None]:
+    """Return a finish established by catalogue facts, never image texture.
+
+    TCGplayer's exact product subtype is the strongest evidence. For the
+    official Japanese caches, which do not carry TCGplayer prices, game rules
+    fill the gap: One Piece R/SR/SEC/Leader cards and Dragon Ball rare-and-up
+    cards are foil, and an official parallel image is foil regardless of its
+    base rarity. If a catalogue explicitly exposes more than one finish we
+    leave it undecided instead of flattening a real normal/foil choice.
+    """
+    variants = available_variants(card)
+    game = _game_key(card)
+    rarity = re.sub(r"[^A-Z]+", " ", (card.rarity or "").upper()).strip()
+    parallel = bool(re.search(r"-p\d+$", card.id, re.I))
+
+    if game == "one_piece":
+        if parallel:
+            return CardVariant.HOLO, "official One Piece parallel printing"
+        if rarity in {
+            "R", "SR", "SEC", "L", "SP", "TR",
+            "RARE", "SUPER RARE", "SECRET RARE", "LEADER", "SPECIAL",
+        } or rarity.startswith("SP "):
+            return CardVariant.HOLO, f"One Piece {card.rarity} rarity is foil"
+        if card.id.startswith("opjp-") and rarity in {"C", "UC", "COMMON", "UNCOMMON"}:
+            return CardVariant.NORMAL, f"One Piece {card.rarity} base printing is non-foil"
+
+    if game == "dragon_ball_fusion_world":
+        if parallel:
+            return CardVariant.HOLO, "official Dragon Ball parallel printing"
+        if rarity in {
+            "R", "SR", "SCR", "SEC", "ER", "SPR", "GDR",
+            "RARE", "SUPER RARE", "SECRET RARE", "EXPANSION RARE", "SPECIAL RARE",
+        }:
+            return CardVariant.HOLO, f"Dragon Ball {card.rarity} rarity is foil"
+        if card.id.startswith("dbfw-jp-") and rarity in {"C", "UC", "COMMON", "UNCOMMON"}:
+            return CardVariant.NORMAL, f"Dragon Ball {card.rarity} base printing is non-foil"
+
+    if game == "dragon_ball_super":
+        if parallel:
+            return CardVariant.HOLO, "official Dragon Ball parallel printing"
+        # Masters-era plain R cards can genuinely exist in both normal and
+        # foil. Higher named rarities and Expansion Rares are foil products;
+        # do not let an occasional bad marketplace subtype call an SPR
+        # normal (seen on BT14-033 in the live cache).
+        if rarity in {
+            "SR", "SCR", "SEC", "ER", "SPR", "GDR",
+            "SUPER RARE", "SECRET RARE", "EXPANSION RARE", "SPECIAL RARE",
+        }:
+            return CardVariant.HOLO, f"Dragon Ball {card.rarity} rarity is foil"
+
+    if len(variants) == 1:
+        return variants[0], "only catalogue-supported printing"
+    if len(variants) > 1:
+        return None, None
+
+    return None, None
 
 
 def _surface_metrics(scan_path: Path, card: CatalogCard) -> dict[str, float]:
@@ -121,8 +196,16 @@ def _surface_metrics(scan_path: Path, card: CatalogCard) -> dict[str, float]:
 def assess_foil(scan_path: Path, card: CatalogCard) -> FoilAssessment:
     candidates = available_variants(card)
     metrics = _surface_metrics(scan_path, card)
-    if len(candidates) == 1:
-        return FoilAssessment(candidates, candidates[0], 0.98, "only catalogue-supported printing", metrics)
+    known_variant, known_reason = catalogue_variant(card)
+    if known_variant is not None:
+        return FoilAssessment(candidates or (known_variant,), known_variant, 0.98, known_reason or "catalogue rule", metrics)
+
+    # The texture model was trained and calibrated on Pokemon. One Piece
+    # and Dragon Ball have stronger game/rarity rules, and when their own
+    # catalogue says both finishes exist the model must not break that tie.
+    # This also prevents impossible reverse-holo suggestions in those games.
+    if _game_key(card) in {"one_piece", "dragon_ball_fusion_world", "dragon_ball_super"}:
+        return FoilAssessment(candidates, None, 0.0, "catalogue does not establish one finish", metrics)
 
     # The trained classifier (scripts/train_foil_classifier.py) replaces the
     # weak heuristic below once it exists: a real cross-validated check

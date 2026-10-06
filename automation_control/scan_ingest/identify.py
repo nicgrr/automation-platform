@@ -22,6 +22,7 @@ which signals actually agreed.
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 import re
 
@@ -29,7 +30,7 @@ import cv2
 import imagehash
 import numpy as np
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageOps
 
 from ..card_recognition import ExtractedCard, extract_card_details
 
@@ -109,6 +110,133 @@ MIN_CONFIDENT_SHEET_MATCHES = 2
 # and must not be able to carry a routing decision on their own.
 STRONG_MATCH_DISTANCE_MARGIN = 2
 
+# One Piece and Dragon Ball often reuse exactly the same artwork in English
+# and Japanese.  A pHash therefore cannot distinguish the two printings, and
+# the English cards themselves say "MADE IN JAPAN" -- manufacture country is
+# not card language.  Full-card OCR is only used as a conservative English
+# signal: two recognisable rules words (or the printed EN marker plus one)
+# are enough to exclude Japanese catalogue rows.  Silence remains unknown,
+# never "Japanese", because glare and low resolution can also silence OCR.
+_ENGLISH_RULE_WORDS = {
+    "activate", "active", "battle", "blocker", "card", "cards",
+    "character", "cost", "counter", "deck", "draw", "hand", "leader",
+    "life", "main", "opponent", "play", "power", "rest", "rested",
+    "return", "this", "trash", "trigger", "turn", "when", "your",
+}
+
+
+def reference_language(reference: "ReferenceCard") -> str | None:
+    """Language encoded by caches whose artwork is shared cross-language."""
+    if reference.language:
+        return reference.language
+    set_id = (reference.set_id or "").lower()
+    if set_id.startswith(("opjp-", "dbfw-jp-")):
+        return "Japanese"
+    if set_id.startswith(("op-", "one-piece-", "dbfw-", "dbs-", "dragon-ball-")):
+        return "English"
+    return None
+
+
+def reference_game(reference: "ReferenceCard") -> str | None:
+    if reference.game:
+        return reference.game
+    set_id = (reference.set_id or "").lower()
+    if set_id.startswith(("op-", "opjp-", "one-piece-")):
+        return "one_piece"
+    if set_id.startswith("dbfw-"):
+        return "dragon_ball_fusion_world"
+    if set_id.startswith(("dbs-", "dragon-ball-super-")):
+        return "dragon_ball_super"
+    return "pokemon" if set_id else None
+
+
+def reference_matches_game(reference: "ReferenceCard", detected_game: str) -> bool:
+    game = reference_game(reference) or ""
+    return game.startswith("dragon_ball") if detected_game == "dragon_ball" else game == detected_game
+
+
+@lru_cache(maxsize=4096)
+def _detect_card_signals_cached(
+    path: str, mtime_ns: int, size: int,
+) -> tuple[str | None, str | None, str | None]:
+    """Return conservative ``(language, game, printed_code)`` signals.
+
+    Japanese is intentionally not inferred from failed English OCR.  The
+    matched Japanese catalogue row still supplies that label; this function
+    exists to stop an English printing being swallowed by its same-art JP
+    counterpart.
+    """
+    try:
+        with Image.open(path) as image:
+            gray = ImageOps.autocontrast(ImageOps.grayscale(image))
+            # Language lives in the rules/name box, not the illustration.
+            # Cropping the top 42% both removes OCR noise and pays for the
+            # larger upscale needed to read real 150-DPI scan text.
+            gray = gray.crop((0, int(gray.height * 0.42), gray.width, gray.height))
+            if gray.width < 1000:
+                scale = 1000 / max(gray.width, 1)
+                gray = gray.resize((1000, max(1, int(gray.height * scale))))
+            raw = pytesseract.image_to_string(gray, config="--psm 11")
+    except Exception:
+        return None, None, None
+
+    words = set(re.findall(r"[A-Za-z]+", raw.casefold()))
+    # Foil glare often causes Tesseract to join words with stray letters
+    # ("youlmayrestthis"). Substring matches for 4+ letter rules terms
+    # recover those without treating one-letter OCR noise as language.
+    signals = (words & _ENGLISH_RULE_WORDS) | {
+        word for word in _ENGLISH_RULE_WORDS
+        if len(word) >= 4 and any(word in token for token in words)
+    }
+    has_en_marker = bool(re.search(r"(?:^|\s)EN(?:\s|$)", raw))
+    language = "English" if len(signals) >= 2 or (has_en_marker and signals) else None
+
+    # Product codes are much stronger than card-art similarity for routing
+    # between games, and filenames retain a previously read code even when
+    # this particular OCR pass misses the tiny footer.  CHARACTER is a safe
+    # One Piece fallback; Dragon Ball calls its equivalent a BATTLE card.
+    searchable = f"{Path(path).name} {raw}".upper()
+    code_match = re.search(r"((?:OP|ST|EB|PRB|FB|FS|BT|EX)\d{2})[-_ ]?(\d{2,3})", searchable)
+    printed_code = f"{code_match.group(1)}-{code_match.group(2)}" if code_match else None
+    if printed_code and printed_code.startswith(("OP", "ST", "EB", "PRB")):
+        game = "one_piece"
+    elif printed_code and printed_code.startswith(("FB", "FS", "BT", "EX")):
+        game = "dragon_ball"
+    elif any("character" in token or token.startswith("characte") for token in words):
+        game = "one_piece"
+    elif "battle" in words:
+        game = "dragon_ball"
+    else:
+        game = None
+    return language, game, printed_code
+
+
+def detect_card_language(image_path: Path) -> str | None:
+    """Cached filesystem-aware wrapper for review pages and scan routing."""
+    try:
+        stat = image_path.stat()
+    except OSError:
+        return None
+    return _detect_card_signals_cached(str(image_path), stat.st_mtime_ns, stat.st_size)[0]
+
+
+def detect_card_game(image_path: Path) -> str | None:
+    """Game proven by a printed/previously-read code or card-type label."""
+    try:
+        stat = image_path.stat()
+    except OSError:
+        return None
+    return _detect_card_signals_cached(str(image_path), stat.st_mtime_ns, stat.st_size)[1]
+
+
+def detect_card_code(image_path: Path) -> str | None:
+    """Exact Bandai collector code read from the crop or retained filename."""
+    try:
+        stat = image_path.stat()
+    except OSError:
+        return None
+    return _detect_card_signals_cached(str(image_path), stat.st_mtime_ns, stat.st_size)[2]
+
 
 class Source(str, Enum):
     """Which signal(s) produced the match."""
@@ -162,6 +290,10 @@ class ReferenceCard:
     # Only needed where one reference list spans several sets (a whole
     # One Piece / Dragon Ball catalogue -- see session._run_session_auto).
     set_id: str | None = None
+    # Needed by the all-catalogue review screen: provider-generated ids such
+    # as tcgp-653401 do not encode which game they belong to.
+    game: str | None = None
+    language: str | None = None
 
 
 def _hash_ints(references: list[ReferenceCard]) -> np.ndarray:
@@ -292,6 +424,20 @@ def _rank_by_phash(image_path: Path, references: list[ReferenceCard]) -> list[tu
     hashed = [r for r in references if r.phash]
     if not hashed:
         return []
+    games = {reference_game(r) for r in hashed} - {None}
+    if len(games) > 1:
+        detected_game = detect_card_game(image_path)
+        if detected_game:
+            same_game = [r for r in hashed if reference_matches_game(r, detected_game)]
+            if same_game:
+                hashed = same_game
+    languages = {reference_language(r) for r in hashed} - {None}
+    if len(languages) > 1:
+        detected_language = detect_card_language(image_path)
+        if detected_language:
+            same_language = [r for r in hashed if reference_language(r) == detected_language]
+            if same_language:
+                hashed = same_language
     try:
         with Image.open(image_path) as image:
             scan_hash = imagehash.phash(image.convert("RGB"))

@@ -65,6 +65,8 @@ JOBS = (
         "listing prices are built from these, so they go stale silently"),
     Job("pokemonpricetracker-backfill.service", "pokemonpricetracker-backfill.timer",
         "Card price backfill", "held cards stop getting a market value"),
+    Job("tcgcsv-pricing-sync.service", "tcgcsv-pricing-sync.timer", "TCGCSV bulk prices",
+        "the free local pricing baseline stops refreshing and external quota use rises"),
     Job("ebay-listings-refresh.service", "ebay-listings-refresh.timer", "eBay listings cache",
         "the dashboard widget and /settings' listing count go stale"),
     Job("market-watch-scan.service", "market-watch-scan.timer", "Collectible market watches",
