@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
+import os
 import re
 
 import cv2
@@ -33,6 +34,10 @@ import pytesseract
 from PIL import Image, ImageOps
 
 from ..card_recognition import ExtractedCard, extract_card_details
+
+# Concurrent Tesseract runs each spawn one OpenMP thread per core and then spin
+# against each other: a 0.6s OCR becomes minutes on a busy 4-core host.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 # Where the collector number sits on the card, as fractions of the crop.
 # The corner depends on the era, so both are tried rather than guessed at:

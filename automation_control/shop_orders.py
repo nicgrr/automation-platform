@@ -26,6 +26,7 @@ from .card_locate import LOCATE_STYLE, PACK_STYLE, line_detail, location_pill_ht
 from .config import get_settings
 from .database import get_session
 from .ebay_sync import sync_ebay_after_sale
+from .labels import label_buttons_html
 from .models import ShopListing, ShopOrder, ShopOrderItem, ShopOrderStatus
 from .order_stock import StockUnavailable, cancel_pending_order, mark_order_paid, restore_order_stock
 from .ui import brand_header, page, pill
@@ -93,13 +94,16 @@ def _item_line_html(session: Session, item: ShopOrderItem) -> str:
     )
 
 
-def _order_actions_html(order: ShopOrder, *, size: str = "small", pack_sheet_link: bool = True) -> str:
+def _order_actions_html(
+    order: ShopOrder, *, size: str = "small", pack_sheet_link: bool = True, label_link: bool = True,
+) -> str:
     """The pack/ship actions for one order, shared by the list row and the
     order-detail page so the two never drift out of sync with each other.
     `pack_sheet_link` is left out on the detail page itself -- linking to
     the pack sheet from the page a click on that same order already opens
     would just be a loop back to a narrower view of what's already here."""
     btn = f"btn {size}".strip()
+    label = label_buttons_html('shop', order.id, btn) if label_link else ""
     sheet = (
         f"<a class='{btn}' href='/shop-orders/{escape(order.id)}/pack-sheet'>Pack assistant</a>"
         if pack_sheet_link else ""
@@ -124,13 +128,13 @@ def _order_actions_html(order: ShopOrder, *, size: str = "small", pack_sheet_lin
         )
     if order.status == ShopOrderStatus.PAID:
         return (
-            f"{sheet}"
+            f"{sheet}{label}"
             f"<form method='post' action='/shop-orders/{escape(order.id)}/pack'>"
             f"<button class='{btn}'>Mark packed</button></form>{refund}"
         )
     if order.status == ShopOrderStatus.PACKED:
         return (
-            f"{sheet}"
+            f"{sheet}{label}"
             f"<form method='post' action='/shop-orders/{escape(order.id)}/ship' class='ship-form'>"
             "<input name='tracking_number' placeholder='Tracking number' required>"
             f"<button class='{btn}'>Confirm shipped</button></form>{refund}"
@@ -297,7 +301,7 @@ def pack_sheet(
         "<div class='panel'><p class='muted'>No line items on this order.</p></div>"
     )
 
-    actions = _order_actions_html(order, size="", pack_sheet_link=False) or (
+    actions = _order_actions_html(order, size="", pack_sheet_link=False, label_link=False) or (
         f"<span class='muted'>{escape(order.status.value.replace('_', ' ').title())}</span>"
     )
 
@@ -306,6 +310,7 @@ def pack_sheet(
         brand_header(f"Pack {escape(order.reference)}")
         + "<a class='back-link' href='/shop-orders'>&larr; Back to shop orders</a>"
         + f"<p class='subtitle'>{escape(order.ship_to_name)} &mdash; {address}, {escape(order.ship_to_country)}</p>"
+        + f"<div class='pack-label-actions'>{label_buttons_html('shop', order.id, 'btn')}</div>"
         + f"<div class='pack-grid'>{cards}</div>"
         + f"<div class='panel pack-footer'>{actions}</div>"
         + _STYLE + PACK_STYLE + LOCATE_STYLE
@@ -457,6 +462,7 @@ def mark_shipped(
 
 
 _STYLE = """<style>
+.pack-label-actions{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px}
 .filter-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px}
 .filter-tab{padding:7px 13px;border-radius:999px;font-size:13px;font-weight:600;
   background:var(--surface-sunken);color:var(--text-dim)}

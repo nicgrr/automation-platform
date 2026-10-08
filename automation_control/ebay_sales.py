@@ -35,6 +35,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .card_locate import LOCATE_STYLE, PACK_STYLE, pack_card_html
 from .database import get_session
+from .labels import label_buttons_html
 from .models import EbayImportedOrder, ShopListing
 from .ui import brand_header, page
 
@@ -106,7 +107,8 @@ def _order_card_html(session: Session, ebay_order_id: str, rows: list[EbayImport
         for row in rows
     )
 
-    actions = (
+    label = label_buttons_html('ebay', ebay_order_id, 'btn small')
+    actions = label + (
         "<div class='muted'>Completed</div>" if completed else
         f"<form method='post' action='/ebay-sales/{escape(ebay_order_id)}/complete'>"
         "<button class='btn small'>Mark complete</button></form>"

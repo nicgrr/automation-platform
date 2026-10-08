@@ -1,0 +1,54 @@
+#!/usr/bin/python3
+"""CUPS filter: PDF -> TSPL2 labels (HotLabel HL-M9, 100x150mm, 203 dpi).
+
+Installed to /usr/lib/cups/filter/pdftotspl. Ghostscript rasterises each PDF
+page to a 1-bit 800x1200 bitmap, which is wrapped in one TSPL2 label per page.
+"""
+import subprocess
+import sys
+import tempfile
+
+W, H = 800, 1200
+ROW = W // 8
+INVERT = bytes(255 - i for i in range(256))  # PBM 1=black; TSPL BITMAP 1=white
+
+
+def main() -> int:
+    copies = max(1, int(sys.argv[4])) if len(sys.argv) > 4 and sys.argv[4].isdigit() else 1
+    source = sys.argv[6] if len(sys.argv) > 6 else None
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+        if source is None:
+            tmp.write(sys.stdin.buffer.read())
+            tmp.flush()
+            source = tmp.name
+        gs = subprocess.run(
+            ["gs", "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pbmraw", "-r203",
+             f"-g{W}x{H}", "-dPDFFitPage", "-dTextAlphaBits=1", "-dGraphicsAlphaBits=1",
+             "-sOutputFile=-", source],
+            capture_output=True,
+        )
+    if gs.returncode != 0:
+        sys.stderr.write(f"ERROR: ghostscript failed: {gs.stderr.decode(errors='replace')}\n")
+        return 1
+    data, pos, out = gs.stdout, 0, sys.stdout.buffer
+    header = f"P4\n{W} {H}\n".encode()
+    pages = 0
+    while data.startswith(header, pos):
+        start = pos + len(header)
+        bitmap = data[start:start + ROW * H].translate(INVERT)
+        pos = start + ROW * H
+        pages += 1
+        out.write(
+            b"SIZE 100 mm,150 mm\r\nGAP 3 mm,0 mm\r\nDIRECTION 0\r\nCLS\r\n"
+            + f"BITMAP 0,0,{ROW},{H},0,".encode() + bitmap
+            + f"\r\nPRINT 1,{copies}\r\n".encode()
+        )
+    if not pages:
+        sys.stderr.write("ERROR: no pages rendered\n")
+        return 1
+    out.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
