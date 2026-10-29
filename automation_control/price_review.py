@@ -18,7 +18,7 @@ from .adapters.pokemontcg import PriceLookupError, PriceNotFound, lookup_price
 from .audit import record_event
 from .auth import require_dashboard_user
 from .classification import classify_pending_cards, load_pipeline_config
-from .navigation import finish_flow
+from .navigation import finish_flow, redirect_back
 from .scan_ingest.pricing import POKEMONPRICETRACKER_SOURCE_NAME
 from .database import SessionLocal, get_session
 from .image_processing import crop_card
@@ -1112,6 +1112,7 @@ def price_review_recrop(
 @router.post("/{card_id}/revision-complete")
 def price_review_revision_complete(
     card_id: str,
+    request: Request,
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ) -> RedirectResponse:
@@ -1147,4 +1148,4 @@ def price_review_revision_complete(
         correlation_id=_correlation_id(),
         details={"shop_listing_id": promotion.shop_listing_id, "captures_completed": len(completed)},
     )
-    return RedirectResponse("/cards/pricing", status_code=303)
+    return redirect_back(request, "/cards/pricing", saved="Marked updated")
