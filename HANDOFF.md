@@ -44,18 +44,28 @@ from).
    snapshot first; re-running refuses). The other 12 Needs attention entries
    need no action per Codex's report (8 already withdrawn, 3 live with
    unrecognised `imported` links — a UI classification bug, 1 withdrawn).
-3. **CRM navigation fix (in progress):** plan below in "Next steps".
+3. **CRM navigation fix (done, not yet deployed):** plan below in "Next steps".
    - Batch 1 DONE `ff5c543`: `navigation.redirect_back`, shared ui.py
      script (return params, trail, scroll, toast, Back link); card edits and
      photo audit converted; browser-checked; full suite green.
    - Batch 2 DONE (uploads): flow-origin cookie; card/collectible/accessory
      capture → queue end returns to the upload's starting page; personal
      collection upload uses redirect_back. Full suite 2331 passed.
-   - Batch 3 IN PROGRESS (listings): shop listing activate/withdraw/
-     activate-all/edit and eBay cleanup dismiss → redirect_back; ui.py trail
-     ignores message-only params (notice, error, _saved, refreshed,
-     checking) so a self-redirect with ?notice= isn't a new Back step.
-     Then batch 4 pricing. Throwaway test
+   - Batch 3 DONE `3c84fd7` (listings): activate/hide/activate-all/edit and
+     eBay cleanup dismiss use redirect_back; trail ignores message-only
+     params. Browser-checked on the snapshot copy.
+   - Batch 4 DONE (pricing): "Mark updated" returns to the list position.
+     Full suite 2333 passed.
+   - NOT YET LIVE: the running CRM still has the old code. To deploy:
+     `.venv/bin/alembic upgrade head` (records 20261030_01; column already
+     exists), then restart `ezbay.service`. Needs the operator's OK.
+   - Not converted (deliberate forward flows or untouched areas): review
+     save-and-next, capture→review, batch status pages, Listing Studio
+     self-redirects, eBay export/publish steps, Whatnot, buying, sales,
+     retailer goals, market watch. Convert with `redirect_back` if the
+     operator reports them.
+   - Not browser-tested: uploads (snapshot copy has no identification
+     API key); covered by tests in tests/test_navigation.py. Throwaway test
    instance on 127.0.0.1:8091 (snapshot DB at `~/.cache/ezbay-navtest`, no API
    keys) is approved by the operator for browser checks.
 
