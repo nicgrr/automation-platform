@@ -38,6 +38,25 @@ def test_empty_platform_renders_without_error(client):
     assert "Sales Executive Dashboard" in response.text
 
 
+def test_dashboard_live_refreshes_without_reloading_the_phone_page(client):
+    response = client.get("/dashboard")
+
+    assert response.headers["cache-control"] == "no-store"
+    assert 'id="dashboard-live-root"' in response.text
+    assert 'id="dashboard-live-status"' in response.text
+    assert "setInterval" in response.text
+    assert "visibilitychange" in response.text
+    assert "pageshow" in response.text
+    assert "cache: 'no-store'" in response.text
+
+    fragment = client.get("/dashboard?fragment=1")
+    assert fragment.status_code == 200
+    assert fragment.headers["cache-control"] == "no-store"
+    assert fragment.text.startswith('<div id="dashboard-live-root"')
+    assert "<!doctype html>" not in fragment.text
+    assert "setInterval" not in fragment.text
+
+
 def test_recent_sale_appears_in_the_widget(client, session):
     session.add(Marketplace(id="m1", name="Whatnot"))
     session.add(Sale(id="s1", marketplace_id="m1", gross_amount=Decimal("42.50")))
@@ -167,6 +186,18 @@ def test_every_listed_module_is_reachable_from_the_drawer(client):
     for _title, links, _collapsed in ADMIN_NAV:
         for href, _label in links:
             assert f"data-nav-href='{href}'" in response.text, href
+
+
+def test_ebay_cleanup_is_visible_without_typing_a_url(client):
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    assert "href='/ebay-listing-cleanup'" in dashboard.text
+    assert "eBay listing cleanup" in dashboard.text
+
+    ebay_hub = client.get("/ebay")
+    assert ebay_hub.status_code == 200
+    assert "href='/ebay-listing-cleanup'" in ebay_hub.text
+    assert "Listing cleanup" in ebay_hub.text
 
 
 def test_review_centre_carries_the_combined_count_badge(client):

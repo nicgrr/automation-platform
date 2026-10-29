@@ -10,6 +10,7 @@ markup and styling as page-specific `_STYLE`.
 
 from datetime import UTC, datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -361,22 +362,123 @@ def dashboard(request: Request, user: str = Depends(require_dashboard_user), ses
         ops_widget,
     ])
 
-    body = f"""<div class="dash-title">
+    local_now = now.astimezone(ZoneInfo("Australia/Sydney"))
+    live_root = f"""<div id="dashboard-live-root" data-generated-at="{now.isoformat()}">
+  <div class="dash-title">
     <h1>Sales Executive Dashboard</h1>
-    <p>A live view of inventory, sales, and purchasing &middot; as of {now:%Y-%m-%d %H:%M} UTC</p>
+    <p>A live view of inventory, sales, and purchasing
+      <span class="live-state" id="dashboard-live-status" role="status" aria-live="polite">
+        <span class="live-dot"></span>Live
+      </span>
+      <span class="live-updated">Updated <time datetime="{now.isoformat()}">{local_now:%-d %b %Y, %-I:%M %p %Z}</time></span>
+    </p>
   </div>
   {_jobs_html()}
   {_recovery_html()}
   {_storefront_readiness_html(settings)}
   <div class="widget-grid">{grid}</div>
 
-  {_quicklinks_html(counts, storefront_url)}"""
-    return HTMLResponse(page("EzBay — Dashboard", body, head_extra=f"<style>{_STYLE}{CHART_STYLE}</style>"))
+  {_quicklinks_html(counts, storefront_url)}
+</div>"""
+    no_cache = {
+        "Cache-Control": "no-store",
+        "Pragma": "no-cache",
+    }
+    if request.query_params.get("fragment") == "1":
+        return HTMLResponse(live_root, headers=no_cache)
+
+    body = live_root + _LIVE_SCRIPT
+    return HTMLResponse(
+        page("EzBay — Dashboard", body, head_extra=f"<style>{_STYLE}{CHART_STYLE}</style>"),
+        headers=no_cache,
+    )
+
+
+_LIVE_SCRIPT = r"""<script>
+(function(){
+  var intervalMs = 30000;
+  var refreshing = false;
+  var lastRequestAt = 0;
+
+  function root(){ return document.getElementById('dashboard-live-root'); }
+  function status(message, state){
+    var el = document.getElementById('dashboard-live-status');
+    if (!el) return;
+    el.className = 'live-state' + (state ? ' is-' + state : '');
+    el.innerHTML = '<span class="live-dot"></span>' + message;
+  }
+  function formatGeneratedAt(container){
+    if (!container) return;
+    var time = container.querySelector('time[datetime]');
+    if (!time) return;
+    var generated = new Date(time.getAttribute('datetime'));
+    if (isNaN(generated.getTime())) return;
+    time.textContent = new Intl.DateTimeFormat(undefined, {
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: 'numeric', minute: '2-digit'
+    }).format(generated);
+    time.title = 'Dashboard data generated at ' + generated.toLocaleString();
+  }
+  async function refresh(force){
+    if (refreshing || document.hidden || !navigator.onLine) {
+      if (!navigator.onLine) status('Offline — showing saved view', 'offline');
+      return;
+    }
+    var now = Date.now();
+    if (!force && now - lastRequestAt < 2000) return;
+    refreshing = true;
+    lastRequestAt = now;
+    status('Refreshing…', 'refreshing');
+    var current = root();
+    if (current) current.setAttribute('aria-busy', 'true');
+    try {
+      var response = await fetch('/dashboard?fragment=1&_=' + now, {
+        cache: 'no-store', credentials: 'same-origin',
+        headers: {'X-EzBay-Live-Refresh': '1'}
+      });
+      if (!response.ok) throw new Error('dashboard refresh returned ' + response.status);
+      var markup = await response.text();
+      var template = document.createElement('template');
+      template.innerHTML = markup.trim();
+      var next = template.content.querySelector('#dashboard-live-root');
+      current = root();
+      if (!next || !current) throw new Error('dashboard refresh was incomplete');
+      current.replaceWith(next);
+      formatGeneratedAt(next);
+      status('Live', 'live');
+    } catch (error) {
+      current = root();
+      if (current) current.removeAttribute('aria-busy');
+      status(navigator.onLine ? 'Refresh failed — retrying' : 'Offline — showing saved view', 'offline');
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  formatGeneratedAt(root());
+  window.setInterval(function(){ refresh(false); }, intervalMs);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') refresh(true);
+  });
+  window.addEventListener('pageshow', function(){ refresh(true); });
+  window.addEventListener('focus', function(){ refresh(false); });
+  window.addEventListener('online', function(){ refresh(true); });
+  window.addEventListener('offline', function(){ status('Offline — showing saved view', 'offline'); });
+})();
+</script>"""
 
 
 _STYLE = """
 .dash-title h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em;font-weight:800}
-.dash-title p{margin:0 0 24px;color:var(--text-dim);font-size:13.5px}
+.dash-title p{margin:0 0 24px;color:var(--text-dim);font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.live-state{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;
+  background:var(--success-bg);color:var(--success);font-size:11.5px;font-weight:700}
+.live-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.live-state.is-refreshing{background:var(--surface-sunken);color:var(--text-dim)}
+.live-state.is-refreshing .live-dot{animation:live-pulse .8s ease-in-out infinite alternate}
+.live-state.is-offline{background:var(--warning-bg);color:var(--warning)}
+.live-updated{color:var(--text-faint);font-size:12px}
+@keyframes live-pulse{to{opacity:.25}}
 .jobs{margin:0 0 20px;border-radius:12px;font-size:13px}
 .jobs-ok{padding:9px 14px;background:var(--surface-sunken);border:1px solid var(--panel-border);
   color:var(--text-dim);display:flex;align-items:center;gap:9px}

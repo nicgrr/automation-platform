@@ -31,6 +31,7 @@ from .capture import router as cards_router
 from .collectible_link import router as collectible_link_router
 from .contact_messages import router as contact_messages_router
 from .collectibles import router as collectibles_router
+from .collectible_pricing import router as collectible_pricing_router
 from .commerce import router as commerce_router
 from .config import Settings, get_settings
 from .dashboard import router as dashboard_router
@@ -62,6 +63,7 @@ from .settings_page import router as settings_page_router
 from .shop_admin import router as shop_admin_router
 from .shop_listings_admin import router as shop_listings_router
 from .ebay_publish import router as ebay_publish_router
+from .ebay_photo_batch import router as ebay_photo_batch_router
 from .ebay_sales import router as ebay_sales_router
 from .labels import router as labels_router
 from .shop_orders import router as shop_orders_router
@@ -115,6 +117,18 @@ def apple_touch_icon() -> FileResponse:
     return FileResponse(_STATIC_DIR / "icons" / "apple-touch-icon.png", media_type="image/png")
 
 
+@app.get("/sw.js", include_in_schema=False)
+def service_worker() -> FileResponse:
+    # A root-scoped worker must opt into a scope wider than its file only
+    # when served below a subdirectory. This file is already at root, but the
+    # explicit header documents and locks down the intended scope.
+    return FileResponse(
+        _STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
+
+
 @app.middleware("http")
 async def renew_session_middleware(request: Request, call_next):
     """Writes the sliding-session cookie onto the real response, after the
@@ -136,6 +150,10 @@ async def renew_session_middleware(request: Request, call_next):
                             httponly=True, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
         response.set_cookie("rbay_csrf", csrf_token_for(username, issued, settings.session_signing_key),
                             httponly=False, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
+    # These pages contain live business state and should never be restored
+    # from an HTTP cache after the app has spent time in the background.
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 app.include_router(cards_router)
 app.include_router(pricing_router)
@@ -156,6 +174,7 @@ app.include_router(business_records_router)
 app.include_router(sealed_economics_router)
 app.include_router(analytics_router)
 app.include_router(collectibles_router)
+app.include_router(collectible_pricing_router)
 app.include_router(collectible_link_router)
 app.include_router(accessories_router)
 app.include_router(contact_messages_router)
@@ -171,6 +190,7 @@ app.include_router(deal_check_router)
 app.include_router(shop_admin_router)
 app.include_router(shop_listings_router)
 app.include_router(ebay_publish_router)
+app.include_router(ebay_photo_batch_router)
 app.include_router(shop_orders_router)
 app.include_router(ebay_sales_router)
 app.include_router(labels_router)

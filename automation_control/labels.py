@@ -2,10 +2,11 @@
 
 import os
 import subprocess
+import tempfile
 from html import escape
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
@@ -31,6 +32,9 @@ def ebay_label_lines(snapshot: dict) -> list[str]:
     steps = snapshot.get("fulfillmentStartInstructions") or []
     ship_to = ((steps[0].get("shippingStep") or {}).get("shipTo") if steps else None) or {}
     address = ship_to.get("contactAddress") or {}
+    buyer = snapshot.get("buyer") or {}
+    phone = ((ship_to.get("primaryPhone") or {}).get("phoneNumber") or
+             (((buyer.get("buyerRegistrationAddress") or {}).get("primaryPhone") or {}).get("phoneNumber")) or "")
     locality = " ".join(
         v for v in (address.get("city"), address.get("stateOrProvince"), address.get("postalCode")) if v
     )
@@ -41,14 +45,17 @@ def ebay_label_lines(snapshot: dict) -> list[str]:
         address.get("addressLine2") or "",
         locality,
         "" if country.lower() in _HOME_COUNTRIES else country,
+        phone,
     ]
-    return [line.strip() for line in lines if line and line.strip()]
+    # eBay puts its own reference ("ebay:t27v2mj") in addressLine1; it isn't part of the address.
+    return [line.strip() for line in lines if line and line.strip() and not line.strip().lower().startswith("ebay:")]
 
 
 def shop_order_label_lines(order: ShopOrder) -> list[str]:
     country = (order.ship_to_country or "").strip()
     lines = [order.ship_to_name, *(order.ship_to_address or "").splitlines(),
-             "" if country.lower() in _HOME_COUNTRIES else country]
+             "" if country.lower() in _HOME_COUNTRIES else country,
+             order.ship_to_phone or ""]
     return [line.strip() for line in lines if line and line.strip()]
 
 
@@ -111,9 +118,56 @@ def tspl_for_image(image: Image.Image) -> bytes:
     return header + mono.tobytes() + b"\r\nPRINT 1,1\r\n"
 
 
-def print_label(lines: list[str]) -> None:
-    """Send the label to the CUPS queue as a raw job; raises RuntimeError with a readable reason."""
-    job = tspl_for_image(render_label_image(lines))
+MAX_UPLOAD = 8 * 1024 * 1024
+
+
+def postage_label_image(data: bytes) -> Image.Image:
+    """An uploaded eBay/carrier postage label (PDF or image) fitted onto the 100x150mm stock.
+
+    Only the first PDF page is used. Surrounding white space (an A4 sheet with
+    the label in one corner) is cropped away, a landscape label is turned to
+    run along the feed, and the result is scaled to fill the sticker.
+    """
+    if data[:5] == b"%PDF-":
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "in.pdf")
+            with open(src, "wb") as handle:
+                handle.write(data)
+            try:
+                run = subprocess.run(
+                    ["gs", "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pnggray", f"-r{DPI}",
+                     "-dFirstPage=1", "-dLastPage=1", "-dTextAlphaBits=4", "-dGraphicsAlphaBits=4",
+                     "-sOutputFile=-", src],
+                    capture_output=True, timeout=60,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError("Ghostscript is not installed on the server") from exc
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("the PDF took too long to convert") from exc
+        if run.returncode != 0 or not run.stdout:
+            raise RuntimeError("that PDF could not be read")
+        data = run.stdout
+    try:
+        page = Image.open(BytesIO(data))
+        page.load()
+    except Exception as exc:
+        raise RuntimeError("that file is not a PDF or an image") from exc
+    gray = page.convert("L")
+    box = gray.point(lambda p: 255 if p < 245 else 0).getbbox()
+    if box is None:
+        raise RuntimeError("the label is blank")
+    gray = gray.crop(box)
+    if gray.width > gray.height:
+        gray = gray.rotate(90, expand=True)
+    scale = min(LABEL_W / gray.width, LABEL_H / gray.height, 2.0)
+    gray = gray.resize((max(1, round(gray.width * scale)), max(1, round(gray.height * scale))), Image.LANCZOS)
+    canvas = Image.new("L", (LABEL_W, LABEL_H), 255)
+    canvas.paste(gray, ((LABEL_W - gray.width) // 2, (LABEL_H - gray.height) // 2))
+    return canvas.point(lambda p: 255 if p >= 160 else 0).convert("1", dither=Image.Dither.NONE)
+
+
+def send_job(job: bytes) -> None:
+    """Send a TSPL job to the CUPS queue as a raw job; raises RuntimeError with a readable reason."""
     try:
         result = subprocess.run(
             ["lp", "-d", PRINTER_QUEUE, "-o", "raw", "-t", "EzBay label"],
@@ -125,6 +179,10 @@ def print_label(lines: list[str]) -> None:
         raise RuntimeError("the print service did not respond") from exc
     if result.returncode != 0:
         raise RuntimeError(result.stderr.decode(errors="replace").strip() or "the printer queue rejected the job")
+
+
+def print_label(lines: list[str]) -> None:
+    send_job(tspl_for_image(render_label_image(lines)))
 
 
 LABEL_PRINT_SCRIPT = """<script>
@@ -150,6 +208,7 @@ def label_buttons_html(kind: str, order_id: str, btn_class: str) -> str:
     return (
         f"<button type='button' class='{btn_class}' data-label-print='/labels/{kind}/{oid}/print'>Print label</button>"
         f"<a class='{btn_class}' href='/labels/{kind}/{oid}' target='_blank'>Label preview</a>"
+        f"<a class='{btn_class}' href='/labels/postage' target='_blank'>Postage PDF</a>"
         + LABEL_PRINT_SCRIPT
     )
 
@@ -231,6 +290,41 @@ def print_shop_label(
 def _send(lines: list[str]) -> JSONResponse:
     try:
         print_label(lines)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse({"ok": True})
+
+
+_POSTAGE_PAGE = (
+    "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Print postage label</title>"
+    "<style>body{font:16px system-ui;max-width:520px;margin:24px auto;padding:0 16px}"
+    "input,button{font:inherit;margin:8px 0}button{padding:10px 18px}#msg{margin-top:12px}</style>"
+    "<h2>Print postage label</h2>"
+    "<p>Upload the label PDF (or a screenshot) from eBay. It is cropped to the label and printed "
+    "on the 4x6 printer. Only the first page is printed.</p>"
+    "<form id='f'><input type='file' name='file' accept='application/pdf,image/*' required><br>"
+    "<button class='btn'>Print</button></form><div id='msg'></div>"
+    "<script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();"
+    "const m=document.getElementById('msg');m.textContent='Printing...';"
+    "try{const r=await fetch('/labels/postage/print',{method:'POST',body:new FormData(e.target)});"
+    "const j=await r.json().catch(()=>({}));"
+    "m.textContent=r.ok?'Printed.':(j.detail||'Print failed');}catch(x){m.textContent='Print failed';}});</script>"
+)
+
+
+@router.get("/labels/postage", response_class=HTMLResponse)
+def postage_label_page(user: str = Depends(require_dashboard_user)):
+    return HTMLResponse(_POSTAGE_PAGE)
+
+
+@router.post("/labels/postage/print")
+async def print_postage_label(file: UploadFile = File(...), user: str = Depends(require_dashboard_user)):
+    data = await file.read(MAX_UPLOAD + 1)
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(status_code=413, detail="file is too large")
+    try:
+        send_job(tspl_for_image(postage_label_image(data)))
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return JSONResponse({"ok": True})

@@ -4,7 +4,7 @@
   "description": "Collectibles inventory, purchasing, and sales command centre",
   "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#05070d",
+  "background_color": "#f6f8fb",
   "theme_color": "#0891b2",
   "share_target": {
     "action": "/market-watch/share",

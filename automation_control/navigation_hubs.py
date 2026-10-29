@@ -76,19 +76,18 @@ def scan_and_add(user: str = Depends(require_dashboard_user),
                  session: Session = Depends(get_session)) -> HTMLResponse:
     return _render(
         "Scan & add",
-        "Choose how stock is entering EzBay. Flatbed scanning, phone photography and bulk uploads all remain separate pipelines behind one entrance.",
+        "Cards use one bulk-first intake workflow: upload several phone photos or scan a nine-card sheet, then review every result before pricing.",
         [
-            _section("Flatbed scanner", "Watch the nine-card scanner pipeline and diagnose anything it holds.", [
+            _section("Cards — bulk only", "Use phone photos for mixed cards or the flatbed scanner for a full sheet.", [
+                _card("/cards/capture/bulk", "Upload card photos", "Upload One Piece, Pokémon or other card photos together for background identification."),
                 _card("/feed", "Scan feed", "Live sheets, detected crops, readiness and recent results."),
                 _card("/scan-ingest", "Scanner status & logs", "Service health, active sessions, processed sheets and raw logs."),
             ]),
-            _section("Photograph one item", "Use the phone camera or select an existing image.", [
-                _card("/cards/capture", "Card", "Photograph and identify one card."),
+            _section("Other item intake", "Collectibles and supplies retain their existing photo workflows.", [
                 _card("/collectibles/capture", "Collectible", "Photograph a figure or other collectible."),
                 _card("/accessories/capture", "Supply item", "Photograph sleeves, binders or another card-supply product."),
             ]),
-            _section("Bulk and link intake", "Add several photos together or identify a product page.", [
-                _card("/cards/capture/bulk", "Bulk cards", "Upload a batch of card photos for background processing."),
+            _section("Other bulk and link intake", "Add several non-card photos together or identify a product page.", [
                 _card("/collectibles/capture/bulk", "Bulk collectibles", "Upload multiple collectible photos."),
                 _card("/accessories/capture/bulk", "Bulk supplies", "Upload multiple supply-product photos."),
                 _card("/collectibles/identify", "Identify from a link", "Read collectible details from a product or listing URL."),
@@ -146,7 +145,8 @@ def ebay_hub(user: str = Depends(require_dashboard_user),
         "Prepare listings, compare them with the live eBay account, and track every bulk-upload file from one place.",
         [
             _section("Listing workflow", "EzBay never publishes automatically; these screens keep preparation and live state distinct.", [
-                _card("/shop-listings?status=draft", "Sellable drafts", "Review the canonical listing before choosing eBay export or direct publishing.", status=f"{drafts} total"),
+                _card("/shop-listings?status=draft", "Sellable drafts", "Review each listing, then publish it directly to eBay or include it in a bulk-upload file.", status=f"{drafts} total"),
+                _card("/ebay-listing-cleanup", "Listing cleanup", "Review the titles, descriptions, photos and CRM links for everything currently active on eBay."),
                 _card("/ebay-listings", "Live listings", "Refresh and inspect the listings eBay reports as live.", status=f"{live} mirrored"),
                 _card("/ebay-export", "Bulk upload", "Build CSV files, import eBay results and prevent duplicate exports.", status=f"{batches} exports"),
             ]),

@@ -1,48 +1,64 @@
 #!/usr/bin/python3
 """CUPS filter: PDF -> TSPL2 labels (HotLabel HL-M9, 100x150mm, 203 dpi).
 
-Installed to /usr/lib/cups/filter/pdftotspl. Ghostscript rasterises each PDF
-page to a 1-bit 800x1200 bitmap, which is wrapped in one TSPL2 label per page.
+Installed to /usr/lib/cups/filter/pdftotspl. Each PDF page is rasterised with
+Ghostscript, cropped to its content (an A4 page with a label in one corner is
+fine), turned to run along the feed if landscape, scaled to fill the 800x1200
+sticker, and wrapped in one TSPL2 label. Mirrors labels.postage_label_image.
 """
+import glob
+import os
 import subprocess
 import sys
 import tempfile
 
+from PIL import Image
+
 W, H = 800, 1200
-ROW = W // 8
-INVERT = bytes(255 - i for i in range(256))  # PBM 1=black; TSPL BITMAP 1=white
+
+
+def label_bitmap(path: str) -> bytes | None:
+    gray = Image.open(path).convert("L")
+    box = gray.point(lambda p: 255 if p < 245 else 0).getbbox()
+    if box is None:
+        return None
+    gray = gray.crop(box)
+    if gray.width > gray.height:
+        gray = gray.rotate(90, expand=True)
+    scale = min(W / gray.width, H / gray.height, 2.0)
+    gray = gray.resize((max(1, round(gray.width * scale)), max(1, round(gray.height * scale))), Image.LANCZOS)
+    canvas = Image.new("L", (W, H), 255)
+    canvas.paste(gray, ((W - gray.width) // 2, (H - gray.height) // 2))
+    return canvas.point(lambda p: 255 if p >= 160 else 0).convert("1", dither=Image.Dither.NONE).tobytes()
 
 
 def main() -> int:
     copies = max(1, int(sys.argv[4])) if len(sys.argv) > 4 and sys.argv[4].isdigit() else 1
     source = sys.argv[6] if len(sys.argv) > 6 else None
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         if source is None:
-            tmp.write(sys.stdin.buffer.read())
-            tmp.flush()
-            source = tmp.name
+            source = os.path.join(tmp, "in.pdf")
+            with open(source, "wb") as handle:
+                handle.write(sys.stdin.buffer.read())
         gs = subprocess.run(
-            ["gs", "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pbmraw", "-r203",
-             f"-g{W}x{H}", "-dPDFFitPage", "-dTextAlphaBits=1", "-dGraphicsAlphaBits=1",
-             "-sOutputFile=-", source],
+            ["gs", "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pnggray", "-r203",
+             "-dTextAlphaBits=4", "-dGraphicsAlphaBits=4", f"-sOutputFile={tmp}/page%03d.png", source],
             capture_output=True,
         )
-    if gs.returncode != 0:
-        sys.stderr.write(f"ERROR: ghostscript failed: {gs.stderr.decode(errors='replace')}\n")
-        return 1
-    data, pos, out = gs.stdout, 0, sys.stdout.buffer
-    header = f"P4\n{W} {H}\n".encode()
-    pages = 0
-    while data.startswith(header, pos):
-        start = pos + len(header)
-        bitmap = data[start:start + ROW * H].translate(INVERT)
-        pos = start + ROW * H
-        pages += 1
-        out.write(
-            b"SIZE 100 mm,150 mm\r\nGAP 3 mm,0 mm\r\nDIRECTION 0\r\nCLS\r\n"
-            + f"BITMAP 0,0,{ROW},{H},0,".encode() + bitmap
-            + f"\r\nPRINT 1,{copies}\r\n".encode()
-        )
+        if gs.returncode != 0:
+            sys.stderr.write(f"ERROR: ghostscript failed: {gs.stderr.decode(errors='replace')}\n")
+            return 1
+        out, pages = sys.stdout.buffer, 0
+        for page in sorted(glob.glob(f"{tmp}/page*.png")):
+            bitmap = label_bitmap(page)
+            if bitmap is None:
+                continue
+            pages += 1
+            out.write(
+                b"SIZE 100 mm,150 mm\r\nGAP 3 mm,0 mm\r\nDIRECTION 0\r\nCLS\r\n"
+                + f"BITMAP 0,0,{W // 8},{H},0,".encode() + bitmap
+                + f"\r\nPRINT 1,{copies}\r\n".encode()
+            )
     if not pages:
         sys.stderr.write("ERROR: no pages rendered\n")
         return 1

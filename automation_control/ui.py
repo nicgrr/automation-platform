@@ -262,6 +262,8 @@ ADMIN_NAV = [
     ], False),
     ("Sell", [
         ("/ebay", "eBay"),
+        ("/ebay-listing-cleanup", "eBay listing cleanup"),
+        ("/ebay-sales", "Pack Assistant"),
         ("/nl-vault", "NL Vault shop"),
     ], False),
     ("Research", [
@@ -298,10 +300,9 @@ TOOL_NAV = [
         ("/accessories", "Card supplies"),
     ], False),
     ("Add stock", [
-        ("/cards/capture", "Photograph a card"),
+        ("/cards/capture/bulk", "Bulk upload cards"),
         ("/collectibles/capture", "Photograph a collectible"),
         ("/accessories/capture", "Photograph a supply item"),
-        ("/cards/capture/bulk", "Bulk upload cards"),
         ("/collectibles/capture/bulk", "Bulk upload collectibles"),
         ("/accessories/capture/bulk", "Bulk upload supplies"),
         ("/collectibles/identify", "Identify from a link"),
@@ -322,6 +323,7 @@ TOOL_NAV = [
         ("/customers", "Customers"),
     ], False),
     ("Market tools", [
+        ("/collectibles/pricing", "Collectibles pricing"),
         ("/market-search", "Market search"),
         ("/market-watch", "Sonny Angel watch"),
         ("/deal-check", "Deal check"),
@@ -354,10 +356,11 @@ NAV_ACTIVE_PREFIXES = {
     ),
     "/inventory": ("/inventory", "/search", "/sealed-products", "/collectibles", "/accessories"),
     "/personal-collection": ("/personal-collection",),
-    "/ebay": ("/ebay", "/ebay-listings", "/ebay-sales", "/ebay-export"),
+    "/ebay": ("/ebay", "/ebay-listings", "/ebay-sales", "/ebay-export", "/ebay-listing-cleanup"),
+    "/ebay-sales": ("/ebay-sales",),
     "/nl-vault": ("/nl-vault", "/shop-listings", "/shop-pricing", "/shop-orders", "/contact-messages"),
     "/sales": ("/sales", "/customers"),
-    "/market-tools": ("/market-tools", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar", "/retailer-goals", "/purchase-lots", "/suppliers"),
+    "/market-tools": ("/market-tools", "/collectibles/pricing", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar", "/retailer-goals", "/purchase-lots", "/suppliers"),
     "/settings": ("/settings", "/export"),
 }
 
@@ -640,6 +643,7 @@ NAV_SCRIPT = r"""<script>
 
 
 _TOPBAR_NAV_LINKS = [
+    ("/ebay-sales", "Pack Assistant"),
     ("/dashboard", "Dashboard"),
     ("/inventory", "Inventory"),
     ("/review-centre", "Review"),
@@ -1043,13 +1047,11 @@ def quick_price_widget(price_field: str, name_field: str | None = None, label: s
     )
 
 
-# Installable-to-home-screen basics (Module 18) -- no service worker by
-# design: this tool shows live inventory/pricing, and a caching layer
-# risks showing stale numbers on exactly the data a phone check exists to
-# get right. iOS (the only device this has actually been used from all
-# session) reads apple-mobile-web-app-* and apple-touch-icon directly, no
-# service worker required for "Add to Home Screen"; the manifest covers
-# Android/desktop installability the same way.
+# Installable-to-home-screen basics (Module 18). The resilience worker is
+# intentionally network-only: it must never cache live inventory/pricing, but
+# it can still replace iOS's otherwise blank page while a navigation retries.
+# Apple-specific metadata enables the standalone home-screen presentation;
+# the manifest covers Android/desktop installability as well.
 # --- navigation progress bar -------------------------------------------
 #
 # Most pages here answer in single-digit milliseconds, but a handful don't
@@ -1301,6 +1303,46 @@ _PWA_HEAD = (
 )
 
 
+PWA_LIFECYCLE_SCRIPT = r"""<script>
+(function(){
+  // The worker is deliberately network-only. It never caches CRM pages or
+  // inventory data; its sole job is to replace iOS's empty standalone-app
+  // screen with a reconnecting page if a navigation overlaps a deploy or a
+  // brief network interruption.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function(){});
+    });
+  }
+
+  var hiddenAt = 0, probing = false;
+  function forceRepaint(){
+    // iOS can restore the web view but fail to repaint its previous layer.
+    // Touching a composited property forces a fresh frame without discarding
+    // anything the user has typed into a form.
+    document.documentElement.style.transform = 'translateZ(0)';
+    void document.documentElement.offsetHeight;
+    requestAnimationFrame(function(){ document.documentElement.style.transform = ''; });
+  }
+  function probe(){
+    if (probing) return;
+    probing = true;
+    forceRepaint();
+    fetch('/health?resume=' + Date.now(), {cache: 'no-store', credentials: 'same-origin'})
+      .catch(function(){})
+      .then(function(){ probing = false; });
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (!hiddenAt || Date.now() - hiddenAt > 1000) probe();
+  });
+  window.addEventListener('pageshow', function(e){
+    if (e.persisted) probe(); else forceRepaint();
+  });
+})();
+</script>"""
+
+
 def page(title: str, body: str, head_extra: str = "", show_nav: bool = True, search_value: str = "") -> str:
     chrome = (_sidenav_html() + _topbar_html(search_value) if show_nav else "")
     script = (AUTOCOMPLETE_SCRIPT + QUICK_PRICE_SCRIPT + NAV_SCRIPT + PHOTO_FIELD_SCRIPT if show_nav else "")
@@ -1309,7 +1351,8 @@ def page(title: str, body: str, head_extra: str = "", show_nav: bool = True, sea
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{title}</title>{STYLE}{TOPBAR_STYLE}{QUICK_PRICE_STYLE}{PHOTO_FIELD_STYLE}"
         f"{PROGRESS_STYLE}{_PWA_HEAD}{head_extra}</head>"
-        f"<body>{PROGRESS_HTML}{chrome}<main>{body}</main>{CSRF_SCRIPT}{PROGRESS_SCRIPT}{script}</body></html>"
+        f"<body>{PROGRESS_HTML}{chrome}<main>{body}</main>{CSRF_SCRIPT}{PROGRESS_SCRIPT}"
+        f"{PWA_LIFECYCLE_SCRIPT}{script}</body></html>"
     )
 
 

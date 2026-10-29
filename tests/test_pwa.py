@@ -67,6 +67,16 @@ def test_static_assets_do_not_require_login():
     assert response.status_code == 200
 
 
+def test_network_only_service_worker_is_root_scoped():
+    response = TestClient(app).get("/sw.js")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/javascript")
+    assert response.headers["service-worker-allowed"] == "/"
+    assert "no-cache" in response.headers["cache-control"]
+    assert "caches.open" not in response.text
+    assert "request.mode === 'navigate'" in response.text
+
+
 def test_pages_include_pwa_tags(client):
     # Every page shares one shell (ui.py's page()) since the light-theme
     # unification, so a single quote-agnostic check covers all of them --
@@ -78,3 +88,6 @@ def test_pages_include_pwa_tags(client):
         assert "rel='manifest'" in response.text or 'rel="manifest"' in response.text, path
         assert "apple-touch-icon" in response.text, path
         assert "apple-mobile-web-app-capable" in response.text, path
+        assert "serviceWorker.register('/sw.js'" in response.text, path
+        assert "visibilitychange" in response.text, path
+        assert response.headers["cache-control"] == "no-store", path

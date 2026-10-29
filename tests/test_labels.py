@@ -8,6 +8,7 @@ SNAPSHOT = {
     "buyer": {"username": "buyer123"},
     "fulfillmentStartInstructions": [{"shippingStep": {"shipTo": {
         "fullName": "Jo Citizen",
+        "primaryPhone": {"phoneNumber": "+61 412 345 678"},
         "contactAddress": {"addressLine1": "5 Example St", "addressLine2": "Unit 2", "city": "Sydney",
                            "stateOrProvince": "NSW", "postalCode": "2000", "countryCode": "AU"},
     }}}],
@@ -15,7 +16,9 @@ SNAPSHOT = {
 
 
 def test_ebay_label_lines_put_postcode_with_locality_and_hide_home_country():
-    assert ebay_label_lines(SNAPSHOT) == ["Jo Citizen", "5 Example St", "Unit 2", "Sydney NSW 2000"]
+    assert ebay_label_lines(SNAPSHOT) == [
+        "Jo Citizen", "5 Example St", "Unit 2", "Sydney NSW 2000", "+61 412 345 678",
+    ]
 
 
 def test_ebay_label_lines_show_foreign_country_and_fall_back_to_username():
@@ -26,10 +29,13 @@ def test_ebay_label_lines_show_foreign_country_and_fall_back_to_username():
 
 def test_shop_label_page_has_name_address_and_sender(client, session):  # noqa: F811
     order = make_order(session, status=ShopOrderStatus.PAID)
-    assert shop_order_label_lines(order) == ["A Buyer", "1 Test St"]
+    order.ship_to_phone = "0404 959 211"
+    session.commit()
+    assert shop_order_label_lines(order) == ["A Buyer", "1 Test St", "0404 959 211"]
     page = client.get(f"/labels/shop/{order.id}?print=1")
     assert page.status_code == 200
     assert "A Buyer" in page.text and "1 Test St" in page.text
+    assert "0404 959 211" in page.text
     assert "150mm 100mm" in page.text and "window.print()" in page.text
     assert "FROM: NL Vault 0405209496" in page.text
     assert f"/labels/shop/{order.id}/print" in client.get(f"/shop-orders/{order.id}").text
@@ -73,3 +79,72 @@ def test_pack_assistant_has_one_print_label_button_for_any_status(client, sessio
         order = make_order(session, status=status, reference=f"NLV-{status.value}")
         page = client.get(f"/shop-orders/{order.id}/pack-sheet").text
         assert page.count(f"data-label-print='/labels/shop/{order.id}/print'") == 1
+
+
+def _a4_pdf_with_corner_label(path):
+    from PIL import Image, ImageDraw
+
+    page = Image.new("RGB", (1654, 2339), "white")  # A4 at 200 dpi
+    draw = ImageDraw.Draw(page)
+    draw.rectangle((50, 50, 850, 1250), outline="black", width=10)
+    draw.rectangle((100, 100, 800, 300), fill="black")
+    page.save(path, "PDF", resolution=200)
+
+
+def test_postage_label_is_cropped_and_fitted_to_the_sticker(tmp_path):
+    from automation_control.labels import LABEL_H, LABEL_W, postage_label_image
+
+    pdf = tmp_path / "label.pdf"
+    _a4_pdf_with_corner_label(pdf)
+    image = postage_label_image(pdf.read_bytes())
+    assert image.size == (LABEL_W, LABEL_H) and image.mode == "1"
+    black = [(x, y) for x in range(0, LABEL_W, 8) for y in range(0, LABEL_H, 8) if image.getpixel((x, y)) == 0]
+    assert black and min(x for x, _ in black) < 30 and max(x for x, _ in black) > LABEL_W - 40
+
+
+def test_postage_label_rejects_garbage_and_blank_pages():
+    import pytest
+
+    from automation_control.labels import postage_label_image
+
+    with pytest.raises(RuntimeError, match="not a PDF"):
+        postage_label_image(b"hello")
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (100, 100), "white").save(buf, "PNG")
+    with pytest.raises(RuntimeError, match="blank"):
+        postage_label_image(buf.getvalue())
+
+
+def test_postage_upload_route_prints_and_reports_errors(client, tmp_path, monkeypatch):  # noqa: F811
+    sent = []
+    monkeypatch.setattr("automation_control.labels.send_job", lambda job: sent.append(job))
+    pdf = tmp_path / "label.pdf"
+    _a4_pdf_with_corner_label(pdf)
+    assert client.get("/labels/postage").status_code == 200
+    ok = client.post("/labels/postage/print", files={"file": ("l.pdf", pdf.read_bytes(), "application/pdf")})
+    assert ok.status_code == 200 and sent and sent[0].startswith(b"SIZE 100 mm,150 mm")
+    bad = client.post("/labels/postage/print", files={"file": ("l.txt", b"nope", "text/plain")})
+    assert bad.status_code == 502 and "not a PDF" in bad.json()["detail"]
+
+
+def test_ebay_label_lines_drop_ebays_own_reference_code():
+    snap = {"fulfillmentStartInstructions": [{"shippingStep": {"shipTo": {"fullName": "Jo Citizen", "contactAddress": {
+        "addressLine1": "ebay:t27v2mj", "addressLine2": "58 Rockman Dr", "city": "Raceview",
+        "stateOrProvince": "QLD", "postalCode": "4305", "countryCode": "AU"}}}}]}
+    assert ebay_label_lines(snap) == ["Jo Citizen", "58 Rockman Dr", "Raceview QLD 4305"]
+
+
+def test_ebay_label_phone_falls_back_to_buyer_registration_address():
+    snap = {
+        "buyer": {"buyerRegistrationAddress": {"primaryPhone": {"phoneNumber": "0412 000 111"}}},
+        "fulfillmentStartInstructions": [{"shippingStep": {"shipTo": {
+            "fullName": "Jo Citizen",
+            "contactAddress": {"addressLine1": "5 Example St", "city": "Sydney",
+                               "stateOrProvince": "NSW", "postalCode": "2000", "countryCode": "AU"},
+        }}}],
+    }
+    assert ebay_label_lines(snap)[-1] == "0412 000 111"
