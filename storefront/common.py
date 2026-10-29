@@ -117,12 +117,20 @@ def _art(item: CatalogItem | None, listing: ShopListing, session: Session | None
     to attach to and would just be confusing.
     """
     from .photos import has_own_photo
+    from . import live_inventory
+    if session is not None and live_inventory.enabled():
+        photos = live_inventory.published_photos(session, listing.id)
+        if not photos:
+            return "<span class='noart'>Photos on eBay</span>"
+        return f"<img src='{escape(photos[0], quote=True)}' alt='{escape(listing.title)}' loading='lazy'>"
 
     if session is not None and has_own_photo(session, listing.id):
         is_card = item is not None and item.item_type in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD)
         label = "Actual card" if is_card else "Actual item"
         tag = f"<span class='art-tag own'>{label}</span>" if show_tag else ""
-        return f"<img src='/photo/{escape(listing.id)}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
+        from .photos import photo_url
+
+        return f"<img src='{escape(photo_url(session, listing.id))}' alt='{escape(listing.title)}' loading='lazy'>{tag}"
 
     url = listing.image_url if _is_web_url(listing.image_url) else None
     if url is None and item is not None and _is_web_url(item.image_url):
@@ -153,7 +161,8 @@ def nav_links(session: Session) -> str:
     stocked = departments.in_stock(session)
     if stocked:
         rows = "".join(
-            f"<a href='/shop/{escape(d.slug)}'>{escape(d.name)}<span class='n'>{n}</span></a>"
+            f"<a href='/shop/{escape(d.slug)}'>{escape(d.name)}"
+            f"<span class='n'>{'Soon' if departments.is_coming_soon(d) else n}</span></a>"
             for d, n in stocked
         )
         groups.append(f"<div class='navgroup'><h4>Departments</h4>{rows}</div>")
@@ -191,15 +200,17 @@ _SOCIAL_ICONS = {
         "<circle cx='12' cy='12' r='4'/><circle cx='17.2' cy='6.8' r='1.1' fill='currentColor' stroke='none'/>"
         "</svg>"
     ),
-    "ebay": (
-        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"
-        "<path d='M3 8h4l2 8 2.5-8h1l2.5 8L17 8h4'/><path d='M3 16h18' stroke-opacity='0'/>"
-        "</svg>"
-    ),
+    "ebay": "<img src='/assets/ebay-icon.png' alt=''>",
     # Whatnot's own icon mark (see assets.py) rather than a generic
     # play-button placeholder -- kept in its real brand colors, not
     # currentColor, same reasoning as assets.py's own docstring.
     "whatnot": "<img src='/assets/whatnot-icon.svg' alt=''>",
+    "vinted": (
+        # Vinted's brand teal rather than currentColor, same as the eBay and
+        # Whatnot marks keep their own colours.
+        "<svg viewBox='0 0 24 24' fill='none' stroke='#007782' stroke-width='2.6' "
+        "stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l8 13 8-13'/></svg>"
+    ),
 }
 _DEFAULT_SOCIAL_ICON = (
     "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'>"
@@ -250,6 +261,9 @@ def social_icons_html(session: Session) -> str:
     return f"<div class='social-icons'>{icons}</div>"
 
 
+from .catalogue import is_catalogue  # noqa: E402
+
+
 def shell(session: Session, title: str, body: str, *, request: Request, query: str = "",
           description: str | None = None, hero: str = "", robots: str = "", og_image: str = "",
           crumbs: tuple[tuple[str, str], ...] = (), extra_jsonld: tuple[dict, ...] = ()) -> HTMLResponse:
@@ -262,7 +276,7 @@ def shell(session: Session, title: str, body: str, *, request: Request, query: s
         social_html=social_links_html(session), hero=hero,
         site_url=site_url, canonical=site_url + request.url.path,
         same_as=same_as, robots=robots, og_image=og_image,
-        crumbs=crumbs, extra_jsonld=extra_jsonld, **kwargs,
+        crumbs=crumbs, extra_jsonld=extra_jsonld, show_cart=not is_catalogue(), **kwargs,
     ))
 
 

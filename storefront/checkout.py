@@ -215,6 +215,7 @@ def checkout_form(
         f"<input type='hidden' name='zone' value='{selected.value}'>"
         + _field("email", "Email", kind="email")
         + _field("name", "Full name")
+        + _field("mobile", "Mobile number", kind="tel")
         + "<label class='field'>Address<textarea name='address' rows='3' required></textarea></label>"
         + _field("country", "Country", value="Australia")
         + notice
@@ -322,13 +323,17 @@ async def create_stripe_session(
 async def checkout_submit(
     request: Request,
     background_tasks: BackgroundTasks,
-    email: str = Form(...), name: str = Form(...), address: str = Form(...),
+    email: str = Form(...), name: str = Form(...), mobile: str = Form(...), address: str = Form(...),
     country: str = Form("Australia"), zone: str = Form("au"),
     session: Session = Depends(get_session),
 ):
     lines = cart_lines(session, read_cart(request))
     if not lines:
         return RedirectResponse("/cart", status_code=303)
+
+    clean_mobile = mobile.strip()
+    if not clean_mobile:
+        raise HTTPException(status_code=400, detail="mobile number is required")
 
     selected = ShippingZone.INTERNATIONAL if zone == "international" else ShippingZone.AU
     raw_items_total = sum((line["line_total"] for line in lines), Decimal("0"))
@@ -339,7 +344,8 @@ async def checkout_submit(
 
     order = ShopOrder(
         reference=order_reference(), email=email.strip(), ship_to_name=name.strip(),
-        ship_to_address=address.strip(), ship_to_country=country.strip() or "Australia",
+        ship_to_address=address.strip(), ship_to_phone=clean_mobile[:64],
+        ship_to_country=country.strip() or "Australia",
         zone=selected, items_total=items_total, shipping_total=ship_cost,
         grand_total=items_total + ship_cost, currency="AUD",
         status=ShopOrderStatus.PENDING_PAYMENT,

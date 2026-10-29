@@ -37,48 +37,12 @@ body{
   line-height:1.55;-webkit-font-smoothing:antialiased;
 }
 
-/* ---- page background: collage energy, kept to the negative space ----
-   Every real surface on this page -- the ink header, white cards, white
-   panels -- is fully opaque, so this can be as bold as it likes without
-   ever touching legibility: it only ever shows in the margins and the
-   gaps between cards. Built from the four accent hues already in use
-   everywhere else (buttons, tags, the ribbon badge) rather than a fifth
-   palette invented just for this, so a card sitting on it always reads
-   as the same shop.
-
-   Fixed, not scrolled: the blobs stay put as the page scrolls past them,
-   the way a poster's background does rather than a repeating pattern
-   tiling awkwardly down a long product grid. Two layers -- soft colour
-   blobs for depth and movement, a fine dot grid for the pop-art/print
-   texture an anime-poster collage actually has up close -- both pure CSS,
-   no image assets, matching this file's own no-build-step rule.
-   @media (prefers-reduced-motion) is irrelevant here: nothing animates,
-   it's a static backdrop. */
+/* Quiet colour at the page edges keeps the artwork and product photos prominent. */
 body::before{
-  content:'';position:fixed;inset:0;z-index:-1;
+  content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
   background:
-    radial-gradient(560px 480px at 8% -6%, rgba(255,93,143,.20), transparent 60%),
-    radial-gradient(620px 520px at 96% 8%, rgba(47,111,237,.16), transparent 58%),
-    radial-gradient(520px 460px at 88% 92%, rgba(15,158,148,.18), transparent 60%),
-    radial-gradient(480px 420px at 2% 88%, rgba(179,133,47,.16), transparent 58%),
-    radial-gradient(900px 700px at 50% 40%, rgba(255,93,143,.05), transparent 70%),
-    repeating-radial-gradient(circle at 0 0, rgba(21,17,26,.05) 0 1.6px, transparent 1.6px 26px),
-    var(--bone);
-  background-repeat:no-repeat,no-repeat,no-repeat,no-repeat,no-repeat,repeat,no-repeat;
-}
-@media (max-width:720px){
-  /* Same four corners, pulled in so a blob doesn't spill off-screen and
-     read as a flat colour bar on a narrow viewport. */
-  body::before{
-    background:
-      radial-gradient(340px 300px at 0% -8%, rgba(255,93,143,.20), transparent 62%),
-      radial-gradient(360px 320px at 100% 10%, rgba(47,111,237,.16), transparent 60%),
-      radial-gradient(320px 300px at 92% 96%, rgba(15,158,148,.18), transparent 62%),
-      radial-gradient(300px 280px at 0% 94%, rgba(179,133,47,.16), transparent 60%),
-      repeating-radial-gradient(circle at 0 0, rgba(21,17,26,.05) 0 1.4px, transparent 1.4px 22px),
-      var(--bone);
-    background-repeat:no-repeat,no-repeat,no-repeat,no-repeat,repeat,no-repeat;
-  }
+    radial-gradient(700px 360px at 0% 0%,rgba(15,158,148,.07),transparent 72%),
+    radial-gradient(700px 360px at 100% 0%,rgba(179,133,47,.09),transparent 72%);
 }
 a{color:inherit;text-decoration:none}
 img{max-width:100%;display:block}
@@ -101,13 +65,16 @@ img{max-width:100%;display:block}
 .nl-words b{font-family:'Baloo 2',sans-serif;font-weight:800;font-size:19px;letter-spacing:-.01em;color:#fff}
 .nl-words i{font-style:normal;font-family:Nunito,sans-serif;font-size:9px;letter-spacing:.28em;opacity:.65;margin-top:2px;color:#fff}
 
-.shop-search{flex:1 1 auto;min-width:0;max-width:420px}
+.shop-search{flex:1 1 auto;min-width:0;max-width:360px;position:relative}
 .shop-search input{
-  width:100%;padding:9px 15px;border-radius:999px;border:1px solid #33363c;
+  width:100%;padding:11px 48px 11px 16px;border-radius:999px;border:1px solid #43464c;
   background:#22252b;color:#fff;font-size:13.5px;font-family:inherit;
 }
-.shop-search input::placeholder{color:#8a8d94}
+.shop-search input::placeholder{color:#b1b4bb}
 .shop-search input:focus{outline:none;border-color:var(--teal)}
+.shop-search-submit{position:absolute;right:3px;top:3px;bottom:3px;width:38px;border:0;border-radius:50%;background:transparent;color:#eee;display:grid;place-items:center;cursor:pointer}
+.shop-search-submit:hover{background:#3b3e45}
+.shop-search-submit svg{width:18px;height:18px}
 .topnav{
   display:flex;align-items:center;gap:20px;margin-left:auto;flex:none;
   font-family:'Baloo 2',sans-serif;font-weight:600;
@@ -119,10 +86,16 @@ img{max-width:100%;display:block}
   display:inline-flex;align-items:center;gap:7px;background:var(--teal);color:#fff;
   padding:7px 16px;border-radius:999px;font-weight:800;font-size:13px;
 }
-@media (max-width:720px){ .topnav .hide-sm{display:none} }
+@media (max-width:1180px){ .topnav .hide-sm{display:none} }
+@media (max-width:560px){
+  .topbar{display:grid;grid-template-columns:44px 1fr auto;gap:10px 12px;padding:12px 18px}
+  .shop-search{grid-column:1/-1;grid-row:2;max-width:none;width:100%}
+  .shop-search input{font-size:16px;padding-block:10px}
+  .topnav{font-size:14px;gap:12px}
+}
 
 /* ---- layout ---- */
-main{max-width:1180px;margin:0 auto;padding:32px 22px 90px}
+main{max-width:1240px;margin:0 auto;padding:36px 22px 48px;scroll-margin-top:150px}
 .page-head{margin-bottom:26px}
 h1{font-family:'Baloo 2',sans-serif;font-weight:800;font-size:clamp(26px,4.2vw,38px);
    line-height:1.1;margin:0 0 8px;letter-spacing:-.01em;text-wrap:balance}
@@ -162,7 +135,7 @@ h2{font-family:'Baloo 2',sans-serif;font-weight:700;font-size:21px;margin:0 0 14
 .ribbon-wrap{position:absolute;top:0;left:0;width:96px;height:96px;overflow:hidden;pointer-events:none;z-index:2}
 .ribbon{
   position:absolute;top:16px;left:-30px;width:150px;text-align:center;
-  transform:rotate(-45deg);background:var(--pink);color:#fff;
+  transform:rotate(-45deg);background:#bd2858;color:#fff;
   font-family:'Baloo 2',sans-serif;font-weight:700;font-size:11px;letter-spacing:.03em;
   text-transform:uppercase;padding:4px 0;box-shadow:0 2px 5px rgba(0,0,0,.15);
 }
@@ -230,7 +203,7 @@ label.field input:focus,label.field select:focus,label.field textarea:focus{
 
 /* ---- side navigation drawer ---- */
 .navtoggle{
-  display:inline-grid;place-items:center;width:38px;height:38px;flex:none;cursor:pointer;
+  display:inline-grid;place-items:center;width:44px;height:44px;flex:none;cursor:pointer;
   background:#22252b;border:none;border-radius:999px;color:#fff;
 }
 .navtoggle:hover{background:var(--teal)}
@@ -241,15 +214,17 @@ label.field input:focus,label.field select:focus,label.field textarea:focus{
   transition:opacity .18s ease;z-index:28;
 }
 body.nav-open .scrim{opacity:1;pointer-events:auto}
+body.nav-open{overflow:hidden}
 
 .sidenav{
   position:fixed;top:0;left:0;bottom:0;width:272px;z-index:30;background:var(--paper);
   color:var(--ink);padding:18px 0 26px;overflow-y:auto;
-  transform:translateX(-100%);transition:transform .2s ease;
+  transform:translateX(-100%);visibility:hidden;transition:transform .2s ease,visibility .2s ease;
 }
-body.nav-open .sidenav{transform:none}
+body.nav-open .sidenav{transform:none;visibility:visible}
 .sidenav-head{display:flex;align-items:center;justify-content:space-between;padding:0 18px 16px;border-bottom:1px solid var(--rule);margin-bottom:6px}
-.sidenav-close{background:none;border:none;color:var(--ink);font-size:22px;line-height:1;cursor:pointer;padding:0 4px}
+.sidenav-close{background:none;border:none;color:var(--ink);font-size:26px;line-height:1;cursor:pointer;width:44px;height:44px}
+.sidenav-head .nl-words b,.sidenav-head .nl-words i{color:var(--ink)}
 .sidenav-close:hover{color:var(--teal)}
 .card-art,.detail-art,.line-art{position:relative}
 .art-tag{
@@ -258,7 +233,7 @@ body.nav-open .sidenav{transform:none}
   font-size:11px;font-weight:800;
   padding:4px 9px;border-radius:999px;pointer-events:none;
 }
-.art-tag.own{background:var(--teal);color:#fff}
+.art-tag.own{background:var(--teal-dark);color:#fff}
 .art-tag.stock{background:rgba(21,23,26,.72);color:#fff}
 .detail-art .art-tag{left:12px;bottom:12px;font-size:12px;padding:5px 10px}
 .line-art .art-tag{display:none}
@@ -269,10 +244,13 @@ body.nav-open .sidenav{transform:none}
   background:var(--paper);border:2px solid var(--rule);color:var(--muted);
 }
 .seg-tab:hover{border-color:var(--teal);color:var(--ink)}
-.seg-tab.active{background:var(--teal);color:#fff;border-color:var(--teal)}
+.seg-tab.active{background:var(--teal-dark);color:#fff;border-color:var(--teal-dark)}
+.sub-tab{display:inline-block;padding:9px 16px;border-radius:999px;border:1.5px solid var(--rule);background:var(--paper);color:var(--muted);font-weight:700;font-size:14px;text-decoration:none}
+.sub-tab:hover{border-color:var(--brass);color:var(--ink)}
+.sub-tab.active{background:var(--ink);color:#fff;border-color:var(--ink)}
 .dept-grid{
-  display:grid;gap:18px;margin:22px 0 34px;
-  grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  display:grid;gap:18px;margin:24px 0 0;
+  grid-template-columns:repeat(4,minmax(0,1fr));
 }
 .dept-card{
   display:flex;flex-direction:column;text-decoration:none;overflow:hidden;
@@ -281,14 +259,61 @@ body.nav-open .sidenav{transform:none}
   transition:transform .15s ease,box-shadow .15s ease;
 }
 .dept-card:hover{transform:translateY(-4px);box-shadow:0 12px 26px rgba(21,23,26,.12)}
-.dept-hero{aspect-ratio:16/9;background:var(--sunken);overflow:hidden;position:relative}
+.dept-hero{aspect-ratio:16/10;background:var(--sunken);overflow:hidden;position:relative}
+.soon-badge{display:inline-block;background:var(--ink);color:#fff;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:6px 12px;border-radius:999px}
+.dept-hero .soon-badge{position:absolute;bottom:12px;left:12px}
+.dept-card.is-soon img{filter:saturate(.55)}
+.coming-soon{max-width:560px;margin:24px auto}
+.coming-soon-art{aspect-ratio:16/10;overflow:hidden;border-radius:14px;margin-bottom:18px;background:var(--sunken)}
+.coming-soon-art img{width:100%;height:100%;object-fit:cover}
+.coming-soon h1{margin:12px 0 6px}
+.dept-card[href='/shop/game-pokemon'] .dept-hero{background:#fff2c8}
+.dept-card[href='/shop/game-one_piece'] .dept-hero{background:#e4eefb}
+.dept-card[href='/shop/game-dragon_ball'] .dept-hero{background:#ffead7}
 .dept-hero img{width:100%;height:100%;object-fit:contain}
+.dept-hero img.dept-logo{padding:7% 9%;box-sizing:border-box}
+.dept-hero img.dept-art{object-fit:cover}
 .dept-hero .art-tag{left:12px;bottom:12px}
 .dept-hero-mark{width:100%;height:100%;display:grid;place-items:center;color:var(--rule)}
-.dept-card-body{display:flex;flex-direction:column;gap:8px;padding:20px 22px 22px}
-.dept-card h2{margin:0;font-size:20px;color:var(--ink)}
+.dept-card-body{display:flex;flex-direction:column;gap:8px;padding:20px;flex:1}
+.dept-card h2,.dept-card h3{font-family:'Baloo 2',sans-serif;font-weight:700;margin:0;font-size:22px;line-height:1.2;color:var(--ink)}
 .dept-card p{margin:0;font-size:14px;color:var(--muted);flex:1}
-.dept-meta{font-family:Nunito,sans-serif;font-size:13px;color:var(--muted);font-weight:700}
+.dept-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;font-size:12px;color:var(--teal-dark);font-weight:800}
+.dept-meta .arrow{font-size:20px;line-height:1}
+.dept-card[href='/shop/bulk']{grid-column:1/-1;display:grid;grid-template-columns:170px 1fr;background:#f1f5ef}
+.dept-card[href='/shop/bulk'] .dept-hero{aspect-ratio:auto;min-height:156px}
+.dept-card[href='/shop/bulk'] .dept-card-body{padding:24px 28px;justify-content:center}
+.dept-card[href='/shop/bulk'] .dept-card-body p{flex:none}
+.dept-card[href='/shop/bulk'] .dept-meta{justify-content:flex-start;gap:14px}
+.collections-head{display:flex;justify-content:space-between;align-items:flex-end;gap:20px}
+.collections-head h2{font-size:clamp(28px,3vw,36px);line-height:1.15;margin:6px 0 0}
+.collections-head p{font-size:14px;color:var(--muted);margin:10px 0 0}
+.collections-head .view-all{font-weight:800;font-size:14px;color:var(--teal-dark);white-space:nowrap;padding:12px 0}
+.section-kicker{font-size:11px;font-weight:900;letter-spacing:.13em;text-transform:uppercase;color:var(--teal-dark)}
+.home-collections{scroll-margin-top:155px}
+.how-to-shop{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;margin-top:38px;padding:30px 0 0;border-top:1px solid var(--rule)}
+.how-to-shop article{display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:start}
+.how-to-shop .step{font-size:12px;font-weight:900;color:var(--teal-dark);background:#e2f0e9;width:30px;height:30px;display:grid;place-items:center;border-radius:50%}
+.how-to-shop h3{font-size:14px;margin:2px 0 5px;font-weight:900}
+.how-to-shop p{font-size:13px;line-height:1.6;color:var(--muted);margin:0}
+@media(max-width:850px){.dept-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){
+  main{padding:28px 18px 36px}
+  .dept-grid{gap:12px;margin-top:20px}
+  .dept-card-body{padding:14px 12px}
+  .dept-card h2,.dept-card h3{font-size:19px}
+  .dept-card:not([href='/shop/bulk']) p{display:none}
+  .dept-meta{font-size:11px;margin-top:2px}
+  .dept-hero img.dept-logo{padding:12% 9%}
+  .dept-card[href='/shop/bulk']{grid-template-columns:110px 1fr}
+  .dept-card[href='/shop/bulk'] .dept-hero{min-height:150px}
+  .dept-card[href='/shop/bulk'] .dept-card-body{padding:18px 14px}
+  .dept-card[href='/shop/bulk'] p{font-size:12px}
+  .collections-head{align-items:flex-start;gap:10px}
+  .collections-head .view-all{font-size:12px;padding-top:25px}
+  .collections-head p{font-size:13px}
+  .how-to-shop{grid-template-columns:1fr;gap:20px;margin-top:28px;padding-top:24px}
+}
 .section-head{
   display:flex;align-items:baseline;justify-content:space-between;gap:14px;
   margin:34px 0 16px;
@@ -311,7 +336,7 @@ body.nav-open .sidenav{transform:none}
 .navgroup{padding:14px 0 4px}
 .navgroup h4{
   font-family:'Baloo 2',sans-serif;
-  font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#999;
+  font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);
   margin:0 0 8px;padding:0 18px;font-weight:700;
 }
 .sidenav a{
@@ -325,18 +350,32 @@ body.nav-open .sidenav{transform:none}
 .filters{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:22px}
 .filters .field{margin-bottom:0;flex:1 1 150px;min-width:120px}
 .filters .btn{flex:none}
+.filter-panel{margin-bottom:22px}
+.filter-panel summary{display:none;cursor:pointer;font-weight:800;font-size:14px;list-style:none}
+.filter-panel summary::-webkit-details-marker{display:none}
+.filter-panel summary span{color:var(--teal-dark);font-size:20px}
+.filter-panel .filters{margin-bottom:0}
+@media(max-width:640px){
+  .filter-panel{border:1px solid var(--rule);border-radius:var(--radius);background:var(--paper)}
+  .filter-panel summary{display:flex;justify-content:space-between;align-items:center;padding:15px 18px;min-height:54px}
+  .filter-panel[open] summary span{transform:rotate(45deg)}
+  .filter-panel .filters{border:0;border-top:1px solid var(--rule);border-radius:0 0 var(--radius) var(--radius);padding:18px}
+  .filters input,.filters select{font-size:16px!important;min-width:0}
+  .seg-tabs{gap:7px;margin-bottom:16px}
+  .seg-tab,.sub-tab{font-size:12px;padding:10px 13px}
+}
 .bulk-art{background:var(--ink);color:#fff}
 .bulk-art img{object-fit:contain;padding:22px}
 .bulk-count{font-family:'Baloo 2',sans-serif;font-weight:800;font-size:40px;color:#fff}
 .bulk-count.small{font-size:15px;display:grid;place-items:center;height:100%;background:var(--ink);color:#fff}
 .bulk-count.big{font-family:'Baloo 2',sans-serif;font-weight:800;font-size:68px;color:var(--ink)}
 
-footer{border-top:1px solid var(--rule);margin-top:70px;padding:26px 22px;color:var(--muted);font-size:13px}
+footer{border-top:1px solid var(--rule);margin-top:12px;padding:30px 22px;color:var(--muted);font-size:13px;background:rgba(255,255,255,.7)}
 footer{font-family:Nunito,sans-serif;font-weight:700}
 footer .inner{max-width:1180px;margin:0 auto;display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between;align-items:center}
 footer a:hover{color:var(--teal-dark)}
 .social-links{display:flex;gap:14px;align-items:center}
-.social-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;font-weight:700}
+.social-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;font-weight:700;min-height:44px;min-width:32px}
 .social-link:hover{color:var(--teal-dark)}
 .social-link svg,.social-link img{width:16px;height:16px;flex:none}
 .social-link span{display:none}
@@ -349,8 +388,58 @@ footer a:hover{color:var(--teal-dark)}
 }
 .social-icon:hover{border-color:var(--teal);color:var(--teal-dark);transform:translateY(-2px)}
 .social-icon svg,.social-icon img{width:19px;height:19px}
+.social-icon img[src$='ebay-icon.png']{width:32px;height:auto}
 @media (prefers-reduced-motion:reduce){.social-icon{transition:none}}
 
+
+/* ---- home banner (the NL Vault artwork; its own logo is part of the image) ---- */
+.hero-art{max-width:1196px;margin:26px auto 0;background:var(--ink);border-radius:22px;overflow:hidden;display:grid;grid-template-columns:1fr 1.45fr}
+.hero-art picture{display:block;width:100%;height:100%;grid-column:2;grid-row:1}
+.hero-art img{display:block;width:100%;height:100%;object-fit:cover;object-position:center}
+.hero-art-bar{grid-column:1;grid-row:1;padding:42px 34px;color:#fff;display:flex;flex-direction:column;align-items:flex-start;gap:18px}
+.hero-art-bar .hero-kicker{font-size:10px;font-weight:900;letter-spacing:.16em;color:#e8c77e;text-transform:uppercase}
+.hero-art-bar .hero-title{font-size:clamp(38px,4.1vw,58px);font-weight:800;line-height:1.04;letter-spacing:-.03em;margin:0}
+.hero-art-bar .hero-title span{color:#e8c77e;display:block}
+.hero-art-bar p{margin:0;max-width:40ch;font-weight:600;font-size:14px;line-height:1.7;color:#d4d5d6}
+.hero-art-bar .btn{background:#ebc674;border-color:#ebc674;color:#17191c;font-size:15px;padding:12px 22px}
+.hero-art-bar .btn:hover{background:#f7d997;border-color:#f7d997}
+.hero-art-bar .social-icons{margin-top:0;gap:9px}
+.hero-art-bar .social-icon{width:40px;height:40px}
+.hero-channels{display:flex;align-items:center;gap:14px}
+.hero-channels>span{color:#b8bbbf;font-size:11px;font-weight:700}
+@media(max-width:1240px){.hero-art{margin-inline:22px}}
+@media(max-width:850px){
+  .hero-art{grid-template-columns:1fr}
+  .hero-art picture{grid-column:1;grid-row:1;height:auto}
+  .hero-art img{height:auto;aspect-ratio:1533/647}
+  .hero-art-bar{grid-row:2;padding:28px 30px;gap:15px}
+  .hero-art-bar .hero-title{font-size:42px}
+  .hero-art-bar .hero-title span{display:inline}
+  .hero-art-bar p{max-width:56ch}
+}
+@media(max-width:560px){
+  .hero-art{margin:18px 18px 0;border-radius:18px}
+  .hero-art-bar{padding:22px;gap:12px}
+  .hero-art-bar .hero-title{font-size:33px}
+  .hero-art-bar p{font-size:13px;line-height:1.6}
+  .hero-art-bar .btn{width:100%;min-height:48px}
+  .hero-channels{display:none}
+  .collections-head p{display:none}
+  footer .social-link span{display:inline}
+}
+.skip-link{position:fixed;left:16px;top:-100px;z-index:60;background:#fff;color:var(--ink);padding:12px 18px;border-radius:10px;font-weight:800}
+.skip-link:focus{top:12px}
+:focus-visible{outline:3px solid #1566cb;outline-offset:4px}
+.topbar :focus-visible,.hero-art :focus-visible{outline-color:#f1d48e}
+@media(prefers-reduced-motion:reduce){
+  .card,.dept-card,.btn,.social-icon,.sidenav,.scrim{transition:none}
+  .card:hover,.dept-card:hover,.btn:hover,.social-icon:hover{transform:none}
+}
+.photo-back{position:absolute;right:10px;bottom:10px;width:74px;display:block;border:2px solid #fff;border-radius:8px;overflow:hidden;background:var(--sunken);box-shadow:0 2px 10px rgba(0,0,0,.35);text-decoration:none}
+.photo-back img{display:block;width:100%;height:auto;object-fit:cover}
+.photo-back span{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-weight:700;text-align:center;padding:1px 0}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.buy-links .btn{text-decoration:none}
 /* ---- home hero ----
    The wordmark/tagline block below still carries the brand on its own --
    no photography needed there. A full card showcase used to sit in *this*
@@ -495,11 +584,51 @@ FONTS = (
 NAV_SCRIPT = """<script>
 (function(){
   var body = document.body;
-  function open(){ body.classList.add('nav-open'); document.querySelector('.navtoggle').setAttribute('aria-expanded','true'); }
-  function close(){ body.classList.remove('nav-open'); document.querySelector('.navtoggle').setAttribute('aria-expanded','false'); }
+  var drawer = document.getElementById('shop-navigation');
+  var toggle = document.querySelector('.navtoggle');
+  var previousFocus = null;
+  var background = [];
+  function open(){
+    if (body.classList.contains('nav-open')) return;
+    previousFocus = document.activeElement;
+    drawer.inert = false;
+    drawer.setAttribute('aria-hidden','false');
+    body.classList.add('nav-open');
+    toggle.setAttribute('aria-expanded','true');
+    background = Array.from(body.children).filter(function(el){
+      return el !== drawer && !el.classList.contains('scrim') && el.tagName !== 'SCRIPT';
+    }).map(function(el){ var state = {el:el,inert:el.inert}; el.inert = true; return state; });
+    drawer.querySelector('[data-nav-close]').focus();
+  }
+  function close(){
+    if (!body.classList.contains('nav-open')) return;
+    body.classList.remove('nav-open');
+    toggle.setAttribute('aria-expanded','false');
+    background.forEach(function(state){ state.el.inert = state.inert; });
+    if (previousFocus) previousFocus.focus({preventScroll:true});
+    drawer.inert = true;
+    drawer.setAttribute('aria-hidden','true');
+  }
   document.querySelectorAll('[data-nav-open]').forEach(function(el){ el.addEventListener('click', open); });
   document.querySelectorAll('[data-nav-close]').forEach(function(el){ el.addEventListener('click', close); });
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
+  document.addEventListener('keydown', function(e){
+    if (!body.classList.contains('nav-open')) return;
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    if (e.key === 'Tab') {
+      var controls = drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex="0"]');
+      var first = controls[0], last = controls[controls.length-1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
+  var narrow = window.matchMedia('(max-width:640px)');
+  var params = new URLSearchParams(window.location.search);
+  var filtered = ['q','set','sort'].some(function(key){ return !!params.get(key); });
+  document.querySelectorAll('.filter-panel').forEach(function(panel){
+    function adapt(){ panel.open = !narrow.matches || filtered; }
+    adapt();
+    narrow.addEventListener('change',adapt);
+  });
 })();
 </script>"""
 
@@ -552,14 +681,15 @@ GSAP_SCRIPT = """<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5
 </script>"""
 
 
-def sidenav(links: str = "") -> str:
+def sidenav(links: str = "", show_cart: bool = True) -> str:
     """The slide-out navigation. Hidden by default and summoned by the
     toggle, rather than a permanent column: on a phone a fixed sidebar
     would eat half the screen, and on desktop the product grid is the
     thing people came for."""
     return (
         "<div class='scrim' data-nav-close></div>"
-        "<aside class='sidenav' aria-label='Shop navigation'>"
+        "<aside class='sidenav' id='shop-navigation' role='dialog' aria-modal='true' "
+        "aria-label='Shop navigation' aria-hidden='true' inert>"
         "<div class='sidenav-head'>"
         f"{logo_lockup()}"
         "<button class='sidenav-close' data-nav-close aria-label='Close navigation'>&times;</button>"
@@ -567,41 +697,47 @@ def sidenav(links: str = "") -> str:
         "<div class='navgroup'><h4>Shop</h4>"
         "<a href='/'>Home</a>"
         "<a href='/browse'>Browse everything</a>"
-        "<a href='/bulk'>Bulk Master</a>"
+        + ("<a href='/bulk'>Bulk Master</a>" if show_cart else "<a href='/shop/bulk'>Bulk &amp; Bundles</a>")
+        +
         "</div>"
         f"{links}"
         "<hr>"
         "<div class='navgroup'><h4>Info</h4>"
         "<a href='/shipping'>Shipping &amp; returns</a>"
         "<a href='/contact'>Contact us</a>"
-        "<a href='/cart'>Your cart</a>"
-        "</div>"
+        + ("<a href='/cart'>Your cart</a>" if show_cart else "")
+        + "</div>"
         "</aside>"
     )
 
 
-def header(cart_count: int = 0, query: str = "", dept_links: str = "") -> str:
-    safe_query = query.replace("'", "&#39;").replace('"', "&quot;")
+def header(cart_count: int = 0, query: str = "", dept_links: str = "", show_cart: bool = True) -> str:
+    safe_query = escape(query, quote=True)
     badge = f"<span class='cart-pill'>Cart {cart_count}</span>" if cart_count else "<span class='cart-pill'>Cart</span>"
     return (
         "<header class='topbar'>"
-        "<button class='navtoggle' data-nav-open aria-expanded='false' aria-label='Open navigation'>"
+        "<button class='navtoggle' data-nav-open aria-expanded='false' aria-controls='shop-navigation' aria-label='Open navigation'>"
         "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round'>"
         "<path d='M3 6h18M3 12h18M3 18h18'/></svg></button>"
-        f"<a href='/'>{logo_lockup()}</a>"
-        "<form class='shop-search' method='get' action='/browse'>"
-        f"<input name='q' value='{safe_query}' placeholder='Search the vault…' autocomplete='off'>"
-        "</form>"
-        "<nav class='topnav'>"
+        f"<a class='brand-link' href='/' aria-label='NL Vault home'>{logo_lockup()}</a>"
+        "<form class='shop-search' method='get' action='/browse' role='search' aria-label='Search the vault'>"
+        "<label class='sr-only' for='vault-search'>Search cards and collectables</label>"
+        f"<input id='vault-search' type='search' name='q' value='{safe_query}' placeholder='Search the vault…' autocomplete='off'>"
+        "<button class='shop-search-submit' type='submit' aria-label='Search'>"
+        "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' aria-hidden='true'>"
+        "<circle cx='10.5' cy='10.5' r='6.5'/><path d='m16 16 5 5'/></svg></button></form>"
+        "<nav class='topnav' aria-label='Main navigation'><a class='browse-link' href='/browse'>Browse all</a>"
         # Departments come from stock rather than being hardcoded, for the
         # same reason the drawer's do: a header link is the most prominent
         # place to promise a section, and the worst place to land someone
         # on an empty page.
         f"{dept_links}"
-        "<a href='/bulk' class='hide-sm'>Bulk Master</a>"
+        + ("<a href='/bulk' class='hide-sm'>Bulk Master</a>" if show_cart
+           else "<a href='/shop/bulk' class='hide-sm'>Bulk &amp; Bundles</a>")
+        +
         "<a href='/shipping' class='hide-sm'>Shipping</a>"
-        f"<a href='/cart'>{badge}</a>"
-        "</nav></header>"
+        + (f"<a href='/cart'>{badge}</a>" if show_cart else "")
+        + "</nav></header>"
     )
 
 
@@ -639,7 +775,8 @@ def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
          nav_links: str = "", dept_links: str = "", description: str = DEFAULT_DESCRIPTION,
          social_html: str = "", hero: str = "", canonical: str = "", site_url: str = "",
          og_image: str = "", robots: str = "", same_as: tuple[str, ...] = (),
-         crumbs: tuple[tuple[str, str], ...] = (), extra_jsonld: tuple[dict, ...] = ()) -> str:
+         crumbs: tuple[tuple[str, str], ...] = (), extra_jsonld: tuple[dict, ...] = (),
+         show_cart: bool = True) -> str:
     title_safe = escape(title)
     description_safe = escape(description)
     image = og_image or (f"{site_url}/social-share.png" if site_url else "")
@@ -683,14 +820,15 @@ def page(title: str, body: str, *, cart_count: int = 0, query: str = "",
         "<link rel='icon' type='image/png' href='/favicon.ico'>"
         "<link rel='apple-touch-icon' href='/apple-touch-icon.png'>"
         f"{FONTS}{STYLE}{structured_data}</head><body>"
-        "<div class='announce'>Tracked shipping Australia-wide, every order &nbsp;·&nbsp; "
-        "<a href='/shipping'>See rates</a></div>"
-        f"{sidenav(nav_links)}"
-        f"{header(cart_count, query, dept_links)}"
+        "<a class='skip-link' href='#main-content'>Skip to content</a>"
+        + ("<div class='announce'>Tracked shipping Australia-wide, every order &nbsp;·&nbsp; "
+           "<a href='/shipping'>See rates</a></div>" if show_cart else "")
+        + f"{sidenav(nav_links, show_cart)}"
+        f"{header(cart_count, query, dept_links, show_cart)}"
         f"{hero}"
-        f"<main>{_breadcrumb_nav(crumbs)}{body}</main>"
+        f"<main id='main-content' tabindex='-1'>{_breadcrumb_nav(crumbs)}{body}</main>"
         "<footer><div class='inner'>"
-        "<span>NL Vault — trading cards &amp; collectibles, shipped from Australia.</span>"
+        "<span>NL Vault — trading cards &amp; collectables, shipped from Australia.</span>"
         f"{social_html}"
         "<span><a href='/shipping'>Shipping &amp; returns</a> &nbsp;·&nbsp; "
         "<a href='/contact'>Contact us</a> &nbsp;·&nbsp; "

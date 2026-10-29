@@ -9,13 +9,15 @@ and a search engine had nothing but a bare <title> to go on.
 from html import escape
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from automation_control.config import get_settings
 from automation_control.database import get_session
-from automation_control.models import BulkLot, ShopListing, ShopListingStatus
+from automation_control.models import BulkLot, CatalogItem, ShopListing, ShopListingStatus
+from automation_control.storefront_readiness import storefront_legal_issues
 
 from .ui import page
 
@@ -28,11 +30,14 @@ from .ui import page
 # user-generated content to inject through.
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+    # static.cloudflareinsights.com / cloudflareinsights.com: Cloudflare Web
+    # Analytics, which Cloudflare injects on the public domain -- cookieless
+    # visitor counts, consistent with the privacy page's "no tracking cookies".
+    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src https://fonts.gstatic.com",
-    "img-src 'self' data: https://images.pokemontcg.io https://images.scrydex.com",
-    "connect-src 'self'",
+    "img-src 'self' data: https://images.pokemontcg.io https://images.scrydex.com https://i.ebayimg.com",
+    "connect-src 'self' https://cloudflareinsights.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -54,6 +59,18 @@ def install_security_headers(app: FastAPI) -> None:
         for key, value in SECURITY_HEADERS.items():
             response.headers.setdefault(key, value)
         return response
+
+
+def install_canonical_host(app: FastAPI) -> None:
+    """www.nlvault.com.au -> nlvault.com.au, so the shop has one address
+    for search engines and links rather than two copies of every page."""
+    @app.middleware("http")
+    async def strip_www(request: Request, call_next):
+        host = request.headers.get("host", "")
+        if host.lower().startswith("www."):
+            target = request.url.replace(netloc=host[4:])
+            return RedirectResponse(str(target), status_code=301)
+        return await call_next(request)
 
 
 def _branded_error(status_code: int, headline: str, detail: str) -> HTMLResponse:
@@ -92,13 +109,16 @@ def install_error_pages(app: FastAPI) -> None:
 
 def install_seo_routes(app: FastAPI) -> None:
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
-    def robots() -> str:
+    def robots(request: Request) -> str:
+        # The Sitemap line must be an absolute URL -- crawlers ignore a
+        # bare path.
+        base = str(request.base_url).rstrip("/")
         return (
             "User-agent: *\n"
             "Allow: /\n"
             "Disallow: /cart\n"
             "Disallow: /checkout\n"
-            "Sitemap: /sitemap.xml\n"
+            f"Sitemap: {base}/sitemap.xml\n"
         )
 
     @app.get("/llms.txt", response_class=PlainTextResponse, include_in_schema=False)
@@ -127,19 +147,27 @@ def install_seo_routes(app: FastAPI) -> None:
         # Absolute URLs built from whatever host actually served the
         # request rather than a hardcoded domain -- there isn't a public
         # one yet, and this stays correct once there is.
-        from . import departments
+        from . import bulk_ebay, departments
 
         base = str(request.base_url).rstrip("/")
-        # /privacy and /terms are deliberately excluded -- they're
-        # noindexed while still carrying [PLACEHOLDER] legal facts, and a
+        # /privacy and /terms are left out while they're noindexed (still
+        # carrying [PLACEHOLDER] legal facts or not yet approved) -- a
         # noindexed page has no business being in the sitemap.
         paths = ["/", "/browse", "/bulk", "/shipping", "/contact"]
-        paths += [f"/shop/{d.slug}" for d, _count in departments.in_stock(session)]
+        if not storefront_legal_issues(get_settings()):
+            paths += ["/privacy", "/terms"]
+        paths += [f"/shop/{d.slug}" for d, _count in departments.in_stock(session)
+                  if not departments.is_coming_soon(d)]
+        if bulk_ebay.bulk_listings(session):
+            paths.append(f"/shop/{bulk_ebay.SLUG}")
         paths += [
             f"/item/{listing_id}"
             for listing_id in session.scalars(
-                select(ShopListing.id).where(
-                    ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0
+                select(ShopListing.id)
+                .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
+                .where(
+                    ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+                    departments.visible_listing_filter(),
                 )
             )
         ]

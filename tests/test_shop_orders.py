@@ -350,6 +350,7 @@ def test_pack_sheet_shows_set_and_card_details(client, session):
 def test_pack_sheet_shows_the_stored_location(client, session):
     order = make_order_with_real_card(session, location="Binder A")
     body = client.get(f"/shop-orders/{order.id}/pack-sheet").text
+    assert "Pick location" in body
     assert "Binder A" in body
 
 

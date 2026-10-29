@@ -60,6 +60,7 @@ def _place_order(client: TestClient, session: Session, listing: ShopListing) -> 
     client.post("/cart/add", data={"listing_id": listing.id}, follow_redirects=False)
     response = client.post("/checkout", data={
         "email": "drill@example.test", "name": "Transaction Drill",
+        "mobile": "0400000000",
         "address": "1 Test Street\nSydney NSW 2000", "country": "Australia", "zone": "au",
     }, follow_redirects=False)
     if response.status_code != 303:

@@ -107,7 +107,18 @@ def test_robots_txt_allows_crawling_and_points_at_the_sitemap(client):
     response = client.get("/robots.txt")
     assert response.status_code == 200
     assert "Allow: /" in response.text
-    assert "Sitemap: /sitemap.xml" in response.text
+    assert "Sitemap: http://testserver/sitemap.xml" in response.text
+
+
+def test_www_redirects_to_the_bare_domain(client):
+    response = client.get("/shipping?x=1", headers={"host": "www.nlvault.com.au"}, follow_redirects=False)
+    assert response.status_code == 301
+    assert response.headers["location"] == "http://nlvault.com.au/shipping?x=1"
+
+
+def test_bare_domain_is_served_directly(client):
+    response = client.get("/shipping", headers={"host": "nlvault.com.au"}, follow_redirects=False)
+    assert response.status_code == 200
 
 
 def test_sitemap_includes_static_pages(client):

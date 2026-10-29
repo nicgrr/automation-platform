@@ -253,7 +253,7 @@ def test_checkout_writes_a_discount_order_line(client, session):
 
     ids = [add_card(session, f"Card {n}", price="10.00") for n in "ABC"]
     client.cookies.set(CART_COOKIE, json.dumps({i: 1 for i in ids}))
-    client.post("/checkout", data={"email": "a@b.com", "name": "A B", "address": "1 St", "zone": "au"})
+    client.post("/checkout", data={"email": "a@b.com", "name": "A B", "mobile": "0400000000", "address": "1 St", "zone": "au"})
 
     order = session.scalars(select(ShopOrder)).one()
     discount_items = session.scalars(
@@ -273,7 +273,7 @@ def test_the_order_total_is_the_discounted_amount(client, session):
 
     ids = [add_card(session, f"Card {n}", price="10.00") for n in "ABC"]
     client.cookies.set(CART_COOKIE, json.dumps({i: 1 for i in ids}))
-    client.post("/checkout", data={"email": "a@b.com", "name": "A B", "address": "1 St", "zone": "au"})
+    client.post("/checkout", data={"email": "a@b.com", "name": "A B", "mobile": "0400000000", "address": "1 St", "zone": "au"})
 
     order = session.scalars(select(ShopOrder)).one()
     assert order.items_total == Decimal("28.50")  # $30 - $1.50
@@ -291,7 +291,7 @@ def test_reserving_stock_skips_the_discount_line(client, session):
 
     ids = [add_card(session, f"Card {n}", price="10.00", quantity=1) for n in "ABC"]
     client.cookies.set(CART_COOKIE, json.dumps({i: 1 for i in ids}))
-    client.post("/checkout", data={"email": "a@b.com", "name": "A B", "address": "1 St", "zone": "au"})
+    client.post("/checkout", data={"email": "a@b.com", "name": "A B", "mobile": "0400000000", "address": "1 St", "zone": "au"})
 
     order = session.scalars(select(ShopOrder)).one()
     assert order.stock_reserved_at is not None

@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from automation_control.config import get_settings
 from automation_control.database import get_session
 from automation_control.models import ContactMessage
 
@@ -47,9 +48,11 @@ def _form(name: str = "", email: str = "", message: str = "") -> str:
 
 @router.get("/contact", response_class=HTMLResponse)
 def contact_page(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    email = get_settings().storefront_contact_email
+    or_email = (f" Or email <a href='mailto:{escape(email)}'>{escape(email)}</a>." if email else "")
     body = (
         "<div class='page-head'><h1>Contact us</h1>"
-        "<p>Question about an order, a listing, or anything else — send it here.</p></div>"
+        f"<p>Question about an order, a listing, or anything else — send it here.{or_email}</p></div>"
         f"<div class='panel' style='max-width:520px'>{_form()}</div>"
     )
     crumbs = (("Home", "/"), ("Contact us", ""))

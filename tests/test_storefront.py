@@ -72,11 +72,13 @@ def test_no_api_docs_are_published(client):
 
 # --- browsing ---------------------------------------------------------------
 
-def test_home_shows_active_listings(client, session):
+def test_home_lists_categories_not_individual_items(client, session):
+    """The homepage is just the categories; items live inside them."""
     _listing(session)
     body = client.get("/").text
-    assert "Charizard #4" in body
-    assert "$80.00" in body
+    assert "href='/shop/game-pokemon'" in body
+    assert "Charizard #4" not in body
+    assert "Charizard #4" in client.get("/shop/game-pokemon").text
 
 
 def test_draft_listings_are_never_public(client, session):

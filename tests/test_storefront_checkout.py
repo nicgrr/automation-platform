@@ -59,6 +59,7 @@ def _fill_cart(client, listing_id):
 
 def _order_details():
     return {"email": "buyer@example.test", "name": "A Buyer",
+            "mobile": "+61 404 959 211",
             "address": "1 Test St\nSydney NSW 2000", "country": "Australia", "zone": "au"}
 
 
@@ -78,6 +79,7 @@ def test_checkout_shows_totals_and_says_payments_are_not_live(client, session):
     assert "$9.95" in body
     assert "$89.95" in body
     assert "aren't switched on yet" in body
+    assert "name='mobile'" in body
 
 
 def test_checkout_is_not_enabled_without_the_authoritative_webhook(monkeypatch):
@@ -99,6 +101,7 @@ def test_order_is_written_even_without_a_payment_provider(client, session):
 
     order = session.query(ShopOrder).one()
     assert order.email == "buyer@example.test"
+    assert order.ship_to_phone == "+61 404 959 211"
     assert order.grand_total == Decimal("89.95")
     assert order.status == ShopOrderStatus.PENDING_PAYMENT
     assert order.reference.startswith("NLV-")

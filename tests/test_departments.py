@@ -176,7 +176,9 @@ def test_home_lists_one_tile_per_game_plus_collectibles(client, session):
 def test_home_without_stock_does_not_advertise_departments(client):
     body = client.get("/").text
     assert "Nothing listed yet" in body
-    assert "href='/shop/" not in body
+    # The stylesheet targets .dept-card[href='/shop/...'], so look for an
+    # actual tile link rather than the bare href text.
+    assert "<a class='dept-card'" not in body
 
 
 def test_browse_can_filter_by_a_game_department(client, session):

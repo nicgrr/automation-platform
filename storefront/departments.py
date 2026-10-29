@@ -29,8 +29,11 @@ shop never advertises a section that lands on an empty page.
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from . import live_inventory
+from sqlalchemy import func, or_, select, true
 from sqlalchemy.orm import Session
+
+from automation_control.config import get_settings
 
 from automation_control.models import (
     BulkLot, CardSet, CatalogItem, CatalogItemType, SealedProduct, ShopListing, ShopListingStatus, TcgCard,
@@ -40,7 +43,31 @@ from automation_control.models import (
 # ("Pokémon"). A game not in here falls back to a title-cased version of
 # its own code, so a new game still gets a readable name with no edit
 # needed here -- this dict is cosmetic, never a gate on what can appear.
-GAME_LABELS = {"pokemon": "Pokémon", "one_piece": "One Piece"}
+GAME_LABELS = {"pokemon": "Pokémon", "one_piece": "One Piece", "dragon_ball": "Dragon Ball"}
+
+# Several catalogue games are really ranges of one franchise, and a shopper
+# looks for "Dragon Ball", not "Dragon Ball Fusion World" vs "Dragon Ball
+# Super Divers". Games are grouped into one department by franchise, and the
+# ranges inside it become sub-categories (see `subranges`).
+def _group_of(game: str) -> str:
+    if "pokemon" in game:
+        return "pokemon"
+    if "dragon_ball" in game:
+        return "dragon_ball"
+    return game
+
+
+# Sub-category names inside a franchise. A range not listed here falls back
+# to its code, title-cased.
+SUB_LABELS = {
+    "pokemon": "English", "pokemon_japan": "Japanese",
+    "dragon_ball_super": "Dragon Ball Super", "dragon_ball_fusion_world": "Fusion World",
+    "dragon_ball_super_divers": "Super Divers", "super_dragon_ball_heroes": "Super Dragon Ball Heroes",
+    "dragon_ball_artbox": "Artbox", "dragon_ball_carddass": "Carddass", "dragon_ball_itajaga": "Itajaga",
+}
+
+# Navigation order. Anything not listed (a game scanned in later) follows.
+_ORDER = ("game-pokemon", "game-one_piece", "game-dragon_ball", "collectibles")
 
 # Singles at or above this are shown in a game department's "Premium"
 # segment. A plain constant, not a config table: this is a browsing
@@ -54,14 +81,19 @@ class Department:
     name: str
     blurb: str
     item_types: tuple[CatalogItemType, ...]
-    game: str | None = None       # restrict to this TcgCard/SealedProduct game, if set
+    game: str | None = None       # the franchise this department is (slug, logo, label)
     includes_bulk: bool = False   # BulkLot rows count too (scoped by `game` if set)
+    games: tuple[str, ...] = ()   # the catalogue games it covers; empty means just `game`
+
+    @property
+    def game_codes(self) -> tuple[str, ...]:
+        return self.games or ((self.game,) if self.game else ())
 
 
 FIXED_DEPARTMENTS: tuple[Department, ...] = (
     Department(
         slug="collectibles",
-        name="Collectibles",
+        name="Collectables",
         blurb="Sonny Angel, Smiski and blind-box figures, secrets included.",
         item_types=(CatalogItemType.COLLECTIBLE,),
     ),
@@ -87,13 +119,13 @@ def _active_games(session: Session) -> list[str]:
         select(TcgCard.game).distinct()
         .join(CatalogItem, CatalogItem.id == TcgCard.catalog_item_id)
         .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0)
+        .where(live_inventory.available())
     ).all()
     from_sealed = session.scalars(
         select(SealedProduct.game).distinct()
         .join(CatalogItem, CatalogItem.id == SealedProduct.catalog_item_id)
         .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+        .where(live_inventory.available(),
               SealedProduct.game.isnot(None))
     ).all()
     from_bulk = session.scalars(
@@ -108,16 +140,20 @@ def department_list(session: Session) -> list[Department]:
     what actually has stock happens in in_stock(), not here, so a page
     that needs to resolve a specific slug (a direct link, a bookmark)
     still works even for a department that's currently empty."""
+    grouped: dict[str, list[str]] = {}
+    for game in _active_games(session):
+        grouped.setdefault(_group_of(game), []).append(game)
     game_departments = [
         Department(
-            slug=f"game-{game}",
-            name=_game_label(game),
-            blurb=f"{_game_label(game)} singles, sealed product and sorted bulk by set.",
-            item_types=_TCG_ITEM_TYPES, game=game, includes_bulk=True,
+            slug=f"game-{group}",
+            name=_game_label(group),
+            blurb=f"{_game_label(group)} singles, sealed product and sorted bulk by set.",
+            item_types=_TCG_ITEM_TYPES, game=group, includes_bulk=True, games=tuple(sorted(games)),
         )
-        for game in _active_games(session)
+        for group, games in grouped.items()
     ]
-    return game_departments + list(FIXED_DEPARTMENTS)
+    everything = game_departments + list(FIXED_DEPARTMENTS)
+    return sorted(everything, key=lambda d: (_ORDER.index(d.slug) if d.slug in _ORDER else len(_ORDER), d.name))
 
 
 def find(session: Session, slug: str) -> Department | None:
@@ -139,10 +175,11 @@ def department_for_item(session: Session, item: CatalogItem | None) -> Departmen
             game = session.scalar(select(SealedProduct.game).where(SealedProduct.catalog_item_id == item.id))
         if not game:
             return None
+        group = _group_of(game)
         return Department(
-            slug=f"game-{game}", name=_game_label(game),
-            blurb=f"{_game_label(game)} singles, sealed product and sorted bulk by set.",
-            item_types=_TCG_ITEM_TYPES, game=game, includes_bulk=True,
+            slug=f"game-{group}", name=_game_label(group),
+            blurb=f"{_game_label(group)} singles, sealed product and sorted bulk by set.",
+            item_types=_TCG_ITEM_TYPES, game=group, includes_bulk=True, games=(game,),
         )
     return next((d for d in FIXED_DEPARTMENTS if item.item_type in d.item_types), None)
 
@@ -154,18 +191,19 @@ def listing_filter(department: Department):
     rather than defaulting into one and being mislabelled.
     """
     condition = CatalogItem.item_type.in_(department.item_types)
-    if department.game is None:
+    codes = department.game_codes
+    if not codes:
         return condition
     return condition & (
-        CatalogItem.id.in_(select(TcgCard.catalog_item_id).where(TcgCard.game == department.game))
-        | CatalogItem.id.in_(select(SealedProduct.catalog_item_id).where(SealedProduct.game == department.game))
+        CatalogItem.id.in_(select(TcgCard.catalog_item_id).where(TcgCard.game.in_(codes)))
+        | CatalogItem.id.in_(select(SealedProduct.catalog_item_id).where(SealedProduct.game.in_(codes)))
     )
 
 
 def _bulk_filter(department: Department):
     condition = BulkLot.status == ShopListingStatus.ACTIVE
-    if department.game:
-        condition = condition & (BulkLot.game == department.game)
+    if department.game_codes:
+        condition = condition & BulkLot.game.in_(department.game_codes)
     return condition
 
 
@@ -176,7 +214,7 @@ def counts(session: Session) -> dict[str, int]:
         singles = session.scalar(
             select(func.count()).select_from(ShopListing)
             .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
-            .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+            .where(live_inventory.available(),
                   listing_filter(department))
         ) or 0
         total = singles
@@ -190,19 +228,54 @@ def counts(session: Session) -> dict[str, int]:
 
 
 def in_stock(session: Session) -> list[tuple[Department, int]]:
-    """Departments with something in them, for navigation."""
+    """Departments with something in them, for navigation -- plus any
+    marked coming soon, which keep their tile and link even while their
+    items are hidden (callers check is_coming_soon() to label them)."""
     totals = counts(session)
-    return [(d, totals[d.slug]) for d in department_list(session) if totals[d.slug] > 0]
+    soon = coming_soon_slugs()
+    return [(d, totals[d.slug]) for d in department_list(session) if totals[d.slug] > 0 or d.slug in soon]
+
+
+def coming_soon_slugs() -> set[str]:
+    """Departments switched to "coming soon" via STOREFRONT_COMING_SOON.
+
+    Only the fixed (non-game) departments can be: they're defined by item
+    type alone, which is what visible_listing_filter() hides by."""
+    raw = get_settings().storefront_coming_soon or ""
+    wanted = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    return wanted & {d.slug for d in FIXED_DEPARTMENTS}
+
+
+def is_coming_soon(department: Department | None) -> bool:
+    return department is not None and department.slug in coming_soon_slugs()
+
+
+def _hidden_item_types() -> tuple[CatalogItemType, ...]:
+    soon = coming_soon_slugs()
+    return tuple(t for d in FIXED_DEPARTMENTS if d.slug in soon for t in d.item_types)
+
+
+def visible_listing_filter():
+    """A WHERE condition (against an outer-joined CatalogItem) that drops
+    listings belonging to a coming-soon department, so they don't turn up
+    in search, browse or the sitemap before they're ready to sell."""
+    hidden = _hidden_item_types()
+    if not hidden:
+        return true()
+    return or_(CatalogItem.item_type.is_(None), CatalogItem.item_type.not_in(hidden))
+
+
+def item_is_hidden(item: CatalogItem | None) -> bool:
+    return item is not None and item.item_type in _hidden_item_types()
 
 
 def price_range(session: Session, department: Department) -> tuple[Decimal, Decimal] | None:
     """Cheapest and dearest in a department, for the department card."""
     row = session.execute(
-        select(func.min(ShopListing.price), func.max(ShopListing.price))
+        select(func.min(live_inventory.price()), func.max(live_inventory.price()))
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
         .where(
-            ShopListing.status == ShopListingStatus.ACTIVE,
-            ShopListing.quantity > 0,
+            live_inventory.available(),
             listing_filter(department),
         )
     ).one()
@@ -235,7 +308,7 @@ def segment_filter(department: Department, segment: str):
     like "all" instead of erroring the page.
     """
     if segment == "premium":
-        return ShopListing.price >= PREMIUM_THRESHOLD
+        return live_inventory.price() >= PREMIUM_THRESHOLD
     if segment == "sealed":
         return CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT
     if segment == "singles":
@@ -247,7 +320,7 @@ def has_sealed_stock(session: Session, department: Department) -> bool:
     return bool(session.scalar(
         select(func.count()).select_from(ShopListing)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+        .where(live_inventory.available(),
               listing_filter(department), CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT)
     ))
 
@@ -256,8 +329,8 @@ def has_premium_stock(session: Session, department: Department) -> bool:
     return bool(session.scalar(
         select(func.count()).select_from(ShopListing)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
-              listing_filter(department), ShopListing.price >= PREMIUM_THRESHOLD)
+        .where(live_inventory.available(),
+              listing_filter(department), live_inventory.price() >= PREMIUM_THRESHOLD)
     ))
 
 
@@ -267,15 +340,57 @@ def sets_in_stock(session: Session, department: Department) -> list[tuple[str, s
     -- a fixed department (Collectibles, Apparel) groups by brand/series
     instead, which isn't modelled here yet, so this returns empty for one
     rather than guessing at a grouping."""
-    if not department.game:
+    if not department.game_codes:
         return []
     rows = session.execute(
         select(TcgCard.set_id, CardSet.name).distinct()
         .join(CatalogItem, CatalogItem.id == TcgCard.catalog_item_id)
         .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
         .join(CardSet, CardSet.id == TcgCard.set_id, isouter=True)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
-              TcgCard.game == department.game, TcgCard.set_id.isnot(None))
+        .where(live_inventory.available(),
+              TcgCard.game.in_(department.game_codes), TcgCard.set_id.isnot(None))
     ).all()
     pairs = {(set_id, name or set_id) for set_id, name in rows}
     return sorted(pairs, key=lambda pair: pair[1])
+
+
+def _sub_label(game: str) -> str:
+    return SUB_LABELS.get(game) or game.replace("_", " ").title()
+
+
+def narrowed(department: Department, sub: str) -> Department:
+    """The same department restricted to one range ("fusion_world"), or the
+    department unchanged when `sub` isn't one of its ranges."""
+    from dataclasses import replace
+
+    return replace(department, games=(sub,)) if sub in department.game_codes else department
+
+
+def subranges(session: Session, department: Department) -> list[tuple[str, str]]:
+    """(game code, name) for each range of a franchise that has stock, e.g.
+    Dragon Ball -> Dragon Ball Super, Fusion World ... Only worth showing
+    when there is more than one."""
+    if len(department.game_codes) < 2:
+        return []
+    active = set(_active_games(session))
+    return [(g, _sub_label(g)) for g in department.game_codes if g in active]
+
+
+def brands_in_stock(session: Session) -> list[str]:
+    """Collectable brands (Sonny Angel, Smiski ...) with an active listing."""
+    from automation_control.models import CollectibleProduct
+
+    return sorted(session.scalars(
+        select(CollectibleProduct.brand).distinct()
+        .join(ShopListing, ShopListing.catalog_item_id == CollectibleProduct.catalog_item_id)
+        .where(live_inventory.available(),
+              CollectibleProduct.brand.isnot(None), CollectibleProduct.brand != "")
+    ).all(), key=str.lower)
+
+
+def brand_filter(brand: str):
+    from automation_control.models import CollectibleProduct
+
+    return ShopListing.catalog_item_id.in_(
+        select(CollectibleProduct.catalog_item_id).where(func.lower(CollectibleProduct.brand) == brand.lower())
+    )

@@ -151,19 +151,16 @@ def test_home_icon_row_and_footer_row_both_render_independently(client, session)
 
 def test_home_has_a_hero_banner(client, session):
     body = client.get("/").text
-    assert "class='hero-banner'" in body
-    assert "class='hero-inner'" in body
+    assert "class='hero-art'" in body
+    assert "nl-vault-banner" in body
 
 
-def test_hero_banner_shows_the_company_name(client, session):
-    """Text only -- the icon mark used to sit next to this too, but that
-    meant the logo showed up twice on the page (header plus hero); see
-    brand.logo_lockup."""
+def test_hero_banner_names_the_company(client, session):
+    """The logo is part of the banner artwork, so the page name lives in an
+    accessible heading and the image's alt text rather than as visible text."""
     body = client.get("/").text
-    hero = body.split("class='hero-inner'")[1].split("</div></div>")[0]
-    assert "class='hero-brand'" in hero
-    assert "class='nl-mark'" not in hero
-    assert "<b>NL</b><i>VAULT</i>" in hero  # the company name
+    assert "<h1 class='sr-only'>NL Vault</h1>" in body
+    assert "alt='NL Vault" in body
 
 
 def test_hero_banner_shows_even_with_no_stock(client, session):
@@ -171,7 +168,7 @@ def test_hero_banner_shows_even_with_no_stock(client, session):
     yet -- only the panel below it changes."""
     body = client.get("/").text
     assert "Nothing listed yet" in body
-    assert "class='hero-banner'" in body
+    assert "class='hero-art'" in body
 
 
 def test_social_icons_render_inside_the_hero_banner(client, session):
@@ -179,12 +176,12 @@ def test_social_icons_render_inside_the_hero_banner(client, session):
                            url="https://instagram.com/nlvault", is_active=True))
     session.commit()
     body = client.get("/").text
-    hero = body.split("class='hero-inner'")[1].split("</div></div>")[0]
+    hero = body.split("class='hero-art'")[1].split("</main>")[0]
     assert "social-icons" in hero
     assert "instagram.com/nlvault" in hero
 
 
 def test_hero_banner_does_not_appear_on_other_pages(client, session):
     """This is a home-page treatment, not a global one."""
-    assert "class='hero-banner'" not in client.get("/shipping").text
-    assert "class='hero-banner'" not in client.get("/contact").text
+    assert "class='hero-art'" not in client.get("/shipping").text
+    assert "class='hero-art'" not in client.get("/contact").text

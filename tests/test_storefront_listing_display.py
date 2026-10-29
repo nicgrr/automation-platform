@@ -142,11 +142,11 @@ def test_pokemon_department_tile_shows_the_official_game_logo(client, session):
 
 
 def test_a_department_with_only_bulk_lots_falls_back_to_lot_art(client, session):
-    """One Piece has no cached game-logo asset (see assets.GAME_LOGOS),
-    so its tile genuinely falls back to lot art -- Pokémon always shows
-    its logo regardless of what's in stock (see the logo tests above)."""
+    """A game with no logo asset (see assets.GAME_LOGOS) genuinely falls
+    back to lot art -- Pokémon always shows its logo regardless of what's
+    in stock (see the logo tests above)."""
     session.merge(CardSet(id="op1", name="Romance Dawn"))
-    session.add(BulkLot(set_id="op1", game="one_piece", title="Romance Dawn bulk", card_count=50,
+    session.add(BulkLot(set_id="op1", game="digimon", title="Romance Dawn bulk", card_count=50,
                         price=Decimal("20.00"), currency="AUD", quantity=1,
                         status=ShopListingStatus.ACTIVE,
                         image_url="https://images.pokemontcg.io/op1/logo.png"))
@@ -195,10 +195,10 @@ def test_pokemon_department_tile_shows_the_logo_even_with_a_cached_mascot(client
 
 
 def test_falls_back_to_the_priciest_item_for_a_game_with_no_logo_asset(client, session):
-    """One Piece has no cached logo asset yet (see assets.GAME_LOGOS) --
-    its department tile must not crash, and falls back to the existing
-    priciest-item logic instead of the Pokémon-only logo."""
-    add_card(session, "Luffy", game="one_piece", set_id="op1", set_name="Romance Dawn", price="80.00")
+    """A game with no logo asset (see assets.GAME_LOGOS) -- its department
+    tile must not crash, and falls back to the existing priciest-item
+    logic instead of a logo."""
+    add_card(session, "Agumon", game="digimon", set_id="op1", set_name="Romance Dawn", price="80.00")
     body = client.get("/").text
     hero_section = body.split("class='dept-hero'")[1].split("</div>")[0]
     assert "<img" in hero_section
@@ -276,3 +276,24 @@ def test_grid_is_two_columns_by_default(client, session):
     assert base_rule is not None
     assert "repeat(2,1fr)" in base_rule.group(0)
     assert "min-width:640px" in STYLE.split(base_rule.group(0), 1)[1][:60]
+
+
+@pytest.mark.parametrize("game,logo", [
+    ("one_piece", "/assets/one-piece-logo.svg"),
+    ("dragon_ball_super", "/assets/dragon-ball-logo.png"),
+])
+def test_one_piece_and_dragon_ball_tiles_show_their_logo(client, session, game, logo):
+    add_card(session, "Somebody", game=game, price="80.00")
+    hero_section = client.get("/").text.split("class='dept-hero'")[1].split("</div>")[0]
+    assert logo in hero_section
+    assert client.get(logo).status_code == 200
+
+
+def test_collectables_tile_shows_its_banner(client, session):
+    from tests.test_departments import add_collectible
+
+    add_collectible(session, "Sheep")
+    body = client.get("/").text
+    tile = body.split("class='dept-card' href='/shop/collectibles'")[1].split("</a>")[0]
+    assert "/assets/collectables-banner.jpg" in tile
+    assert client.get("/assets/collectables-banner.jpg").status_code == 200

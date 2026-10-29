@@ -11,6 +11,7 @@ shouldn't leave rows behind, and there are no accounts to attach one to.
 """
 
 import json
+from urllib.parse import quote_plus
 from decimal import Decimal
 from html import escape
 
@@ -25,8 +26,8 @@ from automation_control.models import (
     ShopListing, ShopListingStatus, TcgCard,
 )
 
-from . import departments, discounts
-from .assets import GAME_LOGOS
+from . import catalogue, departments, discounts, live_inventory
+from .assets import DEPARTMENT_ART, GAME_LOGOS
 from .photos import has_own_photo, router as photo_router
 from .brand import logo_lockup, logo_mark
 from .common import (
@@ -57,14 +58,15 @@ DEFAULT_SORT = "price_desc"
 
 def _active_listings(session: Session, query: str = "", limit: int = 60,
                      department: departments.Department | None = None, segment: str | None = None,
-                     set_id: str = "", sort: str = DEFAULT_SORT):
+                     set_id: str = "", sort: str = DEFAULT_SORT, brand: str = ""):
     stmt = (
         select(ShopListing, CatalogItem)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0)
+        .where(live_inventory.available(),
+               departments.visible_listing_filter())
     )
     if query:
-        stmt = stmt.where(ShopListing.title.ilike(f"%{query}%"))
+        stmt = stmt.where(live_inventory.title().ilike(f"%{query}%"))
     if department is not None:
         # an inner-join condition expressed as a filter: a listing with no
         # catalogue row has no department and drops out, rather than being
@@ -74,10 +76,15 @@ def _active_listings(session: Session, query: str = "", limit: int = 60,
             extra = departments.segment_filter(department, segment)
             if extra is not None:
                 stmt = stmt.where(extra)
+    if brand:
+        stmt = stmt.where(departments.brand_filter(brand))
     if set_id:
         stmt = stmt.join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id).where(TcgCard.set_id == set_id)
     order = SORT_OPTIONS.get(sort, SORT_OPTIONS[DEFAULT_SORT])[1]
-    return session.execute(stmt.order_by(order).limit(limit)).all()
+    if live_inventory.enabled():
+        order = live_inventory.price().asc() if sort == "price_asc" else live_inventory.title().asc() if sort == "name_asc" else live_inventory.price().desc()
+    rows = session.execute(stmt.order_by(order).limit(limit)).all()
+    return [(shown, item) for listing, item in rows if (shown := live_inventory.project(session, listing)) is not None]
 
 
 def _set_name(session: Session, item: CatalogItem | None) -> str | None:
@@ -139,12 +146,15 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     if department.game:
         logo = GAME_LOGOS.get(department.game)
         if logo:
-            return f"<img src='{logo}' alt='{escape(department.name)}' loading='lazy'>"
+            return f"<img class='dept-logo' src='{logo}' alt='{escape(department.name)}' loading='lazy'>"
+    art = DEPARTMENT_ART.get(department.slug)
+    if art:
+        return f"<img class='dept-art' src='{art}' alt='{escape(department.name)}' loading='lazy'>"
 
     row = session.execute(
         select(ShopListing, CatalogItem)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
+        .where(live_inventory.available(),
               departments.listing_filter(department))
         .order_by(ShopListing.price.desc()).limit(1)
     ).first()
@@ -163,183 +173,70 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     return f"<div class='dept-hero-mark'>{logo_mark(48)}</div>"
 
 
-# Curated, not queried "most expensive in stock" like _dept_hero -- this is
-# a one-time brand statement about what the shop *is* (Pokemon + One Piece
-# singles, collectible figures), not a live merchandising slot, so a
-# specific recognisable print beats whatever happens to be priced highest
-# today. Each falls back to any real print of the same character if this
-# exact one isn't cached yet, so a catalogue refresh can't blank the hero.
-_HERO_TCG_PICKS = [
-    ("sv4pt5-18", "Pikachu"),                  # 151 -- the most recognised modern Pikachu print
-    ("one-piece-op01-024", "Monkey.D.Luffy"),  # OP01's leader card -- One Piece TCG's own card one
-]
+def _detail_art(item: CatalogItem | None, listing: ShopListing, session: Session) -> str:
+    """The item page's photo: your own front shot at full size, with the back
+    underneath when a professional front/back pair exists. Anything else
+    (scan only, stock image) renders exactly as it does in the grid."""
+    from .photos import photo_count, photo_url
+    if live_inventory.enabled():
+        photos = live_inventory.published_photos(session, listing.id)
+        if not photos:
+            return "<span class='noart'>Photos on eBay</span>"
+        title = escape(listing.title)
+        return f"<img src='{escape(photos[0], quote=True)}' alt='{title}'>" + "".join(
+            f"<a class='photo-back' href='{escape(url, quote=True)}' target='_blank' rel='noopener'>"
+            f"<img src='{escape(url, quote=True)}' alt='{title}, photo {n}' loading='lazy'><span>Photo {n}</span></a>"
+            for n, url in enumerate(photos[1:], 2))
 
-
-def _catalog_image_url(session: Session, catalog_item_id: str) -> str | None:
-    """A real, hosted image for a TCG_CARD item, checking both places one
-    can live. CatalogItem.image_url turned out to hold a local scan-ingest
-    cache path for the vast majority of Pokemon rows (see
-    storefront/common.py::_is_web_url) -- the real publisher URL sits on
-    the legacy CatalogCard row instead, which a migrated Pokemon row
-    shares its id with (see CatalogItem's own docstring). One Piece rows
-    were never migrated through that path, so their CatalogItem.image_url
-    is already the real one -- hence checking both rather than assuming
-    either."""
-    item = session.get(CatalogItem, catalog_item_id)
-    if item is not None and _is_web_url(item.image_url):
-        return item.image_url
-    card = session.get(CatalogCard, catalog_item_id)
-    if card is not None and _is_web_url(card.image_url):
-        return card.image_url
-    return None
-
-
-def _any_catalog_image_url(session: Session, name: str) -> str | None:
-    """Fallback for _hero_tcg_art: any real print of this character, in
-    case the specific curated pick isn't cached yet."""
-    item = session.scalar(select(CatalogItem).where(CatalogItem.name == name, CatalogItem.image_url.isnot(None)))
-    if item is not None and _is_web_url(item.image_url):
-        return item.image_url
-    card = session.scalar(select(CatalogCard).where(CatalogCard.name == name, CatalogCard.image_url.isnot(None)))
-    if card is not None and _is_web_url(card.image_url):
-        return card.image_url
-    return None
-
-
-def _picks_art(session: Session, picks: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Real, hosted card art for a curated (id, name) pick list -- shared
-    by the hero panel and the homepage backdrop collage. Skips any pick
-    with no usable image rather than showing a broken <img>."""
-    art = []
-    for item_id, name in picks:
-        url = _catalog_image_url(session, item_id) or _any_catalog_image_url(session, name)
-        if url:
-            art.append((url, name))
-    return art
-
-
-# The homepage's ambient background collage -- "Pokemon and One Piece
-# together" per the user's own request, distinct from _HERO_TCG_PICKS'
-# two-card fan so the backdrop reads as a fuller cast, not a repeat of the
-# hero above it.
-_BACKDROP_PICKS = [
-    ("swsh4-25", "Charizard"),
-    ("sm10-70", "Gengar"),
-    ("sm12-166", "Eevee"),
-    ("one-piece-op01-024", "Monkey.D.Luffy"),
-    ("one-piece-op02-062", "Roronoa Zoro"),
-    ("one-piece-op01-003", "Nami"),
-]
-
-
-def _home_backdrop_art(session: Session) -> list[tuple[str, str]]:
-    return _picks_art(session, _BACKDROP_PICKS)
-
-
-def _hero_tcg_art(session: Session) -> list[tuple[str, str]]:
-    """Real, hosted card art for the homepage's trading card panel."""
-    return _picks_art(session, _HERO_TCG_PICKS)
-
-
-def _hero_collectible_photo(session: Session) -> str | None:
-    """One real seller photo (see storefront/photos.py) from whichever
-    active collectible listing is currently priced highest -- the same
-    "most eye-catching in stock" logic _dept_hero uses for department
-    tiles, just restricted to items with an actual own-photo so the hero
-    never links out to a listing with nothing to show."""
-    rows = session.execute(
-        select(ShopListing)
-        .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
-        .where(ShopListing.status == ShopListingStatus.ACTIVE, ShopListing.quantity > 0,
-               CatalogItem.item_type == CatalogItemType.COLLECTIBLE)
-        .order_by(ShopListing.price.desc())
-    ).scalars().all()
-    for listing in rows:
-        if has_own_photo(session, listing.id):
-            return listing.id
-    return None
-
-
-def _hero_split(session: Session) -> str:
-    """The homepage's flagship visual: trading cards on one side, the
-    seller's own collectible photography on the other -- the two halves
-    of what this shop actually stocks, side by side rather than buried
-    under a generic "browse everything" tagline. Each pane degrades to a
-    plain colour panel (see .hero-pane-fallback) if its image isn't
-    available yet, same defensive spirit as _dept_hero's own fallback --
-    a homepage must never break because a catalogue query came back empty.
-    """
-    tcg_art = _hero_tcg_art(session)
-    tcg_cards = "".join(
-        f"<img class='hero-card hero-card-{i}' src='{escape(url)}' alt='{escape(alt)}' loading='eager'>"
-        for i, (url, alt) in enumerate(tcg_art)
+    count = photo_count(session, listing.id)
+    if count == 0:
+        return _art(item, listing, session)
+    is_card = item is not None and item.item_type in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD)
+    tag = f"<span class='art-tag own'>{'Actual card' if is_card else 'Actual item'}</span>"
+    title = escape(listing.title)
+    front = f"<img src='{escape(photo_url(session, listing.id, large=True))}' alt='{title}'>{tag}"
+    back = (
+        f"<a class='photo-back' href='{escape(photo_url(session, listing.id, n=1, large=True))}' "
+        f"target='_blank' rel='noopener'>"
+        f"<img src='{escape(photo_url(session, listing.id, n=1))}' alt='{title}, back' loading='lazy'><span>Back</span></a>"
+        if count > 1 else ""
     )
-    tcg_fill = "" if tcg_art else " hero-pane-fallback"
+    return front + back
 
-    collectible_listing_id = _hero_collectible_photo(session)
-    if collectible_listing_id:
-        collect_img = (
-            f"<img class='hero-pane-photo' src='/photo/{escape(collectible_listing_id)}' "
-            "alt='A collectible figure from the shop' loading='eager'>"
-        )
-        collect_fill = ""
-    else:
-        collect_img = ""
-        collect_fill = " hero-pane-fallback"
 
+def _hero_art(session: Session) -> str:
+    """Keep the original banner beside a clear invitation to browse."""
+    pitch = (
+        "Hand-picked trading cards and collectibles, shipped from Australia."
+        if not catalogue.is_catalogue() else
+        "Hand-picked trading cards and collectables from Australia. Browse here, then buy through our marketplace stores."
+    )
+    socials = social_icons_html(session)
+    channels = (
+        f"<div class='hero-channels'><span>Find us on</span>{socials}</div>" if socials else ""
+    )
     return (
-        "<div class='hero-split'>"
-        f"<a class='hero-pane hero-pane-tcg{tcg_fill}' href='/browse'>"
-        f"<div class='hero-pane-cards'>{tcg_cards}</div>"
-        "<div class='hero-pane-scrim'></div>"
-        "<div class='hero-pane-copy'>"
-        "<span class='hero-eyebrow'>Pok&eacute;mon &middot; One Piece &middot; more</span>"
-        "<h2>Trading Cards</h2>"
-        "<span class='hero-pane-cta'>Shop singles &rarr;</span>"
-        "</div></a>"
-        f"<a class='hero-pane hero-pane-collect{collect_fill}' href='/shop/collectibles'>"
-        f"{collect_img}"
-        "<div class='hero-pane-scrim'></div>"
-        "<div class='hero-pane-copy'>"
-        "<span class='hero-eyebrow'>Sonny Angel &middot; figures &middot; more</span>"
-        "<h2>Collectibles</h2>"
-        "<span class='hero-pane-cta'>Shop figures &rarr;</span>"
-        "</div></a>"
-        "</div>"
+        "<div class='hero-art'>"
+        "<h1 class='sr-only'>NL Vault</h1>"
+        "<picture>"
+        "<source media='(max-width:700px)' srcset='/assets/nl-vault-banner-900.jpg'>"
+        "<img src='/assets/nl-vault-banner.jpg' width='1533' height='647' "
+        "alt='NL Vault: Pok&eacute;mon, One Piece and Dragon Ball trading cards' fetchpriority='high'>"
+        "</picture>"
+        "<div class='hero-art-bar'>"
+        "<p class='hero-kicker'>Welcome to NL Vault</p>"
+        "<h2 class='hero-title'>Find your next <span>favourite.</span></h2>"
+        f"<p>{pitch}</p>"
+        "<a class='btn' href='/browse'>Explore the vault <span aria-hidden='true'>&rarr;</span></a>"
+        f"{channels}"
+        "</div></div>"
     )
-
-
-def _home_backdrop(session: Session) -> str:
-    """A fixed, page-wide ambient collage behind the whole homepage --
-    real Pokemon/One Piece card art, faded and scattered rather than
-    sharp, so it reads as atmosphere behind the shop rather than
-    competing with it for attention (the exact complaint that got an
-    earlier, sharper card showcase pulled from the hero itself -- see
-    ui.py's STYLE comment above .hero-banner). Every foreground section
-    (topbar, hero, product grid, footer) keeps its own opaque background,
-    so this only ever shows through in the gaps between them.
-    """
-    cards = "".join(
-        f"<img class='backdrop-card bc-{i}' src='{escape(url)}' alt='' aria-hidden='true' loading='lazy'>"
-        for i, (url, _name) in enumerate(_home_backdrop_art(session))
-    )
-    return f"<div class='home-backdrop' aria-hidden='true'>{cards}</div>"
 
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     stocked = departments.in_stock(session)
-    backdrop = _home_backdrop(session) if stocked else ""
-    hero = (
-        backdrop
-        + "<div class='hero-banner'>"
-        "<div class='hero-inner'>"
-        f"<h1 class='hero-brand'>{logo_lockup()}</h1>"
-        "<p>Hand-picked trading cards and collectibles, shipped from Australia.</p>"
-        f"{social_icons_html(session)}"
-        "</div></div>"
-        + (_hero_split(session) if stocked else "")
-    )
+    hero = _hero_art(session)
 
     if not stocked:
         body = (
@@ -352,38 +249,96 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
         return shell(session, "NL Vault", body, request=request, hero=hero)
 
     cards = []
-    for department, _count in stocked:
+    for department, count in stocked:
+        soon = departments.is_coming_soon(department)
+        meta = "Coming soon" if soon else f"{count} {'listing' if count == 1 else 'listings'} to explore"
+        badge = "<span class='soon-badge'>Coming soon</span>" if soon else ""
         cards.append(
-            f"<a class='dept-card' href='/shop/{escape(department.slug)}'>"
-            f"<div class='dept-hero'>{_dept_hero(session, department)}</div>"
+            f"<a class='dept-card{' is-soon' if soon else ''}' href='/shop/{escape(department.slug)}'>"
+            f"<div class='dept-hero'>{_dept_hero(session, department)}{badge}</div>"
             "<div class='dept-card-body'>"
-            f"<h2>{escape(department.name)}</h2>"
+            f"<h3>{escape(department.name)}</h3>"
             f"<p>{escape(department.blurb)}</p>"
+            f"<div class='dept-meta'><span>{meta}</span>"
+            "<span class='arrow' aria-hidden='true'>&rarr;</span></div>"
             "</div></a>"
         )
 
-    rows = _active_listings(session, limit=8)
-    latest = (
-        "<div class='section-head'><h2>Fresh in the vault</h2>"
-        "<a class='view-all' href='/browse'>View all &rarr;</a></div>"
-        f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
-    ) if rows else ""
+    from .bulk_ebay import home_tile
 
+    guide = ""
+    if catalogue.is_catalogue():
+        guide = (
+            "<section class='how-to-shop' aria-label='How to shop with NL Vault'>"
+            "<article><span class='step' aria-hidden='true'>01</span><div><h3>Find your favourites</h3>"
+            "<p>Explore the games, characters and collections you love.</p></div></article>"
+            "<article><span class='step' aria-hidden='true'>02</span><div><h3>See the details</h3>"
+            "<p>Check each listing for photos, condition and availability.</p></div></article>"
+            "<article><span class='step' aria-hidden='true'>03</span><div><h3>Buy on our marketplaces</h3>"
+            "<p>Follow the listing links to purchase, or contact us about an item.</p></div></article>"
+            "</section>"
+        )
     body = (
-        f"<div class='dept-grid'>{''.join(cards)}</div>"
-        + latest
-        + "<p style='margin-top:26px'><a class='btn ghost' href='/browse'>Browse everything</a></p>"
+        "<section class='home-collections' id='collections' aria-labelledby='collections-heading'>"
+        "<div class='collections-head'><div><span class='section-kicker'>Pick your collection</span>"
+        "<h2 id='collections-heading'>What are you collecting?</h2>"
+        "<p>From the next card in your set to a little shelf-worthy find.</p></div>"
+        "<a class='view-all' href='/browse'>View all <span aria-hidden='true'>&rarr;</span></a></div>"
+        f"<div class='dept-grid'>{''.join(cards)}{home_tile(session)}</div></section>{guide}"
     )
     return shell(session, "NL Vault", body, request=request, hero=hero)
+
+
+def _coming_soon_page(session: Session, request: Request, department: departments.Department) -> HTMLResponse:
+    """A department switched off with STOREFRONT_COMING_SOON: its items
+    are hidden site-wide, and its page says where they'll be sold."""
+    vinted = next((url for platform, _label, url in catalogue.marketplace_links(session)
+                   if platform == "vinted"), None)
+    follow = (
+        f"<p style='margin-top:20px'><a class='btn brass' href='{escape(vinted)}' target='_blank' "
+        "rel='noopener noreferrer'>Follow our Vinted shop</a></p>"
+        if vinted else ""
+    )
+    body = (
+        "<div class='panel empty coming-soon'>"
+        f"<div class='coming-soon-art'>{_dept_hero(session, department)}</div>"
+        "<span class='soon-badge'>Coming soon</span>"
+        f"<h1>{escape(department.name)}</h1>"
+        f"<p class='muted'>{escape(department.blurb)}</p>"
+        "<p class='muted'>We're getting these ready now. They'll be sold through our Vinted shop "
+        "— follow it to see them first.</p>"
+        f"{follow}</div>"
+    )
+    crumbs = (("Home", "/"), (department.name, ""))
+    return shell(session, f"{department.name} — coming soon — NL Vault", body, request=request,
+                 crumbs=crumbs, robots="noindex,follow")
 
 
 @router.get("/shop/{slug}", response_class=HTMLResponse)
 def department_page(slug: str, request: Request, q: str = Query(""), seg: str = Query("all"),
                     set_id: str = Query("", alias="set"), sort: str = Query(DEFAULT_SORT),
+                    sub: str = Query(""), brand: str = Query(""),
                     session: Session = Depends(get_session)) -> HTMLResponse:
-    department = departments.find(session, slug)
-    if department is None:
+    whole = departments.find(session, slug)
+    if whole is None:
+        # A bookmark to one range of a franchise ("game-dragon_ball_super")
+        # from before ranges were grouped: send it to its franchise's page.
+        code = slug.strip().lower().removeprefix("game-")
+        parent = departments.find(session, f"game-{departments._group_of(code)}") if slug.lower().startswith("game-") else None
+        if parent is not None and code in parent.game_codes and code != parent.game:
+            return RedirectResponse(f"/shop/{parent.slug}?sub={quote_plus(code)}", status_code=301)
         raise HTTPException(status_code=404, detail="department not found")
+    if departments.is_coming_soon(whole):
+        return _coming_soon_page(session, request, whole)
+
+    # Sub-categories: a franchise's ranges (Dragon Ball Super, Fusion World...)
+    # or a collectable brand. Both narrow the department; anything that isn't
+    # a real option is ignored rather than erroring.
+    ranges = departments.subranges(session, whole)
+    sub = sub if sub in {code for code, _ in ranges} else ""
+    department = departments.narrowed(whole, sub) if sub else whole
+    brands = departments.brands_in_stock(session) if whole.slug == "collectibles" else []
+    brand = next((b for b in brands if b.lower() == brand.strip().lower()), "")
 
     query = q.strip()
     segment = seg if seg in departments.SEGMENTS else "all"
@@ -391,7 +346,28 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
     sets = departments.sets_in_stock(session, department)
     set_id = set_id if set_id in {s for s, _ in sets} else ""
     rows = _active_listings(session, query, limit=200, department=department, segment=segment,
-                            set_id=set_id, sort=sort_key)
+                            set_id=set_id, sort=sort_key, brand=brand)
+
+    def _href(**changes) -> str:
+        params = {"sub": sub, "brand": brand, "seg": segment, **changes}
+        kept = "&amp;".join(f"{k}={quote_plus(v)}" for k, v in params.items() if v and not (k == "seg" and v == "all"))
+        return f"/shop/{escape(slug)}" + (f"?{kept}" if kept else "")
+
+    sub_bar = ""
+    if ranges:
+        tabs = [f"<a class='sub-tab{'' if sub else ' active'}' href='{_href(sub='', set='')}'>All {escape(whole.name)}</a>"]
+        tabs += [
+            f"<a class='sub-tab{' active' if code == sub else ''}' href='{_href(sub=code)}'>{escape(label)}</a>"
+            for code, label in ranges
+        ]
+        sub_bar = f"<div class='seg-tabs sub-tabs'>{''.join(tabs)}</div>"
+    if brands:
+        tabs = [f"<a class='sub-tab{'' if brand else ' active'}' href='{_href(brand='')}'>All Collectables</a>"]
+        tabs += [
+            f"<a class='sub-tab{' active' if b == brand else ''}' href='{_href(brand=b)}'>{escape(b)}</a>"
+            for b in brands
+        ]
+        sub_bar = f"<div class='seg-tabs sub-tabs'>{''.join(tabs)}</div>"
 
     # Segment pills only for a game department -- "Premium"/"Sealed
     # product" are trading-card concepts with no meaning for Collectibles
@@ -409,7 +385,7 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
                 continue
             active_class = " active" if key == segment else ""
             pill_items.append(
-                f"<a class='seg-tab{active_class}' href='/shop/{escape(slug)}?seg={key}'>{escape(label)}</a>"
+                f"<a class='seg-tab{active_class}' href='{_href(seg=key)}'>{escape(label)}</a>"
             )
         pills = "".join(pill_items)
         segment_bar = f"<div class='seg-tabs'>{pills}</div>"
@@ -430,11 +406,12 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
     filter_bar = (
         f"<form class='panel filters' method='get' action='/shop/{escape(slug)}'>"
         f"<input type='hidden' name='seg' value='{escape(segment)}'>"
+        f"<input type='hidden' name='sub' value='{escape(sub)}'><input type='hidden' name='brand' value='{escape(brand)}'>"
         f"<label class='field'>Search<input name='q' value='{escape(query)}' placeholder='Search this department…'></label>"
         f"{set_field}"
         f"<label class='field'>Sort<select name='sort'>{sort_options}</select></label>"
         "<button class='btn' type='submit'>Apply</button>"
-        f"<a class='btn ghost' href='/shop/{escape(slug)}?seg={escape(segment)}'>Reset</a>"
+        f"<a class='btn ghost' href='{_href(set='', q='')}'>Reset</a>"
         "</form>"
     )
 
@@ -447,18 +424,22 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
         lots = session.scalar(
             select(func.count()).select_from(BulkLot)
             .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0,
-                  BulkLot.game == department.game)
+                  BulkLot.game.in_(department.game_codes))
         ) or 0
         if lots:
             bulk_note = (
                 "<div class='notice'>"
                 f"<strong>{lots} bulk lot(s)</strong> of sorted commons are listed separately in "
-                f"<a href='/bulk?game={escape(department.game)}'>Bulk Master</a> — the cheap way to fill a set.</div>"
+                f"<a href='/bulk{f"?game={escape(department.game_codes[0])}" if len(department.game_codes) == 1 else ""}'>Bulk Master</a> — the cheap way to fill a set.</div>"
             )
 
-    if rows:
-        content = f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
-        sub = f"{len(rows)} item(s)"
+    extra = live_inventory.unlinked_rows(session, query) if department is None else []
+    tiles = [(l.price, l.title, _card(l, i, session)) for l, i in rows]
+    tiles += [(Decimal(e.current_price_minor) / 100, e.title, live_inventory.unlinked_tile(e)) for e in extra]
+    tiles.sort(key=lambda r: r[1].casefold() if sort_key == "name_asc" else r[0], reverse=sort_key == "price_desc")
+    if tiles:
+        content = f"<div class='grid'>{''.join(t[2] for t in tiles)}</div>"
+        sub = f"{len(tiles)} item(s)"
     else:
         content = (
             "<div class='panel empty'>"
@@ -471,7 +452,9 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
     body = (
         f"<div class='page-head'><h1>{escape(department.name)}</h1>"
         f"<p>{escape(department.blurb)} {sub}.</p></div>"
-        f"{segment_bar}{filter_bar}{bulk_note}{content}"
+        f"{sub_bar}{segment_bar}"
+        "<details class='filter-panel' open><summary>Search &amp; filters <span aria-hidden='true'>+</span></summary>"
+        f"{filter_bar}</details>{bulk_note}{content}"
     )
     crumbs = (("Home", "/"), (department.name, ""))
     return shell(session, f"{department.name} — NL Vault", body, request=request, query=query, crumbs=crumbs)
@@ -501,9 +484,13 @@ def browse(request: Request, q: str = Query(""), dept: str = Query(""), sort: st
         "</form>"
     )
 
-    if rows:
-        content = f"<div class='grid'>{''.join(_card(l, i, session) for l, i in rows)}</div>"
-        sub = f"{len(rows)} item(s)"
+    extra = live_inventory.unlinked_rows(session, query) if department is None else []
+    tiles = [(l.price, l.title, _card(l, i, session)) for l, i in rows]
+    tiles += [(Decimal(e.current_price_minor) / 100, e.title, live_inventory.unlinked_tile(e)) for e in extra]
+    tiles.sort(key=lambda r: r[1].casefold() if sort_key == "name_asc" else r[0], reverse=sort_key == "price_desc")
+    if tiles:
+        content = f"<div class='grid'>{''.join(t[2] for t in tiles)}</div>"
+        sub = f"{len(tiles)} item(s)"
     else:
         content = (
             "<div class='panel empty'>"
@@ -513,32 +500,43 @@ def browse(request: Request, q: str = Query(""), dept: str = Query(""), sort: st
             "</div>"
         )
         sub = "No matches"
-    body = f"<div class='page-head'><h1>{heading}</h1><p>{sub}</p></div>{filter_bar}{content}"
+    body = (
+        f"<div class='page-head'><h1>{heading}</h1><p>{sub}</p></div>"
+        "<details class='filter-panel' open><summary>Search &amp; filters <span aria-hidden='true'>+</span></summary>"
+        f"{filter_bar}</details>{content}"
+    )
     crumbs = (("Home", "/"), ("Browse", ""))
     return shell(session, "Browse — NL Vault", body, request=request, query=query, crumbs=crumbs)
 
 
 @router.get("/item/{listing_id}", response_class=HTMLResponse)
 def item_detail(listing_id: str, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
-    listing = session.get(ShopListing, listing_id)
-    if listing is None or listing.status != ShopListingStatus.ACTIVE:
+    listing = live_inventory.project(session, session.get(ShopListing, listing_id))
+    if listing is None:
         raise HTTPException(status_code=404, detail="item not found")
     item = session.get(CatalogItem, listing.catalog_item_id)
+    if departments.item_is_hidden(item):
+        # Its department is "coming soon" -- point at that page instead.
+        department = departments.department_for_item(session, item)
+        return RedirectResponse(f"/shop/{department.slug}" if department else "/", status_code=302)
 
     sold_out = listing.quantity <= 0
-    buy = (
-        "<button class='btn' disabled>Sold out</button>" if sold_out else
-        f"<form method='post' action='/cart/add'>"
-        f"<input type='hidden' name='listing_id' value='{escape(listing.id)}'>"
-        "<button class='btn brass' type='submit'>Add to cart</button></form>"
-    )
+    if catalogue.is_catalogue():
+        buy = catalogue.buy_block(session, listing.id, sold_out)
+    else:
+        buy = (
+            "<button class='btn' disabled>Sold out</button>" if sold_out else
+            f"<form method='post' action='/cart/add'>"
+            f"<input type='hidden' name='listing_id' value='{escape(listing.id)}'>"
+            "<button class='btn brass' type='submit'>Add to cart</button></form>"
+        )
     description = f"<p class='muted' style='margin-top:14px'>{escape(listing.description)}</p>" if listing.description else ""
     set_name = _set_name(session, item)
     set_row = f"<li><span>Set</span><span>{escape(set_name)}</span></li>" if set_name else ""
 
     body = (
         "<div class='detail'>"
-        f"<div class='detail-art'>{_art(item, listing, session)}</div>"
+        f"<div class='detail-art'>{_detail_art(item, listing, session)}</div>"
         "<div>"
         f"<h1>{escape(listing.title)}</h1>"
         f"<div class='detail-price'>{_money(listing.price)} <span class='muted' style='font-size:15px'>{escape(listing.currency)}</span></div>"
@@ -550,7 +548,9 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
         "<li><span>Ships from</span><span>Australia</span></li>"
         "</ul>"
         f"<div style='margin-top:22px'>{buy}</div>"
-        "<div class='notice'>Tracked postage Australia-wide. International shipping available at checkout.</div>"
+        + ("" if catalogue.is_catalogue() else
+           "<div class='notice'>Tracked postage Australia-wide. International shipping available at checkout.</div>")
+        +
         "</div></div>"
     )
     description = (
@@ -566,11 +566,11 @@ def item_detail(listing_id: str, request: Request, session: Session = Depends(ge
 
     site_url = str(request.base_url).rstrip("/")
     image_url = listing.image_url if _is_web_url(listing.image_url) else None
-    if image_url is None and item is not None and _is_web_url(item.image_url):
+    if not live_inventory.enabled() and image_url is None and item is not None and _is_web_url(item.image_url):
         image_url = item.image_url
-    if image_url is None:
+    if not live_inventory.enabled() and image_url is None:
         image_url = _reference_image_url(session, item)
-    if not image_url:
+    if not live_inventory.enabled() and not image_url:
         from .photos import has_own_photo
         if has_own_photo(session, listing.id):
             image_url = f"{site_url}/photo/{listing.id}"
@@ -826,10 +826,14 @@ def bulk_detail(lot_id: str, request: Request, session: Session = Depends(get_se
         "<li><span>Condition</span><span>Played to Near Mint, sorted by set</span></li>"
         "<li><span>Ships from</span><span>Australia</span></li>"
         "</ul>"
-        "<form method='post' action='/cart/add' style='margin-top:22px'>"
-        f"<input type='hidden' name='listing_id' value='B:{escape(lot.id)}'>"
-        "<button class='btn brass' type='submit'>Add lot to cart</button></form>"
-        "<div class='notice'>Bulk lots ship in a single tracked parcel — combine several and you still pay postage once.</div>"
+        + (
+            f"<div style='margin-top:22px'>{catalogue.buy_block(session, '', lot.quantity <= 0)}</div>"
+            if catalogue.is_catalogue() else
+            "<form method='post' action='/cart/add' style='margin-top:22px'>"
+            f"<input type='hidden' name='listing_id' value='B:{escape(lot.id)}'>"
+            "<button class='btn brass' type='submit'>Add lot to cart</button></form>"
+            "<div class='notice'>Bulk lots ship in a single tracked parcel — combine several and you still pay postage once.</div>"
+        ) +
         "</div></div>"
     )
     site_url = str(request.base_url).rstrip("/")
@@ -866,6 +870,22 @@ def shipping_info(request: Request, session: Session = Depends(get_session)) -> 
         + "</span></li>"
         for rate in rates
     ) or "<li><span>Rates</span><span>Calculated at checkout</span></li>"
+    if catalogue.is_catalogue():
+        buttons = "".join(
+            f"<a class='btn ghost' href='{escape(url)}' target='_blank' rel='noopener noreferrer'>{escape(label)} &#8599;</a> "
+            for _p, label, url in catalogue.marketplace_links(session)
+        )
+        body = (
+            "<div class='page-head'><h1>Shipping &amp; returns</h1>"
+            "<p>Everything ships from Australia, packed to survive the post.</p></div>"
+            "<div class='panel'><h2>How buying works</h2>"
+            "<p class='muted'>NL Vault is a showcase. You buy on the marketplace the item is listed on, so "
+            "postage, payment and returns follow that marketplace's own rules and buyer protection.</p>"
+            f"<p style='margin-top:14px'>{buttons}</p>"
+            "<h2 style='margin-top:26px'>Problems with an order?</h2>"
+            "<p class='muted'>Message us through the marketplace you bought on and we'll make it right.</p></div>"
+        )
+        return shell(session, "Shipping — NL Vault", body, request=request, crumbs=(("Home", "/"), ("Shipping & returns", "")))
     body = (
         "<div class='page-head'><h1>Shipping &amp; returns</h1>"
         "<p>Everything ships from Australia, packed to survive the post.</p></div>"
@@ -882,6 +902,9 @@ def shipping_info(request: Request, session: Session = Depends(get_session)) -> 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="NL Vault", docs_url=None, redoc_url=None, openapi_url=None)
+    # Before `router`: its /shop/{slug} would otherwise swallow /shop/bulk.
+    from .bulk_ebay import router as bulk_router
+    app.include_router(bulk_router)
     app.include_router(router)
     app.include_router(photo_router)
     from .favicon import router as favicon_router
@@ -890,13 +913,17 @@ def create_app() -> FastAPI:
     app.include_router(assets_router)
     from .checkout import router as checkout_router
     app.include_router(checkout_router)
+    catalogue.install(app)
 
     from .contact import router as contact_router
-    from .hardening import install_error_pages, install_security_headers, install_seo_routes
+    from .hardening import (
+        install_canonical_host, install_error_pages, install_security_headers, install_seo_routes,
+    )
     from .legal import router as legal_router
     app.include_router(legal_router)
     app.include_router(contact_router)
     install_security_headers(app)
+    install_canonical_host(app)
     install_error_pages(app)
     install_seo_routes(app)
     return app
