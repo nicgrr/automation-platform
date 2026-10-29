@@ -968,6 +968,12 @@ def bulk_photo_status(
         "<small>Rechecks them against the latest catalogue rules and AI recognition.</small></form>"
         if not running and (batch.review_pairs or batch.failed_pairs) else ""
     )
+    # The fast path through held cards: one photo per screen (photo_confirm.py).
+    confirm_cards = (
+        f"<a class='btn confirm-cards' href='/ebay-listing-bulk-photos/{batch.id}/confirm'>"
+        f"Confirm {batch.review_pairs} card(s) one at a time</a>"
+        if not running and batch.review_pairs else ""
+    )
     body = (
         brand_header("Bulk listing photo review")
         + f"<p class='subtitle'>{batch.processed_pairs}/{batch.total_pairs} processed · "
@@ -978,6 +984,7 @@ def bulk_photo_status(
         + storage_plan
         + confirm_storage
         + ("<div class='callout warn'>Identification is running. This page refreshes automatically.</div>" if running else "")
+        + confirm_cards
         + apply_all
         + retry_held
         + "<section class='pair-list'>" + "".join(_pair_card(pair, session) for pair in pairs) + "</section>"
@@ -985,7 +992,7 @@ def bulk_photo_status(
         + "<a class='btn small ghost' href='/ebay-listing-cleanup'>Back to listing cleanup</a></p>"
         + refresh
         + """<style>
-.apply-all{display:grid;gap:10px;margin:16px 0}.retry-held{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}.check{display:flex;gap:8px;align-items:flex-start}.check input{width:auto;margin-top:3px}
+.confirm-cards{display:block;text-align:center;padding:14px;font-size:17px;margin:16px 0}.apply-all{display:grid;gap:10px;margin:16px 0}.retry-held{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}.check{display:flex;gap:8px;align-items:flex-start}.check input{width:auto;margin-top:3px}
 .processing-progress{display:grid;gap:9px;margin:14px 0;padding:14px;border:1px solid var(--panel-border);border-radius:10px;background:var(--surface-sunken)}
 .progress-label{display:flex;justify-content:space-between;gap:12px}.progress-track{height:13px;overflow:hidden;border-radius:999px;background:rgba(127,127,127,.22)}
 .progress-fill{display:block;height:100%;min-width:0;border-radius:inherit;background:linear-gradient(90deg,#2878ff,#62d5ff);transition:width .35s ease}
