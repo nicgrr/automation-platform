@@ -5,10 +5,23 @@ handoff protocol in `AGENTS.md`.
 
 ## Current task
 
-Document agent work history on branch
-`lens-results-and-collectible-vocabulary` and commit the shared instructions
-and handoff. Attribution review is complete; historical commits without an
-agent trailer remain unattributed.
+Make handoff checkpoints part of every agent's normal editing workflow on
+branch `lens-results-and-collectible-vocabulary`, so Claude Code can resume
+if Codex reaches a usage limit. The operator wants checkpoints before changes;
+no timed schedule is needed.
+
+## In progress
+
+- Owner: Codex. Baseline: `7227ba4`; working tree was clean before this note.
+- Planned change: extend the shared `AGENTS.md` protocol with a saved plan
+  before each small edit batch, progress/WIP checkpoints afterward, and
+  recovery instructions for interrupted work. `CLAUDE.md` already includes it.
+- Scope: only `AGENTS.md`, `CLAUDE.md` and `HANDOFF.md`. Preserve the Claude
+  work-history subsection. Do not run tests or start services.
+- Validation: pending documentation diff, commit scope and unchanged-Claude
+  section checks. No application code changes are planned.
+- Resume action: inspect `git status` and the latest diff, then finish the
+  checkpoint instructions in `AGENTS.md` and record completion here.
 
 ## Done
 
@@ -22,6 +35,8 @@ agent trailer remain unattributed.
 
 ## Next steps
 
+- Complete the checkpoint protocol described under "In progress", review the
+  documentation changes and commit them with an explicit `Agent: Codex` trailer.
 - Operator to define the remaining lens-results and collectible-vocabulary
   goal; this documentation task does not establish further implementation work.
 
