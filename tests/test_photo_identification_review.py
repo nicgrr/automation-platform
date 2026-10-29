@@ -20,7 +20,9 @@ def context(tmp_path):
         s.add(ListingPhotoPair(id='pair',batch_id='batch',position=1,front_image_path='/front.jpg',status=ListingPhotoPairStatus.NEEDS_REVIEW,extracted={'character':'Pikachu'}));s.commit()
         app.dependency_overrides[get_session]=lambda:s
         app.dependency_overrides[require_dashboard_user]=lambda:'test'
-        with TestClient(app) as client:yield s,client
+        # No `with`: entering TestClient runs the app lifespan, which checks
+        # the schema revision of the configured (production) database.
+        yield s, TestClient(app)
         app.dependency_overrides.clear()
 
 def test_catalogue_search_and_selection(context):
