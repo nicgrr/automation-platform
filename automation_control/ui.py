@@ -1293,6 +1293,115 @@ PROGRESS_SCRIPT = r"""<script>
 </script>"""
 
 
+NAV_RETURN_STYLE = """<style>
+.nav-toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translate(-50%,20px);
+  background:#12161c;color:#fff;padding:10px 18px;border-radius:999px;font-size:14px;font-weight:600;
+  box-shadow:0 6px 24px rgba(0,0,0,.25);opacity:0;transition:opacity .2s,transform .2s;z-index:9999;pointer-events:none}
+.nav-toast.show{opacity:1;transform:translate(-50%,0)}
+</style>"""
+
+
+NAV_RETURN_SCRIPT = r"""<script>
+(function(){
+  // Return-to-where-I-was navigation (see automation_control/navigation.py).
+  // The CRM is used as a home-screen app with no browser back button, so:
+  // - every POST form's action gets ?_return_to=<this page>&_return_prev=
+  //   <previous page>, which navigation.redirect_back() uses after a save;
+  // - a per-tab trail of visited pages drives the "Back" header link;
+  // - scroll position is remembered per page and restored on return;
+  // - ?_saved=<text> on arrival shows a brief toast, then is removed from
+  //   the address so a refresh doesn't show it again.
+  var TRAIL = 'ezbay-trail', SCROLL = 'ezbay-scroll';
+  function load(key, fallback){
+    try { return JSON.parse(sessionStorage.getItem(key)) || fallback; } catch(e){ return fallback; }
+  }
+  function save(key, value){ try { sessionStorage.setItem(key, JSON.stringify(value)); } catch(e){} }
+  function here(){
+    var u = new URL(location.href);
+    u.searchParams.delete('_saved');
+    return u.pathname + u.search;
+  }
+  function rememberScroll(){
+    var s = load(SCROLL, {});
+    s[here()] = Math.round(window.scrollY);
+    var keys = Object.keys(s);
+    if (keys.length > 60) delete s[keys[0]];
+    save(SCROLL, s);
+  }
+
+  var cur = here(), trail = load(TRAIL, []), returning = false;
+  if (location.pathname !== '/login') {
+    if (trail[trail.length - 1] === cur) {
+      returning = true;                       // refresh, or a save that stayed put
+    } else if (trail[trail.length - 2] === cur) {
+      trail.pop(); returning = true;          // went back one page
+    } else {
+      trail.push(cur);
+      if (trail.length > 30) trail.shift();
+    }
+    save(TRAIL, trail);
+  }
+  var prev = trail.length > 1 ? trail[trail.length - 2] : '';
+
+  function withReturn(action){
+    var u = new URL(action || location.href, location.href);
+    if (u.origin !== location.origin) return null;
+    u.searchParams.set('_return_to', cur);
+    if (prev) u.searchParams.set('_return_prev', prev); else u.searchParams.delete('_return_prev');
+    return u.pathname + u.search;
+  }
+
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if ((form.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+    var action = withReturn(form.getAttribute('action'));
+    if (action) form.setAttribute('action', action);
+    rememberScroll();
+  }, true);
+
+  var realFetch = window.fetch;
+  window.fetch = function(input, init){
+    try {
+      if (typeof input === 'string' && init && typeof init.method === 'string'
+          && init.method.toUpperCase() === 'POST') {
+        var withRet = withReturn(input);
+        if (withRet) { input = withRet; rememberScroll(); }
+      }
+    } catch(e) {}
+    return realFetch.call(this, input, init);
+  };
+
+  window.addEventListener('pagehide', rememberScroll);
+
+  function arrive(){
+    var u = new URL(location.href), saved = u.searchParams.get('_saved');
+    if (saved !== null) {
+      u.searchParams.delete('_saved');
+      history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+      var t = document.createElement('div');
+      t.className = 'nav-toast'; t.setAttribute('role', 'status'); t.textContent = saved || 'Saved';
+      document.body.appendChild(t);
+      requestAnimationFrame(function(){ t.classList.add('show'); });
+      setTimeout(function(){ t.classList.remove('show'); setTimeout(function(){ t.remove(); }, 300); }, 2200);
+    }
+    if ((returning || saved !== null) && !location.hash) {
+      var y = load(SCROLL, {})[cur];
+      if (y) window.scrollTo(0, y);
+    }
+    if (prev) {
+      document.querySelectorAll('a.back-link[data-nav-back]').forEach(function(a){
+        a.setAttribute('href', prev);
+        a.textContent = '← Back';
+      });
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arrive);
+  else arrive();
+})();
+</script>"""
+
+
 _PWA_HEAD = (
     "<link rel='manifest' href='/static/manifest.json'>"
     "<meta name='theme-color' content='#0891b2'>"
@@ -1350,8 +1459,8 @@ def page(title: str, body: str, head_extra: str = "", show_nav: bool = True, sea
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{title}</title>{STYLE}{TOPBAR_STYLE}{QUICK_PRICE_STYLE}{PHOTO_FIELD_STYLE}"
-        f"{PROGRESS_STYLE}{_PWA_HEAD}{head_extra}</head>"
-        f"<body>{PROGRESS_HTML}{chrome}<main>{body}</main>{CSRF_SCRIPT}{PROGRESS_SCRIPT}"
+        f"{PROGRESS_STYLE}{NAV_RETURN_STYLE}{_PWA_HEAD}{head_extra}</head>"
+        f"<body>{PROGRESS_HTML}{chrome}<main>{body}</main>{CSRF_SCRIPT}{NAV_RETURN_SCRIPT}{PROGRESS_SCRIPT}"
         f"{PWA_LIFECYCLE_SCRIPT}{script}</body></html>"
     )
 
@@ -1361,5 +1470,7 @@ def pill(text: str, kind: str = "neutral") -> str:
 
 
 def brand_header(title: str, show_back: bool = True) -> str:
-    back = "<a class='back-link' href='/dashboard'>&larr; Dashboard</a>" if show_back else ""
+    # NAV_RETURN_SCRIPT points this at the previous page in the tab's trail
+    # (and relabels it "Back"); the dashboard is the no-history fallback.
+    back = "<a class='back-link' data-nav-back href='/dashboard'>&larr; Dashboard</a>" if show_back else ""
     return f"{back}<h1 class='page-title'>{title}</h1>"

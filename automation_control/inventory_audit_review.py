@@ -23,8 +23,8 @@ import uuid
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,7 @@ from .images import serve_image
 from .inventory_audit import find_mismatches
 from .models import CardSet, CatalogCard, InventoryItem, PhotoAuditDismissal, ShopListing
 from .scan_ingest.commit import _image_quality, _store_scan_image
+from .navigation import redirect_back
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/inventory-audit", tags=["inventory-audit"])
@@ -162,13 +163,14 @@ def inventory_audit_page(user: str = Depends(require_dashboard_user), session: S
 
 
 @router.post("/rescan")
-def inventory_audit_rescan(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+def inventory_audit_rescan(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     _save_mismatches(find_mismatches(session))
-    return RedirectResponse("/inventory-audit", status_code=303)
+    return redirect_back(request, "/inventory-audit")
 
 
 @router.post("/dismiss")
 def inventory_audit_dismiss(
+    request: Request,
     item_id: str = Form(...),
     own_distance: int = Form(...),
     user: str = Depends(require_dashboard_user),
@@ -181,11 +183,12 @@ def inventory_audit_dismiss(
             own_distance_at_dismissal=own_distance, dismissed_by=user,
         ))
         session.commit()
-    return RedirectResponse("/inventory-audit", status_code=303)
+    return redirect_back(request, "/inventory-audit")
 
 
 @router.post("/use-stock-photo")
 def inventory_audit_use_stock_photo(
+    request: Request,
     item_id: str = Form(...),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -206,11 +209,12 @@ def inventory_audit_use_stock_photo(
     if dismissal is not None:
         session.delete(dismissal)
     session.commit()
-    return RedirectResponse("/inventory-audit", status_code=303)
+    return redirect_back(request, "/inventory-audit")
 
 
 @router.post("/refile")
 def inventory_audit_refile(
+    request: Request,
     item_id: str = Form(...),
     set_code: str = Form(...),
     number: str = Form(...),
@@ -284,11 +288,12 @@ def inventory_audit_refile(
     if dismissal is not None:
         session.delete(dismissal)
     session.commit()
-    return RedirectResponse("/inventory-audit", status_code=303)
+    return redirect_back(request, "/inventory-audit")
 
 
 @router.post("/delete")
 def inventory_audit_delete(
+    request: Request,
     item_id: str = Form(...),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -304,7 +309,7 @@ def inventory_audit_delete(
         session.delete(dismissal)
     session.delete(item)
     session.commit()
-    return RedirectResponse("/inventory-audit", status_code=303)
+    return redirect_back(request, "/inventory-audit")
 
 
 @router.get("/image/{item_id}")

@@ -1031,3 +1031,23 @@ def test_owned_card_without_a_scan_falls_back_to_reference_art(client, session):
     body = client.get("/inventory/set/xy11").text
     assert "/inventory/card-thumb/xy11-31" in body
     assert "Your scan" not in body
+
+
+def test_adjust_returns_to_the_exact_view_it_was_made_from(client, session, tmp_path):
+    """Search terms and filters survive a quantity change, instead of the
+    view being rebuilt from the sort order alone."""
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/adjust",
+                       params={"_return_to": "/inventory/cards?sort=name&q=dewott"},
+                       data={"card_id": "xy11-31", "variant": "normal", "action": "add",
+                             "back": "/inventory/cards?sort=name"}, follow_redirects=False)
+    assert resp.headers["location"] == "/inventory/cards?sort=name&q=dewott&_saved=Saved"
+
+
+def test_adjust_ignores_an_off_site_return_address(client, session, tmp_path):
+    _seed(session, card_id="xy11-31", number="31", quantity=1)
+    resp = client.post("/inventory/adjust",
+                       params={"_return_to": "https://example.com/phish"},
+                       data={"card_id": "xy11-31", "variant": "normal", "action": "add",
+                             "back": SET_PAGE}, follow_redirects=False)
+    assert resp.headers["location"].startswith(SET_PAGE.split("?")[0])

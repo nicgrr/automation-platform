@@ -46,6 +46,7 @@ from .rarity import ONE_PIECE_RARITIES, display_rarity, normalize_star
 from .scan_ingest import fx
 from .scan_ingest.commit import _catalog_item_id_for
 from .scan_ingest.games import GAME_LABELS
+from .navigation import redirect_back
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -1160,6 +1161,7 @@ def _sort_number(number: str) -> tuple[int, str]:
 
 @router.post("/adjust")
 def inventory_adjust(
+    request: Request,
     card_id: str = Form(...),
     variant: str = Form(...),
     action: str = Form(""),
@@ -1257,11 +1259,12 @@ def inventory_adjust(
     # Only our own set pages are acceptable destinations -- `back` comes
     # from a form field, and an open redirect is not worth the convenience.
     destination = back if back.startswith("/inventory") else "/inventory"
-    return RedirectResponse(destination, status_code=303)
+    return redirect_back(request, destination)
 
 
 @router.post("/edit-details")
 def inventory_edit_details(
+    request: Request,
     card_id: str = Form(...),
     variant: str = Form(...),
     rarity: str = Form(""),
@@ -1336,7 +1339,7 @@ def inventory_edit_details(
         correlation_id=str(uuid.uuid4()), details={"card_id": card.id, "variant": printing.value, "changed": changed},
     )
     destination = back if back.startswith("/inventory") else "/inventory"
-    return RedirectResponse(destination, status_code=303)
+    return redirect_back(request, destination)
 
 
 # Legitimate callers of set_location's `back` redirect -- both pack
@@ -1347,6 +1350,7 @@ _SET_LOCATION_SAFE_PREFIXES = ("/inventory", "/shop-orders", "/ebay-sales")
 
 @router.post("/set-location")
 def inventory_set_location(
+    request: Request,
     inventory_item_id: str = Form(...), location: str = Form(""), back: str = Form("/inventory"),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
@@ -1375,7 +1379,7 @@ def inventory_set_location(
                 correlation_id=str(uuid.uuid4()), details={"location": name or None})
 
     destination = back if back.startswith(_SET_LOCATION_SAFE_PREFIXES) else "/inventory"
-    return RedirectResponse(destination, status_code=303)
+    return redirect_back(request, destination)
 
 
 # --- images ----------------------------------------------------------------
