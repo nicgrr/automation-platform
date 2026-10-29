@@ -33,8 +33,13 @@ from).
    reviewed; report at
    `/home/nic/Documents/Codex/2026-10-30/Needs-attention-duplicate-review.md`.
    Operator answered that Son Gohan UGM5-002 DA is one card photographed twice,
-   so one of its two live eBay listings is a duplicate. Ending a listing is an
-   external eBay write: needs the operator's explicit go-ahead.
+   so one of its two live eBay listings is a duplicate. Operator approved
+   (2026-10-30): end eBay item 267792969857 ($2.40, wrongly titled "C"; CRM
+   listing `cf0041ed-…`, phantom inventory `8e6b8c1e-…` NORMAL qty 1) with
+   `scripts/end_ebay_listing.py`, hide that CRM listing, and set the phantom
+   inventory to 0 with an audit note. Keep the $49.95 DA listing
+   (`54237f4a-…`, inventory `a965ae85-…`) untouched. Neither had sold.
+   Status: in progress — check eBay item 267792969857 state before retrying.
 3. **CRM navigation fix (next):** plan below in "Next steps". Throwaway test
    instance on 127.0.0.1:8091 (snapshot DB at `~/.cache/ezbay-navtest`, no API
    keys) is approved by the operator for browser checks.
