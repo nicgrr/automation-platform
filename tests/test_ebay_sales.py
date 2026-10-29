@@ -361,3 +361,33 @@ def test_confirming_a_complete_pick_updates_ebay_then_local_stock(client, sessio
     assert session.query(InventoryItem).filter(InventoryItem.quantity == 1).count() == 148
     assert session.query(ShopListing).filter(ShopListing.quantity == 1).count() == 148
     assert session.query(ShopListing).filter(ShopListing.status == ShopListingStatus.SOLD_OUT).count() == 1
+
+
+def test_an_order_with_only_an_unlisted_line_shows_with_a_pack_by_hand_note(client, session):
+    row = make_order(session, "ORD-OP", sku="item:267815002581")
+    snapshot = dict(row.raw_snapshot)
+    snapshot["lineItems"] = [{"lineItemId": "line-1", "legacyItemId": "267815002581",
+                              "title": "One Piece TCG Bulk Lot Common Uncommon Rare Mixed Cards ENGLISH",
+                              "lineItemCost": {"value": "22.95", "currency": "AUD"}}]
+    row.raw_snapshot = snapshot
+    session.commit()
+
+    body = client.get("/ebay-sales").text
+    assert "Order ORD-OP" in body
+    assert "One Piece TCG Bulk Lot" in body
+    assert "$22.95 AUD" in body
+    assert "Listed directly on eBay" in body
+
+
+def test_a_sku_less_bulk_line_with_its_own_row_is_not_drawn_twice(client, session):
+    make_bulk_order(session)
+    session.add(EbayImportedOrder(
+        ebay_order_id="ORD-BULK", sku="item:267785473779", quantity=1, marketplace_id="EBAY_AU",
+        observed_at=datetime.now(UTC), applied_at=datetime.now(UTC),
+        raw_snapshot=session.query(EbayImportedOrder).filter_by(ebay_order_id="ORD-BULK").one().raw_snapshot,
+    ))
+    session.commit()
+
+    body = client.get("/ebay-sales").text
+    assert body.count("150+ Cards") == 1
+    assert "Build 150-card pick list" in body

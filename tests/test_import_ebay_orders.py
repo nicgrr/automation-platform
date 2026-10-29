@@ -350,3 +350,111 @@ def test_an_ebaylistinglink_match_is_still_preferred_over_a_direct_id_match(monk
     with Session() as session:
         link = session.scalar(select(EbayListingLink).where(EbayListingLink.shop_listing_id == "listing-1"))
         assert link.last_pushed_quantity == 2  # the linked path's own bookkeeping ran
+
+
+def _unlisted_order(order_id="ord-1", item_id="267815002581", quantity=1):
+    return {"orderId": order_id, "lineItems": [{
+        "lineItemId": "line-1", "legacyItemId": item_id, "quantity": quantity,
+        "title": "One Piece TCG Bulk Lot Common Uncommon Rare Mixed Cards ENGLISH",
+    }]}
+
+
+def test_a_sku_less_line_is_recorded_under_its_ebay_item_number(monkeypatch, Session):
+    # A listing made by hand on eBay has no sku; it used to be dropped
+    # before anything was saved, so the order never reached /ebay-sales.
+    _seed_unlinked_lot(Session, quantity=5)
+    _patch_common(monkeypatch, Session, {"orders": [_unlisted_order()]})
+
+    script.main([])
+
+    with Session() as session:
+        record = session.scalar(select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == "ord-1"))
+        assert record.sku == "item:267815002581"
+        assert record.applied_at is not None
+        assert record.shop_listing_id is None
+        assert session.get(BulkLot, "lot-1").quantity == 5  # no stock is guessed at
+
+
+def test_rerunning_never_duplicates_a_sku_less_line(monkeypatch, Session):
+    with Session() as session:
+        _seed_credential(session)
+        session.commit()
+    _patch_common(monkeypatch, Session, {"orders": [_unlisted_order()]})
+
+    script.main([])
+    script.main([])
+
+    with Session() as session:
+        assert len(session.scalars(select(EbayImportedOrder)).all()) == 1
+
+
+def test_a_line_with_neither_sku_nor_item_number_is_skipped(monkeypatch, Session):
+    with Session() as session:
+        _seed_credential(session)
+        session.commit()
+    _patch_common(monkeypatch, Session, {"orders": [{"orderId": "ord-1", "lineItems": [{"quantity": 1}]}]})
+
+    script.main([])
+
+    with Session() as session:
+        assert session.scalars(select(EbayImportedOrder)).all() == []
+
+
+def test_since_overrides_the_saved_cursor_for_a_backfill(monkeypatch, Session):
+    with Session() as session:
+        _seed_credential(session)
+        session.commit()
+    adapter = _patch_common(monkeypatch, Session, {"orders": []})
+
+    script.main(["--since", "2026-08-01T00:00:00"])
+
+    adapter.get_orders.assert_awaited_once_with(since="2026-08-01T00:00:00.000Z", limit=200, offset=0)
+
+
+def test_a_line_first_seen_on_an_already_shipped_order_is_stored_as_completed(monkeypatch, Session):
+    with Session() as session:
+        _seed_credential(session)
+        session.commit()
+    shipped = {**_unlisted_order("ord-old"), "orderFulfillmentStatus": "FULFILLED"}
+    waiting = {**_unlisted_order("ord-new", item_id="267815002582"), "orderFulfillmentStatus": "NOT_STARTED"}
+    _patch_common(monkeypatch, Session, {"orders": [shipped, waiting]})
+
+    script.main(["--since", "2026-08-01T00:00:00"])
+
+    with Session() as session:
+        old = session.scalar(select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == "ord-old"))
+        new = session.scalar(select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == "ord-new"))
+        assert old.dismissed_at is not None
+        assert new.dismissed_at is None
+
+
+def test_every_page_of_orders_is_imported(monkeypatch, Session):
+    with Session() as session:
+        _seed_credential(session)
+        session.commit()
+    pages = [
+        {"orders": [_unlisted_order("ord-1", item_id="1")], "next": "https://api.ebay.com/next"},
+        {"orders": [_unlisted_order("ord-2", item_id="2")]},
+    ]
+    adapter = _patch_common(monkeypatch, Session, {}, adapter_overrides={"get_orders": AsyncMock(side_effect=pages)})
+
+    script.main([])
+
+    assert [call.kwargs["offset"] for call in adapter.get_orders.await_args_list] == [0, 1]
+    with Session() as session:
+        assert {r.ebay_order_id for r in session.scalars(select(EbayImportedOrder))} == {"ord-1", "ord-2"}
+
+
+def test_a_sku_less_line_already_packed_by_a_bulk_checklist_is_not_recorded_twice(monkeypatch, Session):
+    from automation_control.models import EbayBulkPickManifest
+    with Session() as session:
+        _seed_credential(session)
+        session.add(EbayBulkPickManifest(ebay_order_id="ord-1", line_item_id="line-1", ebay_listing_id="267815002581",
+                                         title="Bulk", requested_quantity=150, status="completed"))
+        session.commit()
+    _patch_common(monkeypatch, Session, {"orders": [_unlisted_order()]})
+
+    script.main([])
+
+    with Session() as session:
+        assert session.scalars(select(EbayImportedOrder)).all() == []

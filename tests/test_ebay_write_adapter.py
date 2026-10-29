@@ -171,6 +171,19 @@ async def test_get_orders_applies_the_lastmodifieddate_filter_when_since_given()
 
 
 @pytest.mark.asyncio
+async def test_get_orders_passes_the_page_offset():
+    async def handler(request: httpx.Request):
+        assert request.url.params["offset"] == "200"
+        assert request.url.params["limit"] == "200"
+        return httpx.Response(200, json={"orders": []})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = EbayWriteAdapter("tok", client)
+    await adapter.get_orders(limit=200, offset=200)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_a_4xx_response_raises_ebay_api_error():
     async def handler(request: httpx.Request):
         return httpx.Response(400, text="bad category id")

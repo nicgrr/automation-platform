@@ -136,11 +136,14 @@ class EbayWriteAdapter:
     async def withdraw_offer(self, offer_id: str) -> None:
         await self._post(f"/sell/inventory/v1/offer/{offer_id}/withdraw")
 
-    async def get_orders(self, *, since: str | None = None, limit: int = 50) -> Any:
+    async def get_orders(self, *, since: str | None = None, limit: int = 50, offset: int = 0) -> Any:
         """`since` is an RFC 3339 timestamp string (eBay's `filter=lastmodifieddate` format
         expects `[<from>..<to>]`); the caller (scripts/import_ebay_orders.py) owns
-        formatting it, this just passes the filter through untouched when given."""
+        formatting it, this just passes the filter through untouched when given.
+        One page per call: the caller follows `next` with `offset`."""
         params: dict[str, Any] = {"limit": min(max(limit, 1), 200)}
+        if offset:
+            params["offset"] = offset
         if since:
             params["filter"] = f"lastmodifieddate:[{since}..]"
         return await self._get("/sell/fulfillment/v1/order", params=params)

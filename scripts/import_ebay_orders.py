@@ -38,13 +38,17 @@ from automation_control.adapters.ebay_write import EbayWriteAdapter
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import configured, ebay_services, valid_user_access_token
-from automation_control.models import BulkLot, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus, ShopListing
+from automation_control.ebay_sales import UNLISTED_SKU_PREFIX, line_item_sku
+from automation_control.models import (
+    BulkLot, EbayBulkPickManifest, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus, ShopListing,
+)
 from automation_control.stock import decrement_listing_quantity
 
 # How far back to look on the very first run (no last_order_sync_at yet).
 # Generous on purpose -- missing an old order is worse than one extra,
 # cheap query.
 DEFAULT_LOOKBACK_DAYS = 3
+ORDERS_PAGE_SIZE = 200  # eBay's maximum for getOrders
 
 
 def _format_since(when: datetime) -> str:
@@ -52,11 +56,13 @@ def _format_since(when: datetime) -> str:
 
 
 def _line_items(order: dict) -> list[tuple[str, int]]:
-    """(sku, quantity) for every real line item on an eBay order -- skips
-    anything with no sku, which can't be matched back to a ShopListing."""
+    """(sku, quantity) for every real line item on an eBay order. A line
+    eBay returns with no sku -- a listing made by hand on eBay, not through
+    EZBay -- is keyed by its eBay item number instead (line_item_sku), so it
+    is still recorded and reaches /ebay-sales rather than silently vanishing."""
     items = []
     for line in order.get("lineItems", []):
-        sku = line.get("sku")
+        sku = line_item_sku(line)
         quantity = line.get("quantity")
         if sku and quantity:
             items.append((sku, int(quantity)))
@@ -105,15 +111,27 @@ async def run(args) -> int:
         adapter = EbayWriteAdapter(token, environment=settings.ebay_env)
 
         credential = session.get(EbayCredential, 1)
-        since = credential.last_order_sync_at if credential and credential.last_order_sync_at else datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        if args.since is not None:
+            since = args.since if args.since.tzinfo else args.since.replace(tzinfo=UTC)
+        else:
+            since = credential.last_order_sync_at if credential and credential.last_order_sync_at else datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
         print(f"polling eBay {settings.ebay_env} orders modified since {since.isoformat()}...\n")
 
+        # Follow every page: one call used to stop at eBay's first 50, which
+        # a backfill or a catch-up after downtime can easily exceed.
+        orders: list[dict] = []
         try:
-            payload = await adapter.get_orders(since=_format_since(since))
+            while True:
+                payload = await adapter.get_orders(since=_format_since(since), limit=ORDERS_PAGE_SIZE,
+                                                   offset=len(orders))
+                page = payload.get("orders", [])
+                orders.extend(page)
+                if not page or not payload.get("next"):
+                    break
         except EbayApiError as exc:
             raise SystemExit(f"could not fetch eBay orders: {exc}") from exc
 
-        for order in payload.get("orders", []):
+        for order in orders:
             ebay_order_id = order.get("orderId")
             if not ebay_order_id:
                 continue
@@ -122,12 +140,27 @@ async def run(args) -> int:
                 existing = session.scalar(select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == ebay_order_id, EbayImportedOrder.sku == sku))
                 if existing and existing.applied_at is not None:
                     continue  # already applied on a previous run -- the idempotency guarantee
+                if existing is None and sku.startswith(UNLISTED_SKU_PREFIX) and session.scalar(
+                    select(EbayBulkPickManifest.id).where(
+                        EbayBulkPickManifest.ebay_order_id == ebay_order_id,
+                        EbayBulkPickManifest.ebay_listing_id == sku[len(UNLISTED_SKU_PREFIX):],
+                    )
+                ):
+                    # This line was already packed through a bulk checklist
+                    # (before sku-less lines were recorded); a stand-in row
+                    # would only record the same line twice.
+                    continue
 
                 record = existing or EbayImportedOrder(
                     ebay_order_id=ebay_order_id, sku=sku, quantity=quantity,
                     marketplace_id=settings.ebay_marketplace_id, raw_snapshot=order,
                 )
                 if existing is None:
+                    # First seen on an order eBay already reports as shipped
+                    # (a --since backfill of history): record it, but there is
+                    # nothing left to pack, so keep it out of "Needs action".
+                    if order.get("orderFulfillmentStatus") == "FULFILLED":
+                        record.dismissed_at = datetime.now(UTC)
                     session.add(record)
 
                 link = session.scalar(select(EbayListingLink).where(EbayListingLink.sku == sku))
@@ -143,7 +176,11 @@ async def run(args) -> int:
                     target = session.get(ShopListing, sku) or session.get(BulkLot, sku)
 
                 if target is None:
-                    print(f"  no local listing for sku={sku} (order {ebay_order_id}) -- nothing to apply")
+                    if sku.startswith(UNLISTED_SKU_PREFIX):
+                        print(f"  order {ebay_order_id}: eBay listing {sku[len(UNLISTED_SKU_PREFIX):]} has no sku "
+                              "(listed directly on eBay) -- recorded for packing, no stock to apply")
+                    else:
+                        print(f"  no local listing for sku={sku} (order {ebay_order_id}) -- nothing to apply")
                     # Marked applied anyway: there's nothing this sku will
                     # ever resolve to without a code/data change, and
                     # leaving applied_at unset would re-log this same line
@@ -194,6 +231,9 @@ async def run(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
+    parser.add_argument("--since", type=datetime.fromisoformat, default=None,
+                        help="one-off backfill: poll orders modified since this ISO time (UTC unless it "
+                             "has an offset) instead of the saved cursor; already-applied lines are skipped")
     args = parser.parse_args(argv)
     return asyncio.run(run(args))
 

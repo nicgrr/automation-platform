@@ -114,8 +114,26 @@ def _ship_to(snapshot: dict) -> dict:
     }
 
 
+# eBay returns no SKU for a listing created by hand on eBay rather than
+# through EZBay (2026-10-29: a One Piece bulk lot order never reached this
+# page because the importer dropped its only line). ebay_imported_orders.sku
+# is NOT NULL and unique per order, so the eBay item number stands in.
+UNLISTED_SKU_PREFIX = "item:"
+_UNLISTED_NOTE = ("Listed directly on eBay, not from EZBay stock -- pack it by hand from the "
+                  "eBay listing. Nothing was decremented here.")
+
+
+def line_item_sku(line_item: dict) -> str | None:
+    """The key an order line is stored under: its real SKU, or the
+    `item:<eBay item number>` stand-in when eBay returned none."""
+    if line_item.get("sku"):
+        return line_item["sku"]
+    item_id = line_item.get("legacyItemId") or line_item.get("lineItemId")
+    return f"{UNLISTED_SKU_PREFIX}{item_id}" if item_id else None
+
+
 def _line_items_by_sku(snapshot: dict) -> dict[str, dict]:
-    return {li["sku"]: li for li in snapshot.get("lineItems", []) if li.get("sku")}
+    return {key: li for li in snapshot.get("lineItems", []) if (key := line_item_sku(li))}
 
 
 def _line_item_key(line_item: dict, index: int) -> str:
@@ -181,6 +199,9 @@ def _order_card_html(session: Session, ebay_order_id: str, rows: list[EbayImport
     manifests = _manifests_for_order(session, ebay_order_id)
     bulk_complete = _bulk_is_complete(session, rows)
     completed = all(row.dismissed_at is not None for row in rows) and bulk_complete
+    # A SKU-less bulk line is drawn by the bulk checklist below; its stand-in
+    # row must not also render as a plain card.
+    bulk_skus = {line_item_sku(line_item) for _, line_item, _ in bulk_lines}
 
     cards = "".join(
         pack_card_html(
@@ -190,10 +211,11 @@ def _order_card_html(session: Session, ebay_order_id: str, rows: list[EbayImport
             qty=row.quantity,
             price_html=_price_html(line_items.get(row.sku)),
             back_url="/ebay-sales",
-            empty_note="Couldn't match this sku to a specific held card -- check "
+            empty_note=_UNLISTED_NOTE if row.sku.startswith(UNLISTED_SKU_PREFIX) else
+                       "Couldn't match this sku to a specific held card -- check "
                        "/ebay-listings for what this SKU maps to.",
         )
-        for row in rows
+        for row in rows if row.sku not in bulk_skus
     )
 
     bulk_cards = "".join(
