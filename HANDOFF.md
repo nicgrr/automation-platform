@@ -13,7 +13,7 @@ from).
 
 ## In progress
 
-1. **Taking over Codex's uncommitted work** (operator requests from Codex
+1. **DONE — took over Codex's uncommitted work** (operator requests from Codex
    session 2026-10-29 18:25–19:01 UTC; Codex reported each deployed live):
    representative card backs for front-only uploads
    (`representative_backs.py`), listing finish dropdown (`listing_finishes.py`,
@@ -23,13 +23,13 @@ from).
    - Problem found: `shop_listings.finish` was added to the live DB by an ad-hoc
      script (`scripts/migrations/migrate_listing_finish.py`), not Alembic. Live
      DB has the column but is still at revision `20261023_02`.
-   - Next action: add Alembic `20261030_01` that adds `finish` only if missing,
-     delete the ad-hoc script, test upgrade on a fresh DB and on a snapshot,
-     then commit Codex's work with `Agent: Codex` and the fix separately.
+   - Committed Codex's work unchanged as `c91d924` (`Agent: Codex`); Alembic
+     `20261030_01` replaces the ad-hoc script (`4592dfe`), tested on a fresh DB
+     and a live snapshot.
    - Operator action after commit: run `.venv/bin/alembic upgrade head` (a
      no-op that records the revision) before the next CRM restart, or startup
      will refuse the revision mismatch.
-2. **Duplicate review (Codex, unfinished):** 13 Needs attention entries
+2. **DONE — duplicate review (Codex, finished by Claude):** 13 Needs attention entries
    reviewed; report at
    `/home/nic/Documents/Codex/2026-10-30/Needs-attention-duplicate-review.md`.
    Operator answered that Son Gohan UGM5-002 DA is one card photographed twice,
@@ -39,7 +39,11 @@ from).
    `scripts/end_ebay_listing.py`, hide that CRM listing, and set the phantom
    inventory to 0 with an audit note. Keep the $49.95 DA listing
    (`54237f4a-…`, inventory `a965ae85-…`) untouched. Neither had sold.
-   Status: in progress — check eBay item 267792969857 state before retrying.
+   Status: DONE 2026-10-30. eBay 267792969857 ended (API success); CRM row
+   retired via `scripts/retire_duplicate_ugm5_002_20261030.py` (rehearsed on a
+   snapshot first; re-running refuses). The other 12 Needs attention entries
+   need no action per Codex's report (8 already withdrawn, 3 live with
+   unrecognised `imported` links — a UI classification bug, 1 withdrawn).
 3. **CRM navigation fix (next):** plan below in "Next steps". Throwaway test
    instance on 127.0.0.1:8091 (snapshot DB at `~/.cache/ezbay-navtest`, no API
    keys) is approved by the operator for browser checks.
