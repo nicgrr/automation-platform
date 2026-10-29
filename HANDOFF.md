@@ -48,12 +48,14 @@ from).
    - Batch 1 DONE `ff5c543`: `navigation.redirect_back`, shared ui.py
      script (return params, trail, scroll, toast, Back link); card edits and
      photo audit converted; browser-checked; full suite green.
-   - Batch 2 IN PROGRESS (uploads): remember where an upload started
-     (`ezbay_flow_origin` cookie, 1 h, set by capture POSTs from
-     `_return_to`) and return there when the review/pricing queue ends
-     instead of the empty list (capture.py review end, price_review queue
-     end, collectibles and accessories review ends). Personal collection
-     photo upload → `redirect_back`. Next: batch 3 listings, batch 4 pricing. Throwaway test
+   - Batch 2 DONE (uploads): flow-origin cookie; card/collectible/accessory
+     capture → queue end returns to the upload's starting page; personal
+     collection upload uses redirect_back. Full suite 2331 passed.
+   - Batch 3 IN PROGRESS (listings): shop listing activate/withdraw/
+     activate-all/edit and eBay cleanup dismiss → redirect_back; ui.py trail
+     ignores message-only params (notice, error, _saved, refreshed,
+     checking) so a self-redirect with ?notice= isn't a new Back step.
+     Then batch 4 pricing. Throwaway test
    instance on 127.0.0.1:8091 (snapshot DB at `~/.cache/ezbay-navtest`, no API
    keys) is approved by the operator for browser checks.
 
