@@ -5,15 +5,39 @@ handoff protocol in `AGENTS.md`.
 
 ## Current task
 
-Completed the shared handoff checkpoint protocol on branch
-`lens-results-and-collectible-vocabulary`, so Claude Code can resume from a
-saved plan if Codex reaches a usage limit. The operator wants checkpoints
-before changes; no timed schedule is needed.
+Active agent: Claude Code (2026-10-30), branch
+`lens-results-and-collectible-vocabulary`, base `22dd1a7`. Codex ran out of
+credits mid-session; the operator asked Claude to finish Codex's work, then fix
+CRM navigation (saves/uploads should return to the page the operator came
+from).
 
 ## In progress
 
-None for this documentation task. Codex started from `7227ba4` with a clean
-working tree and committed the plan as `6401344` before editing the protocol.
+1. **Taking over Codex's uncommitted work** (operator requests from Codex
+   session 2026-10-29 18:25–19:01 UTC; Codex reported each deployed live):
+   representative card backs for front-only uploads
+   (`representative_backs.py`), listing finish dropdown (`listing_finishes.py`,
+   `ShopListing.finish`), and catalogue identification review for unmatched
+   photos (`photo_identification_review.py`). 15 paths, untouched since 05:46
+   local. Full suite on that tree: 2304 passed.
+   - Problem found: `shop_listings.finish` was added to the live DB by an ad-hoc
+     script (`scripts/migrations/migrate_listing_finish.py`), not Alembic. Live
+     DB has the column but is still at revision `20261023_02`.
+   - Next action: add Alembic `20261030_01` that adds `finish` only if missing,
+     delete the ad-hoc script, test upgrade on a fresh DB and on a snapshot,
+     then commit Codex's work with `Agent: Codex` and the fix separately.
+   - Operator action after commit: run `.venv/bin/alembic upgrade head` (a
+     no-op that records the revision) before the next CRM restart, or startup
+     will refuse the revision mismatch.
+2. **Duplicate review (Codex, unfinished):** 13 Needs attention entries
+   reviewed; report at
+   `/home/nic/Documents/Codex/2026-10-30/Needs-attention-duplicate-review.md`.
+   Operator answered that Son Gohan UGM5-002 DA is one card photographed twice,
+   so one of its two live eBay listings is a duplicate. Ending a listing is an
+   external eBay write: needs the operator's explicit go-ahead.
+3. **CRM navigation fix (next):** plan below in "Next steps". Throwaway test
+   instance on 127.0.0.1:8091 (snapshot DB at `~/.cache/ezbay-navtest`, no API
+   keys) is approved by the operator for browser checks.
 
 ## Done
 
@@ -35,8 +59,19 @@ working tree and committed the plan as `6401344` before editing the protocol.
 
 ## Next steps
 
-- At the next implementation task, save its goal, branch/base commit, scope,
-  constraints and next action in this handoff before starting the edits.
+- CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
+  card edits rebuild `back` from sort only (search, filters and scroll lost;
+  callers outside `/inventory` are sent to `/inventory`); `ui.brand_header`
+  hard-codes "← Dashboard". Operator uses the CRM as an iOS PWA with no browser
+  back button. Reproduced on the test copy: card edit from
+  `/inventory/cards?sort=name&q=pikachu` lands on `?sort=name` at the top;
+  withdraw from `/shop-listings?status=active` lands on `/shop-listings` at the
+  top. Design: `ui.py` submit listener adds hidden `_return_to` (current URL)
+  to POST forms and remembers scroll; new `navigation.redirect_back()` accepts
+  only same-origin relative paths; convert "stay where I was" handlers,
+  keep forward flows (save-and-next, create→open, batch status, eBay
+  confirm steps); "← Back" header link. Order: card edits + photo audit,
+  uploads, listings, pricing. One commit per area.
 - Operator to define the remaining lens-results and collectible-vocabulary
   goal; this documentation task does not establish further implementation work.
 
