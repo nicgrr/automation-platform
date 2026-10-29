@@ -55,11 +55,13 @@ from .models import (
     TcgCard,
 )
 from .personal_collection import _best_prices
+from .rarity import normalize_star
 from .reverse_image_search import ReverseImageSearchError, search_image
 from .scan_feed import _archived_sheet
 from .scan_ingest import catalog
 from .scan_ingest.commit import CommitRefused, commit_card
 from .scan_ingest.foil import catalogue_variant
+from .scan_ingest.games import GAME_LABELS
 from .scan_ingest.identify import (
     Identification, Source, _phash_confidence, art_phash,
     detect_card_code, detect_card_game, detect_card_language, reference_language,
@@ -375,7 +377,8 @@ def review_page(
     settings = get_settings()
     catalogs = _load_all_catalogs(session)
     totals = {s.id: s.printed_total for s in catalog.cached_sets(session)}
-    names = {s.id: s.name for s in catalog.cached_sets(session)}
+    sets = catalog.cached_sets(session)
+    names = {s.id: s.name for s in sets}
 
     suggested = _suggestions(window, catalogs, totals, settings) if catalogs else {}
 
@@ -432,7 +435,7 @@ def review_page(
             _card_html(
                 crop, candidates, names, number_options, position, prices,
                 seeded_set=seeded_set, languages=languages, variants=variants,
-                ebay_stats=ebay_stats,
+                ebay_stats=ebay_stats, picker_sets=sets,
             )
         )
 
@@ -579,13 +582,30 @@ def _condition_picker(selected: str = "Near Mint") -> str:
     )
 
 
-def _set_picker(selected: str, set_names: dict[str, str]) -> str:
+def _set_picker(selected: str, set_names: dict[str, str], sets=None) -> str:
+    """Set dropdown, grouped by game, each option led by its printed set
+    code ("FB11 · Brightness of Hope") -- 800+ sets in one name-sorted list
+    was unsearchable by the code that's actually printed on the card, and a
+    native <select> type-ahead only matches the start of an option's text."""
     options = ["<option value=''>Choose a set&hellip;</option>"]
-    for set_id, set_name in sorted(set_names.items(), key=lambda item: (item[1].lower(), item[0])):
-        chosen = " selected" if set_id == selected else ""
-        options.append(
-            f"<option value='{escape(set_id)}'{chosen}>{escape(set_name)} ({escape(set_id)})</option>"
-        )
+    if sets is None:
+        for set_id, set_name in sorted(set_names.items(), key=lambda item: (item[1].lower(), item[0])):
+            chosen = " selected" if set_id == selected else ""
+            options.append(
+                f"<option value='{escape(set_id)}'{chosen}>{escape(set_name)} ({escape(set_id)})</option>"
+            )
+        return "<select name='set_id' required>" + "".join(options) + "</select>"
+
+    groups: dict[str, list] = {}
+    for card_set in sets:
+        groups.setdefault(GAME_LABELS.get(card_set.game or "pokemon", card_set.game or "Other"), []).append(card_set)
+    for label in sorted(groups, key=str.lower):
+        options.append(f"<optgroup label='{escape(label)}'>")
+        for card_set in sorted(groups[label], key=lambda c: ((c.code or c.name).lower(), c.name.lower())):
+            chosen = " selected" if card_set.id == selected else ""
+            text = f"{card_set.code} · {card_set.name}" if card_set.code else card_set.name
+            options.append(f"<option value='{escape(card_set.id)}'{chosen}>{escape(text)}</option>")
+        options.append("</optgroup>")
     return "<select name='set_id' required>" + "".join(options) + "</select>"
 
 
@@ -601,6 +621,7 @@ def _card_html(
     languages: dict[str, str] | None = None,
     variants: dict[str, str] | None = None,
     ebay_stats: dict[str, tuple[Decimal, Decimal | None]] | None = None,
+    picker_sets=None,
 ) -> str:
     ebay_stats = ebay_stats or {}
     prices = prices or {}
@@ -699,7 +720,7 @@ def _card_html(
     details = (
         "<div class='review-details'>"
         "<label class='wide'>Set"
-        + _set_picker(default_set, set_names)
+        + _set_picker(default_set, set_names, picker_sets)
         + "</label>"
         f"<label class='wide'>Name<input name='name' value='{escape(top_name)}' "
           "placeholder='Card name' autocomplete='off'></label>"
@@ -1064,7 +1085,7 @@ def _apply_details_overrides(
             catalog_item.name = cleaned_name
 
     if "rarity" in fields:
-        cleaned_rarity = rarity.strip() or None
+        cleaned_rarity = normalize_star(rarity) or None
         if card is not None:
             card.rarity = cleaned_rarity
         if tcg_card is not None:

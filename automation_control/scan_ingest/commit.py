@@ -88,7 +88,8 @@ def _make_group_writable(path: Path) -> None:
         pass
 
 
-def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str, variant: CardVariant, condition: str) -> Path:
+def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str, variant: CardVariant, condition: str,
+                      card_id: str | None = None) -> Path:
     """Copy a crop into permanent media storage under a predictable name,
     so a listing can pull it straight from the inventory row later.
 
@@ -98,10 +99,17 @@ def _store_scan_image(source: Path, media_dir: Path, set_code: str, number: str,
     and silently had a Played scan overwrite the Near Mint one. Being
     derived rather than sequential also means replacing a photo with a
     better rescan overwrites in place instead of orphaning the old file.
+
+    `card_id` goes in the name when given, because the printed number is NOT
+    unique to one card: a base card, its alternate art and its manga rare all
+    print the same code. Without it the second one scanned silently
+    overwrote the first's photo, so an alternate-art holding ended up showing
+    (and being listed with) the normal art.
     """
     destination_dir = media_dir / "cards"
     destination_dir.mkdir(parents=True, exist_ok=True)
-    destination = destination_dir / f"{set_code}-{number}-{variant.value}-{_condition_slug(condition)}.jpg"
+    printing = f"-{re.sub(r'[^A-Za-z0-9]+', '-', card_id).strip('-')}" if card_id else ""
+    destination = destination_dir / f"{set_code}-{number}{printing}-{variant.value}-{_condition_slug(condition)}.jpg"
     # copyfile, not copy/copy2: those also set mode and timestamps on the
     # destination, which requires owning it. This file may have been written
     # by a different system user (the background service vs. a manual
@@ -193,11 +201,11 @@ def commit_card(
         # hand at all (scan_image is None) just means "don't touch it".
         if scan_image is not None:
             if existing.scan_image_path and _image_quality(scan_image) > _image_quality(Path(existing.scan_image_path)):
-                stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
+                stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition, card_id=card.id)
                 existing.scan_image_path = str(stored)
                 image_replaced = True
             elif not existing.scan_image_path:
-                stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition)
+                stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition, card_id=card.id)
                 existing.scan_image_path = str(stored)
         # Heal a row committed before this link was being set, so the
         # backlog of them drains as those cards are scanned again rather
@@ -207,7 +215,7 @@ def commit_card(
         item = existing
         created = False
     else:
-        stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition) if scan_image is not None else None
+        stored = _store_scan_image(scan_image, media_dir, set_code, card.number, variant, condition, card_id=card.id) if scan_image is not None else None
         item = InventoryItem(
             id=str(uuid.uuid4()), card_id=card.id, variant=variant, condition=condition,
             quantity=1, scan_image_path=str(stored) if stored else None,

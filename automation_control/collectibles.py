@@ -173,12 +173,12 @@ def collectibles_page(
         )
         meta_bits = [b for b in (cp.brand, cp.series) if b]
         tiles.append(
-            "<div class='set-tile'>"
+            f"<a class='set-tile' href='/collectibles/pricing/item/{escape(inv.id)}'>"
             f"<div class='set-art'>{art}{pill('secret', 'warn') if cp.is_secret else ''}</div>"
             f"<div class='set-name'>{escape(item.name)}</div>"
             f"<div class='set-meta'>{escape(' · '.join(meta_bits)) or '&mdash;'}</div>"
             f"<div class='set-meta'>Qty: {inv.quantity} &middot; eBay median: <strong>{money(median_of(item.id))}</strong></div>"
-            "</div>"
+            "</a>"
         )
 
     priced_count = sum(1 for _, item, _ in rows if median_of(item.id) is not None)
@@ -287,7 +287,7 @@ def _collectibles_catalogue_page(session: Session, sort_key: str, brand: str, se
 
     table_rows = "".join(
         "<tr>"
-        f"<td>{escape(item.name)}</td>"
+        f"<td><a href='/collectibles/pricing/product/{escape(item.id)}'>{escape(item.name)}</a></td>"
         f"<td class='muted'>{escape(cp.brand or '—')}</td>"
         f"<td class='muted opt'>{escape(cp.series or '—')}</td>"
         f"<td class='muted opt'>{escape(cp.variant or '—')}</td>"
@@ -663,6 +663,16 @@ def collectible_review_form(capture_id: str, filled: str = Query(""), problem: s
     # The AI leaves character blank rather than guessing, so that's the
     # field the cursor belongs in -- it's the one being typed most often.
     focus_character = not (capture.character or "").strip()
+    ai = capture.ai_raw_response or {}
+    candidates = [str(value) for value in (ai.get("candidate_matches") or []) if value]
+    confidence = str(ai.get("identity_confidence") or "low").lower()
+    authenticity = str(ai.get("authenticity_assessment") or "unverified")
+    ai_guidance = (
+        "<div class='notice'><strong>Photo identification is a candidate, not authentication.</strong> "
+        f"Identity confidence: {escape(confidence)}. Authenticity: {escape(authenticity)}."
+        + (" Candidate matches: " + escape(", ".join(candidates)) + "." if candidates else "")
+        + " Confirm the series, generation, regular/secret/Robby type and variant before saving.</div>"
+    )
 
     body = (
         brand_header("Review capture")
@@ -671,6 +681,7 @@ def collectible_review_form(capture_id: str, filled: str = Query(""), problem: s
         + f"<a class='revshot' href='/collectibles/capture/image/{escape(capture_id)}' target='_blank' rel='noopener'>"
           f"<img src='/collectibles/capture/image/{escape(capture_id)}' alt='Captured figure'></a>"
         + (f"<p class='linkfill-note {escape(fill_kind)}'>{escape(fill_note)}</p>" if fill_note else "")
+        + ai_guidance
         + f"<form method='post' action='/collectibles/review/{escape(capture_id)}/from-link' class='linkfill'>"
           "<label>Fill from a product or listing link"
           f"<input id='linkfill-url' name='url' type='url' placeholder='https://... the shop page for this figure' required></label>"

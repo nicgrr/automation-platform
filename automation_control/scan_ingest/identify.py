@@ -34,6 +34,7 @@ import pytesseract
 from PIL import Image, ImageOps
 
 from ..card_recognition import ExtractedCard, extract_card_details
+from ..rarity import STAR, printing_families
 
 # Concurrent Tesseract runs each spawn one OpenMP thread per core and then spin
 # against each other: a 0.6s OCR becomes minutes on a busy 4-core host.
@@ -659,13 +660,50 @@ def _normalize_code(raw: str | None) -> str | None:
     return code if re.fullmatch(r"[A-Z0-9]+-\d+[A-Z]?", code) else None
 
 
-def _pick_by_art(image_path: Path | None, candidates: list[ReferenceCard]) -> tuple[ReferenceCard, bool]:
+# How scarce a printing is, for breaking ties between printings the art alone
+# can't separate. A serial-numbered or manga print has the same artwork as the
+# plain alt art it is cut from, so a scan "matches" all of them equally well --
+# and defaulting to whichever the catalogue lists first is how an ordinary
+# alt-art SEC got filed as a $3,600 serial-numbered card.
+_SCARCITY = {"alt": 1, "wanted": 2, "manga": 3, "serial": 4}
+
+
+def _scarcity(reference: ReferenceCard) -> int:
+    return max((_SCARCITY[f] for f in printing_families(reference.name)), default=0)
+
+
+def _prefer_printing(near: list[ReferenceCard], read_rarity: str | None) -> ReferenceCard:
+    """Among printings the art can't tell apart, trust the printed rarity
+    (a star means alt art) and otherwise the *commonest* printing."""
+    starred = STAR in (read_rarity or "") or "*" in (read_rarity or "")
+    if read_rarity:
+        want_alt = [r for r in near if _scarcity(r) == _SCARCITY["alt"]]
+        base = [r for r in near if _scarcity(r) == 0]
+        if starred and want_alt:
+            near = want_alt
+        elif not starred and base:
+            near = base
+    return min(near, key=_scarcity)
+
+
+def _pick_by_art(image_path: Path | None, candidates: list[ReferenceCard],
+                 read_rarity: str | None = None) -> tuple[ReferenceCard, bool]:
     """Choose between printings sharing one code (a base card and its
-    alternate-art/gold parallels) by art. Returns (pick, decisive)."""
+    alternate-art/gold parallels) by art. Returns (pick, decisive).
+
+    Printings whose art is within the ambiguity margin of the best are
+    treated as a tie and settled by rarity/scarcity (see _prefer_printing)
+    -- but the result is still reported as not decisive, so a tie goes to
+    review rather than being silently trusted.
+    """
     ranked = _rank_by_phash(image_path, candidates) if image_path else []
     if not ranked:
-        return candidates[0], False
+        return _prefer_printing(candidates, read_rarity), False
+    best = ranked[0][0]
+    near = [ref for distance, ref in ranked if distance - best < MIN_UNAMBIGUOUS_MARGIN]
     decisive = len(ranked) == 1 or ranked[1][0] - ranked[0][0] >= MIN_UNAMBIGUOUS_MARGIN
+    if len(near) > 1:
+        return _prefer_printing(near, read_rarity), False
     return ranked[0][1], decisive
 
 
@@ -688,7 +726,7 @@ def resolve_vision_extraction(extracted: ExtractedCard, references: list[Referen
     if code:
         same_code = [r for r in references if (r.number or "").upper() == code]
         if same_code:
-            match, decisive = _pick_by_art(image_path, same_code) if len(same_code) > 1 else (same_code[0], True)
+            match, decisive = _pick_by_art(image_path, same_code, extracted.rarity) if len(same_code) > 1 else (same_code[0], True)
             return Identification(
                 card_id=match.card_id, number=match.number, name=match.name,
                 source=Source.VISION,

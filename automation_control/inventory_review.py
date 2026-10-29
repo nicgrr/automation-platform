@@ -39,9 +39,10 @@ from .auth import require_dashboard_user
 from .database import get_session
 from .images import serve_image, serve_thumb
 from .models import (
-    CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CollectibleProduct, InventoryItem, SealedProduct,
-    StorageLocation, TcgCard,
+    CardPrice, CardSet, CardVariant, CatalogCard, CatalogItem, CollectibleProduct, InventoryItem,
+    InventoryPlacement, ListingPhotoPair, SealedProduct, StorageLocation, TcgCard,
 )
+from .rarity import ONE_PIECE_RARITIES, display_rarity, normalize_star
 from .scan_ingest import fx
 from .scan_ingest.commit import _catalog_item_id_for
 from .scan_ingest.games import GAME_LABELS
@@ -74,6 +75,7 @@ GAME_GROUPS: dict[str, dict] = {
     "dragon_ball": {
         "label": "Dragon Ball",
         "games": {
+            "dragon_ball_art_card", "dragon_ball_artbox", "dragon_ball_carddass",
             "dragon_ball_fusion_world", "dragon_ball_super", "dragon_ball_z",
             "super_dragon_ball_heroes", "dragon_ball_super_divers",
         },
@@ -169,12 +171,32 @@ def _latest_prices(session: Session, catalog_item_ids: set[str]) -> dict[tuple[s
     return {(row.catalog_item_id, row.variant): row for row in rows}
 
 
+MAX_QUANTITY = 9999
 EBAY_PRICE_SOURCE = "ebay_active_low"
+MANUAL_PRICE_SOURCE = "manual"
+
+
+def _src_label(price: CardPrice | None) -> str:
+    return "Manual" if price is not None and price.source == MANUAL_PRICE_SOURCE else "eBay"
+
+
+def _choose_price(variant_row: CardPrice | None, fallback_row: CardPrice | None) -> tuple[float | None, bool]:
+    """(AUD price, whether it came from the variant-agnostic fallback).
+
+    Order: your manual price, then the variant-accurate price, then eBay.
+    """
+    fallback = _aud(fallback_row)
+    if fallback_row is not None and fallback_row.source == MANUAL_PRICE_SOURCE and fallback is not None:
+        return fallback, True
+    variant = _aud(variant_row)
+    if variant is not None:
+        return variant, False
+    return fallback, fallback is not None
 
 
 def _latest_ebay_prices(session: Session, catalog_item_ids: set[str]) -> dict[str, CardPrice]:
-    """Most recent eBay active-listing price per card, keyed by card alone
-    rather than (card, variant) like _latest_prices.
+    """The variant-agnostic price per card: your own manual figure if you
+    have entered one, otherwise the most recent eBay active-listing low.
 
     An eBay search can't reliably tell a reverse holo from a normal print
     -- listings often don't say -- so these are deliberately stored with
@@ -183,15 +205,25 @@ def _latest_ebay_prices(session: Session, catalog_item_ids: set[str]) -> dict[st
     this separate helper. `ebay_active_low` (the cheapest active listing)
     is used rather than the median: it's the more conservative figure to
     value your own holdings against.
+
+    A manual price always wins. Typing a price into "Edit details" is a
+    deliberate correction -- before this, the page only ever read eBay rows,
+    so a $8 correction sat on file while a $3,628 eBay figure (a serial-
+    numbered printing's listing) kept being shown and totalled.
     """
     if not catalog_item_ids:
         return {}
     rn = func.row_number().over(
-        partition_by=CardPrice.catalog_item_id, order_by=CardPrice.fetched_at.desc()
+        partition_by=CardPrice.catalog_item_id,
+        order_by=(
+            (CardPrice.source == MANUAL_PRICE_SOURCE).desc(),
+            CardPrice.fetched_at.desc(),
+        ),
     ).label("rn")
     subq = (
         select(CardPrice, rn)
-        .where(CardPrice.catalog_item_id.in_(catalog_item_ids), CardPrice.source == EBAY_PRICE_SOURCE)
+        .where(CardPrice.catalog_item_id.in_(catalog_item_ids),
+               CardPrice.source.in_((EBAY_PRICE_SOURCE, MANUAL_PRICE_SOURCE)))
         .subquery()
     )
     latest_price = aliased(CardPrice, subq)
@@ -278,7 +310,14 @@ def _edit_controls(set_id: str, card: CatalogCard, variant: CardVariant,
         "<form class='card-edit' method='post' action='/inventory/adjust'>"
         f"{common}"
         "<button name='action' value='dec' aria-label='One fewer'>&minus;</button>"
-        f"<span class='qty'>{quantity}</span>"
+        # Typed quantity. No `action` is sent when it's submitted this way
+        # (requestSubmit() has no submitter), which /adjust reads as "set to
+        # `quantity`". Enter only blurs the field: left alone, a number input's
+        # implicit submission would press the first submit button, i.e. "dec".
+        f"<input class='qty-input' type='number' name='quantity' min='0' max='9999' step='1' "
+        f"inputmode='numeric' value='{quantity}' aria-label='Quantity' "
+        "onchange=\"this.form.requestSubmit()\" "
+        "onkeydown=\"if(event.key==='Enter'){event.preventDefault();this.blur();}\">"
         "<button name='action' value='add' aria-label='One more'>+</button>"
         # onclick, not the form's own onsubmit -- this one form also holds
         # the +/- quantity buttons, which must never trigger a confirm
@@ -320,7 +359,8 @@ def _details_edit_html(set_id: str, card: CatalogCard, variant: CardVariant, hel
         f"<input type='hidden' name='card_id' value='{escape(card.id)}'>"
         f"<input type='hidden' name='variant' value='{escape(variant.value)}'>"
         f"<input type='hidden' name='back' value='{escape(back)}'>"
-        f"<label>Rarity<input name='rarity' value='{rarity_value}' placeholder='Unknown'></label>"
+        f"<label>Rarity<input name='rarity' value='{rarity_value}' placeholder='Unknown' list='rarity-options'></label>"
+        "<datalist id='rarity-options'>" + "".join(f"<option value='{escape(r)}'>" for r in ONE_PIECE_RARITIES) + "</datalist>"
         f"<label>Cost<input name='cost' type='number' step='0.01' min='0' value='{cost_value}' "
         "placeholder='no price on file'></label>"
         + condition_field
@@ -402,9 +442,8 @@ def inventory_sets(
     for item in items:
         # same fallback as the per-card grid, so set totals and card tiles
         # can't disagree about what a holding is worth
-        line = _aud(prices.get((item.catalog_item_id, item.variant)), item.quantity)
-        if line is None:
-            line = _aud(ebay_prices.get(item.catalog_item_id), item.quantity)
+        unit, _ = _choose_price(prices.get((item.catalog_item_id, item.variant)), ebay_prices.get(item.catalog_item_id))
+        line = None if unit is None else unit * item.quantity
         if line:
             set_id = set_of[item.catalog_item_id]
             value_by_set[set_id] = value_by_set.get(set_id, 0.0) + line
@@ -539,6 +578,18 @@ def _category_landing(session: Session, owned, sets: dict, value_by_set: dict) -
         f"<div class='set-meta'>Total Value: <strong>{_money(all_value if all_value else None)}</strong></div>"
         "</a>"
     ]
+    placed_count = session.scalar(select(func.count(InventoryPlacement.id))) or 0
+    unresolved_count = session.scalar(
+        select(func.count(InventoryPlacement.id)).where(InventoryPlacement.inventory_item_id.is_(None))
+    ) or 0
+    tiles.append(
+        "<a class='set-tile' href='/inventory/storage'>"
+        "<div class='set-art'><span class='set-fallback'>Tray Map</span></div>"
+        "<div class='set-name'>Card storage</div>"
+        f"<div class='set-meta'>{placed_count} photographed card(s)</div>"
+        f"<div class='set-meta'>{unresolved_count} awaiting identity/link</div>"
+        "</a>"
+    )
     for key, info in GAME_GROUPS.items():
         rows = [r for r in owned if sets.get(r.set_id) and sets[r.set_id].game in info["games"]]
         set_count = len(rows)
@@ -607,6 +658,78 @@ def _category_landing(session: Session, owned, sets: dict, value_by_set: dict) -
     return HTMLResponse(page("EzBay — Inventory", body))
 
 
+# --- stable physical tray map ---------------------------------------------
+
+@router.get("/storage", response_class=HTMLResponse)
+def inventory_storage_map(
+    q: str = Query(""),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    rows = session.execute(
+        select(InventoryPlacement, StorageLocation, ListingPhotoPair)
+        .join(StorageLocation, StorageLocation.id == InventoryPlacement.storage_location_id)
+        .join(ListingPhotoPair, ListingPhotoPair.id == InventoryPlacement.listing_photo_pair_id)
+        .order_by(StorageLocation.name)
+    ).all()
+    needle = q.strip().casefold()
+    cards = []
+    unresolved = 0
+    awaiting_putaway = 0
+    for placement, location, pair in rows:
+        facts = pair.extracted or {}
+        inventory = session.get(InventoryItem, placement.inventory_item_id) if placement.inventory_item_id else None
+        item = session.get(CatalogItem, inventory.catalog_item_id) if inventory else None
+        tcg = session.get(TcgCard, inventory.catalog_item_id) if inventory else None
+        card_set = session.get(CardSet, tcg.set_id) if tcg and tcg.set_id else None
+        name = item.name if item else str(facts.get("character") or "Identity needs review")
+        number = (tcg.number if tcg else None) or str(facts.get("card_number") or "")
+        set_name = (card_set.name if card_set else None) or str(facts.get("set_name") or "")
+        if placement.confirmed_at:
+            status = "Located" if inventory else "Stored · identity needs review"
+        else:
+            status = "Reserved · awaiting put-away"
+            awaiting_putaway += 1
+        if not inventory:
+            unresolved += 1
+        haystack = " ".join((location.name, name, number, set_name, status)).casefold()
+        if needle and needle not in haystack:
+            continue
+        image = (
+            f"/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/front?thumb=1"
+        )
+        cards.append(
+            "<article class='storage-card'>"
+            f"<img src='{image}' loading='lazy' decoding='async' alt=''>"
+            "<div><strong class='slot-code'>" + escape(location.name) + "</strong>"
+            f"<h2>{escape(name)}</h2>"
+            f"<p>{escape(set_name)}{' · #' + escape(number) if number else ''}</p>"
+            f"<span class='storage-state {'ok' if placement.confirmed_at else 'warn'}'>{status}</span> "
+            f"<a href='/ebay-listing-bulk-photos/{pair.batch_id}'>Open scan batch</a></div>"
+            "</article>"
+        )
+    empty = (
+        "No storage slots match that search."
+        if needle else
+        "No tray slots have been reserved yet. Start a front/back photo batch and enter a tray code."
+    )
+    body = (
+        brand_header("Card storage")
+        + f"<p class='subtitle'>{len(rows)} physical card(s) mapped · {awaiting_putaway} awaiting put-away · {unresolved} awaiting identity/link. "
+          "Slot codes never change, so adding cards later will not make you reorganise the tray.</p>"
+        + "<form class='storage-search' method='get'><input name='q' value='" + escape(q) + "' "
+          "placeholder='Search card, set, number or slot'><button>Find card</button></form>"
+        + "<p><a class='btn small' href='/ebay-listing-bulk-photos'>Photograph and store cards</a> "
+          "<a class='btn small ghost' href='/inventory'>Back to inventory</a></p>"
+        + ("<section class='storage-grid'>" + "".join(cards) + "</section>" if cards else f"<div class='panel'>{empty}</div>")
+        + """<style>
+.storage-search{display:flex;gap:8px;margin:14px 0}.storage-search input{flex:1}.storage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}.storage-card{display:grid;grid-template-columns:86px 1fr;gap:12px;padding:10px;border:1px solid var(--panel-border);border-radius:10px;background:var(--panel)}.storage-card img{width:86px;aspect-ratio:3/4;object-fit:contain;background:#fff;border-radius:6px}.storage-card h2{font-size:16px;margin:5px 0}.storage-card p{font-size:12px;color:var(--text-dim);margin:0 0 7px}.slot-code{font-size:19px}.storage-state{font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px}.storage-state.ok{background:rgba(46,160,90,.14)}.storage-state.warn{background:rgba(225,160,35,.16)}
+@media(max-width:520px){.storage-grid{grid-template-columns:1fr}.storage-search{align-items:stretch}.storage-card{grid-template-columns:74px 1fr}.storage-card img{width:74px}}
+</style>"""
+    )
+    return HTMLResponse(page("EzBay — Card storage", body))
+
+
 # --- every owned card across every set ------------------------------------
 
 @router.get("/cards", response_class=HTMLResponse)
@@ -667,16 +790,17 @@ def inventory_all_cards(
         card = cards[card_id]
         card_set = sets.get(card.set_id)
         quantity = sum(item.quantity for item in held)
-        variant_price = _aud(prices.get((card.id, printing)))
+        price, from_ebay = _choose_price(prices.get((card.id, printing)), ebay_prices.get(card.id))
         ebay_price = _aud(ebay_prices.get(card.id))
         rows.append({
             "card": card,
             "variant": printing,
             "quantity": quantity,
             "held": held,
-            "price": variant_price if variant_price is not None else ebay_price,
-            "from_ebay": variant_price is None and ebay_price is not None,
+            "price": price,
+            "from_ebay": from_ebay,
             "ebay_price": ebay_price,
+            "fallback_price": ebay_prices.get(card.id),
             "set_name": card_set.name if card_set else card.set_id,
             "card_set": card_set,
             "added_at": max((item.added_at for item in held if item.added_at), default=None),
@@ -717,9 +841,9 @@ def inventory_all_cards(
         ).lower()
         price_block = (
             f"<span class='card-price'>{_money(row['price'])}</span>"
-            + ("<span class='price-src'>eBay</span>" if row["from_ebay"] else "")
+            + (f"<span class='price-src'>{_src_label(row['fallback_price'])}</span>" if row["from_ebay"] else "")
             + (
-                f"<span class='card-ebay'>eBay low {_money(row['ebay_price'])}</span>"
+                f"<span class='card-ebay'>{'eBay low' if _src_label(row['fallback_price']) == 'eBay' else 'Manual'} {_money(row['ebay_price'])}</span>"
                 if row["ebay_price"] is not None and not row["from_ebay"] else ""
             )
         )
@@ -729,7 +853,7 @@ def inventory_all_cards(
             "<div class='card-info'>"
             f"<div class='card-name'>{escape(card.name)}</div>"
             f"<div class='card-set-link'><a href='/inventory/set/{escape(card.set_id)}'>{escape(row['set_name'])}</a></div>"
-            f"<div class='card-sub'>{escape(number)} &bull; {escape(card.rarity or 'Unknown')} "
+            f"<div class='card-sub'>{escape(number)} &bull; {escape(display_rarity(card.rarity, card.name))} "
             f"&bull; {escape(printing.value.replace('_', ' ').title())}</div>"
             f"<div class='card-price-row'>{price_block}<span class='card-qty'>Qty: {quantity}</span></div>"
             "</div>"
@@ -908,13 +1032,14 @@ def inventory_set(
             # nothing for a card we do have a market signal for. Which one
             # is being shown is always labelled, so a variant-agnostic
             # number is never mistaken for a variant-specific one.
-            variant_price = _aud(prices.get((card.id, variant)))
+            price, from_ebay = _choose_price(prices.get((card.id, variant)), ebay_prices.get(card.id))
             ebay_price = _aud(ebay_prices.get(card.id))
             rows.append({
                 "card": card, "variant": variant, "quantity": quantity, "held": held,
-                "price": variant_price if variant_price is not None else ebay_price,
-                "from_ebay": variant_price is None and ebay_price is not None,
+                "price": price,
+                "from_ebay": from_ebay,
                 "ebay_price": ebay_price,
+                "fallback_price": ebay_prices.get(card.id),
                 "added_at": max((item.added_at for item in held if item.added_at), default=None),
             })
 
@@ -959,9 +1084,9 @@ def inventory_set(
 
         price_block = (
             f"<span class='card-price'>{_money(row['price'])}</span>"
-            + ("<span class='price-src'>eBay</span>" if row["from_ebay"] else "")
+            + (f"<span class='price-src'>{_src_label(row['fallback_price'])}</span>" if row["from_ebay"] else "")
             + (
-                f"<span class='card-ebay'>eBay low {_money(row['ebay_price'])}</span>"
+                f"<span class='card-ebay'>{'eBay low' if _src_label(row['fallback_price']) == 'eBay' else 'Manual'} {_money(row['ebay_price'])}</span>"
                 if row["ebay_price"] is not None and not row["from_ebay"] else ""
             )
         )
@@ -971,7 +1096,7 @@ def inventory_set(
             f"{face_block}"
             "<div class='card-info'>"
             f"<div class='card-name'>{escape(card.name)}</div>"
-            f"<div class='card-sub'>#{escape(card.number)}/{printed} &bull; {escape(card.rarity or 'Unknown')} "
+            f"<div class='card-sub'>#{escape(card.number)}/{printed} &bull; {escape(display_rarity(card.rarity, card.name))} "
             f"&bull; {escape(variant.value.replace('_', ' ').title())}</div>"
             f"<div class='card-price-row'>{price_block}"
             f"<span class='card-qty{'' if quantity else ' zero'}'>Qty: {quantity}</span></div>"
@@ -1037,7 +1162,8 @@ def _sort_number(number: str) -> tuple[int, str]:
 def inventory_adjust(
     card_id: str = Form(...),
     variant: str = Form(...),
-    action: str = Form(...),
+    action: str = Form(""),
+    quantity: str = Form(""),
     back: str = Form("/inventory"),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -1069,7 +1195,29 @@ def inventory_adjust(
         )
     item = held[0] if held else None
 
-    if action == "add":
+    if not action and quantity.strip():
+        action = "set"
+
+    if action == "set":
+        try:
+            target = int(quantity.strip())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"quantity must be a whole number, got {quantity!r}")
+        if not 0 <= target <= MAX_QUANTITY:
+            raise HTTPException(status_code=400, detail=f"quantity must be between 0 and {MAX_QUANTITY}")
+        if target == 0:
+            if item is not None:
+                session.delete(item)
+            outcome, quantity = "removed", 0
+        elif item is None:
+            item = InventoryItem(card_id=card.id, variant=printing, condition=DEFAULT_CONDITION, quantity=target,
+                                 catalog_item_id=_catalog_item_id_for(session, card))
+            session.add(item)
+            outcome, quantity = "created", target
+        else:
+            item.quantity = target
+            outcome, quantity = "set", target
+    elif action == "add":
         if item is None:
             # catalog_item_id, not just card_id: this page's own totals are
             # computed from it, so a row added here without it would be
@@ -1146,7 +1294,7 @@ def inventory_edit_details(
 
     changed: dict[str, object] = {}
 
-    rarity = rarity.strip()
+    rarity = normalize_star(rarity) or ""
     if rarity and card.rarity != rarity:
         changed["rarity"] = {"from": card.rarity, "to": rarity}
         card.rarity = rarity
@@ -1326,6 +1474,8 @@ a.set-tile:hover .set-art{transform:translateY(-2px);box-shadow:0 8px 20px rgba(
 .face-tag{position:absolute;left:3px;bottom:3px;background:rgba(20,24,29,.7);color:#fff;
   font-size:8.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;
   padding:1px 5px;border-radius:999px;pointer-events:none}
+.qty-input{width:3.2em;text-align:center;font:inherit;font-weight:600;padding:.25em .1em;border:1px solid var(--border,#ccc);border-radius:6px;background:transparent;color:inherit;-moz-appearance:textfield}
+.qty-input::-webkit-outer-spin-button,.qty-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .qty-badge{position:absolute;top:3px;right:3px;background:var(--accent);color:#fff;
   font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px}
 

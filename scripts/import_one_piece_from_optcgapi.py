@@ -45,18 +45,51 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 import httpx
+from sqlalchemy import select
 
 from automation_control.database import SessionLocal
-from automation_control.models import CardPrice, CatalogItem, CatalogItemType, TcgCard
+from automation_control.models import CardPrice, CardSet, CatalogItem, CatalogItemType, TcgCard
 
 API_BASE = "https://optcgapi.com/api"
 GAME = "one_piece"
 CARD_SET_ID_RE = re.compile(r"^(.+)-(\d+)$")
+SET_ID_ALIASES = {
+    "EB-03": "op-24545",
+    "OP14-EB04": "op-24537",
+}
 
 
 def _slug(*parts: str) -> str:
     joined = "-".join(p for p in parts if p)
     return re.sub(r"[^a-z0-9]+", "-", joined.lower()).strip("-")
+
+
+def _set_key(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").casefold())
+
+
+def resolve_card_set(session, external_set_id: str, set_name: str) -> CardSet:
+    alias_id = SET_ID_ALIASES.get(external_set_id)
+    if alias_id:
+        aliased = session.get(CardSet, alias_id)
+        if aliased:
+            return aliased
+
+    card_sets = session.scalars(select(CardSet).where(CardSet.game == GAME)).all()
+    code_matches = [card_set for card_set in card_sets if _set_key(card_set.code) == _set_key(external_set_id)]
+    if len(code_matches) == 1:
+        return code_matches[0]
+    name_matches = [card_set for card_set in card_sets if _set_key(card_set.name) == _set_key(set_name)]
+    if len(name_matches) == 1:
+        return name_matches[0]
+
+    set_id = f"optcg-{_slug(external_set_id)}"[:32]
+    card_set = session.get(CardSet, set_id)
+    if card_set is None:
+        card_set = CardSet(id=set_id, name=set_name, code=external_set_id, game=GAME)
+        session.add(card_set)
+        session.flush()
+    return card_set
 
 
 def _fetch_all_sets(client: httpx.Client) -> list[dict]:
@@ -140,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         with SessionLocal() as session:
             for i, set_row in enumerate(sets):
                 set_id, set_name = set_row["set_id"], set_row["set_name"]
+                card_set = resolve_card_set(session, set_id, set_name) if not args.dry_run else None
                 # A fresh connection per set, not the one shared for the
                 # whole sweep above: reusing one long-lived connection
                 # across ~20 sequential requests was observed to come back
@@ -201,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
                         session.add(tcg_card)
                     tcg_card.game = GAME
                     if overwrite:
-                        tcg_card.set_id = set_id
+                        tcg_card.set_id = card_set.id
                         tcg_card.set_code = set_code
                         tcg_card.character = card["card_name"]
                         tcg_card.rarity = card.get("rarity")

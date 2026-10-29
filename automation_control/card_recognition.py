@@ -3,7 +3,7 @@ import mimetypes
 from pathlib import Path
 
 from anthropic import APIError, Anthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 MODEL = "claude-opus-5"
 DEFAULT_GAME = "Pokemon TCG"
@@ -17,6 +17,14 @@ _BBOX_INSTRUCTIONS = (
     "that clips an edge. Also return rotation_degrees: how many degrees "
     "clockwise the cropped box must be rotated so the card reads upright "
     "(0, 90, 180, or 270 -- 0 if it's already upright)."
+)
+
+_RARITY_STAR_INSTRUCTIONS = (
+    "For One Piece cards, report the rarity exactly as printed including a "
+    "star if one follows it (for example \"SEC\u2605\", \"SR\u2605\", \"R\u2605\"): "
+    "a star marks an alternate-art (parallel) print, which is a different and "
+    "usually far pricier card than the same code without one. Do not add a "
+    "star that is not printed, and do not drop one that is."
 )
 
 _FOIL_INSTRUCTIONS = (
@@ -61,7 +69,7 @@ def _extraction_prompt_front_and_back(game: str) -> str:
         "if slabbed). If a field for a given card is not clearly legible, list "
         "its name in that card's unreadable_fields rather than guessing a value "
         "for it. If no card is clearly identifiable in the photo, return an "
-        "empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS
+        "empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS + " " + _RARITY_STAR_INSTRUCTIONS
     )
 
 
@@ -78,7 +86,7 @@ def _extraction_prompt_front_only(game: str) -> str:
         "number isn't visible from the front alone. If a field for a given card "
         "is not clearly legible, list its name in that card's unreadable_fields "
         "rather than guessing a value for it. If no card is clearly identifiable "
-        "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS
+        "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS + " " + _RARITY_STAR_INSTRUCTIONS
     )
 
 
@@ -97,6 +105,54 @@ class ExtractedCard(BaseModel):
 
 class ExtractedCards(BaseModel):
     cards: list[ExtractedCard]
+
+
+class EbayListingCopySuggestion(BaseModel):
+    """Reviewable copy only; the caller decides whether it is ever saved."""
+
+    title: str
+    description: str
+
+
+def suggest_ebay_listing_copy(
+    photo_paths: list[Path], *, api_key: str, known_facts: dict[str, str],
+) -> EbayListingCopySuggestion:
+    """Suggest buyer-facing eBay copy from owned-card photos and known facts.
+
+    Catalogue values supplied by EzBay are authoritative. The model may
+    describe visible condition cues, but is explicitly forbidden from
+    changing identity, guessing a finish, or promising a grade.
+    """
+    readable = [path for path in photo_paths if path.is_file()][:4]
+    if not readable:
+        raise RecognitionError("at least one local card photo is required for an AI suggestion")
+    facts = "\n".join(f"- {key}: {value}" for key, value in known_facts.items() if value)
+    prompt = (
+        "Create professional copy for one eBay Australia trading-card listing. "
+        "Return a title and a plain-text description. The title must be 65-80 "
+        "characters, search-friendly, and must not contain hype, emojis, price, "
+        "postage, or unsupported claims. The description should be concise and "
+        "mobile-friendly, identify the exact card, state the supplied condition, "
+        "tell the buyer that the photos show the actual card, and mention careful "
+        "packaging. Treat the facts below as authoritative even if a photo is hard "
+        "to read. Never invent a set, number, rarity, language, foil treatment, "
+        "grade, autograph, print run, or guarantee. Do not call a raw card mint. "
+        "Use the photos only for conservative visible-condition wording.\n\n"
+        f"AUTHORITATIVE FACTS:\n{facts}"
+    )
+    response = _parse_message(
+        api_key,
+        model=MODEL,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": [
+            *[_image_block(path) for path in readable],
+            {"type": "text", "text": prompt},
+        ]}],
+        output_format=EbayListingCopySuggestion,
+    )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return an eBay title and description")
+    return response.parsed_output
 
 
 class ExtractedCardDetailsScreenshot(BaseModel):
@@ -200,7 +256,13 @@ _COLLECTIBLE_PROMPT = (
     "is_secret (true only if this is visibly a rare/chase/secret figure -- "
     "false by default, never guess true from rarity alone), and "
     "blind_box_series (the specific numbered box line this came from, if "
-    "identifiable from packaging in the photo). If a field isn't clearly "
+    "identifiable from packaging in the photo), figure_type (regular, secret, "
+    "Robby, or unknown), generation when it can be distinguished, and up to "
+    "three candidate_matches when similar-looking variants remain possible. "
+    "Return identity_confidence as high, medium, or low. Assess authenticity "
+    "only as genuine-looking, unverified, or concerning; a photo can never "
+    "guarantee authenticity, so default to unverified unless visible evidence "
+    "supports a more specific assessment. If a field isn't clearly "
     "identifiable, list its name in that figure's unreadable_fields rather "
     "than guessing a value for it. If no collectible figure is clearly "
     "identifiable in the photo, return an empty list. "
@@ -222,6 +284,11 @@ class ExtractedCollectible(BaseModel):
     blind_box_series: str
     unreadable_fields: list[str]
     bounding_box: list[float] | None = None
+    figure_type: str = "unknown"
+    generation: str = ""
+    candidate_matches: list[str] = Field(default_factory=list)
+    identity_confidence: str = "low"
+    authenticity_assessment: str = "unverified"
 
 
 class ExtractedCollectibles(BaseModel):

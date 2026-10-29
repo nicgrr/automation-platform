@@ -36,6 +36,14 @@ PROVIDER_DEFINITIONS = (
         (ProviderCapability.ACTIVE_LISTINGS, ProviderCapability.PRODUCT_LOOKUP, ProviderCapability.QUOTA),
     ),
     ProviderDefinition(
+        "depop", "Depop", (ProviderCapability.ACTIVE_LISTINGS,),
+        commercial_use_status="manual_only",
+    ),
+    ProviderDefinition(
+        "vinted", "Vinted", (ProviderCapability.ACTIVE_LISTINGS,),
+        commercial_use_status="manual_only",
+    ),
+    ProviderDefinition(
         "pokemonpricetracker", "Pokemon Price Tracker",
         (ProviderCapability.BULK_CURRENT, ProviderCapability.SOLD_LISTINGS, ProviderCapability.HISTORY),
     ),

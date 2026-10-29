@@ -29,9 +29,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     with SessionLocal() as session:
-        already_promoted = set(session.scalars(
+        already_recorded = set(session.scalars(
             select(CapturePromotion.captured_card_id).where(
-                CapturePromotion.status == CapturePromotionStatus.PROMOTED
+                CapturePromotion.status.in_((
+                    CapturePromotionStatus.PROMOTED,
+                    CapturePromotionStatus.REVISION_REQUIRED,
+                ))
             )
         ))
         cards = [
@@ -39,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
                 select(CapturedCard).where(CapturedCard.pricing_status == PricingStatus.PRICE_APPROVED)
                 .order_by(CapturedCard.captured_at)
             )
-            if card.id not in already_promoted
+            if card.id not in already_recorded
         ][:args.limit]
         print(f"approved captures awaiting handoff: {len(cards)}")
         if not args.apply:

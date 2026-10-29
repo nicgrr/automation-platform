@@ -22,12 +22,40 @@ from .capture_workflow import (
 from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card
 from .images import serve_image
-from .models import CaptureBatch, CapturedCard, CardCaptureStatus
+from .models import (
+    CaptureBatch, CapturedCard, CardCaptureStatus, CardVariant,
+    CapturePromotion, CapturePromotionStatus,
+)
 from .ui import brand_header, page, photo_field
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
 FIELDS = ["character", "set_name", "card_number", "rarity", "language", "graded"]
+CONDITIONS = ("Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged")
+
+
+def _review_variant_picker(selected: CardVariant | None) -> str:
+    labels = {
+        CardVariant.NORMAL: "Normal",
+        CardVariant.HOLO: "Holo",
+        CardVariant.REVERSE_HOLO: "Reverse Holo",
+        CardVariant.POKEBALL_PATTERN: "Poké Ball pattern",
+        CardVariant.MASTERBALL_PATTERN: "Master Ball pattern",
+    }
+    options = "<option value=''>Choose printing…</option>" + "".join(
+        f"<option value='{value.value}'{' selected' if value == selected else ''}>{label}</option>"
+        for value, label in labels.items()
+    )
+    return f"<label>Printing <select name='variant' required>{options}</select></label>"
+
+
+def _review_condition_picker(selected: str | None) -> str:
+    current = selected or "Near Mint"
+    options = "".join(
+        f"<option value='{escape(value)}'{' selected' if value == current else ''}>{escape(value)}</option>"
+        for value in CONDITIONS
+    )
+    return f"<label>Condition <select name='condition' required>{options}</select></label>"
 
 
 def _correlation_id() -> str:
@@ -167,7 +195,12 @@ def _run_capture_batch(batch_id: str, saved_photos: list[tuple[Path, Path | None
 
 
 @router.get("/capture", response_class=HTMLResponse)
-def capture_page(user: str = Depends(require_dashboard_user)) -> str:
+def capture_page(
+    request: Request,
+    user: str = Depends(require_dashboard_user),
+):
+    if request.app.state.settings.card_bulk_upload_only:
+        return RedirectResponse("/cards/capture/bulk", status_code=303)
     body = (
         brand_header("Capture a card")
         + "<div class='panel'><form method='post' action='/cards/capture' enctype='multipart/form-data'>"
@@ -183,12 +216,16 @@ def capture_page(user: str = Depends(require_dashboard_user)) -> str:
 @router.post("/capture")
 async def capture_submit(
     request: Request,
-    front: UploadFile = File(...),
+    front: UploadFile | None = File(None),
     back: UploadFile | None = File(None),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ):
     settings = request.app.state.settings
+    if settings.card_bulk_upload_only:
+        return RedirectResponse("/cards/capture/bulk", status_code=303)
+    if not _has_content(front):
+        raise HTTPException(status_code=400, detail="front photo is required")
     if not settings.anthropic_api_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="card recognition is not configured (ANTHROPIC_API_KEY missing)")
 
@@ -275,7 +312,7 @@ def review_list(user: str = Depends(require_dashboard_user), session: Session = 
         brand_header("Pending review")
         + f"<div class='panel'><h2>Pending review ({len(cards)})</h2><ul class='events'>{rows}</ul></div>"
         + ("<p><a class='btn' href='" + f"/cards/review/{cards[0].id}" + "'>Start reviewing</a></p>" if cards else "")
-        + "<p><a href='/cards/capture'>Capture another card</a> &nbsp; <a href='/cards/capture/bulk'>Bulk upload</a></p>"
+        + "<p><a href='/cards/capture/bulk'>Upload another card batch</a></p>"
     )
     return page("EzBay — Review queue", body)
 
@@ -303,6 +340,8 @@ def review_form(card_id: str, user: str = Depends(require_dashboard_user), sessi
         + f"<p><img src='/cards/image/{card_id}/front' style='max-width:280px;border-radius:8px;margin-right:12px'>"
         + back_img + "</p>"
         + f"<form method='post' action='/cards/review/{card_id}'>{field_inputs}"
+        + _review_variant_picker(card.variant)
+        + _review_condition_picker(card.condition)
         + "<div style='display:flex;gap:12px'>"
         + "<button name='action' value='approve' style='background:linear-gradient(120deg,var(--success),var(--accent))'>Approve</button>"
         + "<button name='action' value='reject' style='background:var(--danger);color:#fff'>Disapprove</button>"
@@ -322,6 +361,8 @@ def review_submit(
     rarity: str = Form(""),
     language: str = Form(""),
     graded: str = Form(""),
+    variant: str = Form(""),
+    condition: str = Form("Near Mint"),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ):
@@ -333,12 +374,20 @@ def review_submit(
         card.status = CardCaptureStatus.REJECTED
         audit_action = "card.reject"
     else:
+        try:
+            selected_variant = CardVariant(variant)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="choose the physical printing") from None
+        if condition not in CONDITIONS:
+            raise HTTPException(status_code=400, detail="unknown card condition")
         card.character = character
         card.set_name = set_name
         card.card_number = card_number
         card.rarity = rarity
         card.language = language
         card.graded = graded
+        card.variant = selected_variant
+        card.condition = condition
         card.status = CardCaptureStatus.REVIEWED
         audit_action = "card.review"
 
@@ -346,6 +395,18 @@ def review_submit(
     card.reviewed_by = user
     session.commit()
     record_event(session, actor_type="user", actor_id=user, action=audit_action, resource_type="captured_card", resource_id=card_id, outcome="success", correlation_id=_correlation_id(), details={})
+
+    # Identity corrections for a blocked listing handoff are made on this
+    # form.  Return straight to pricing so the corrected card can be retried
+    # instead of dropping the reviewer on an empty pending-capture list.
+    promotion = session.scalar(
+        select(CapturePromotion).where(
+            CapturePromotion.captured_card_id == card_id,
+            CapturePromotion.status == CapturePromotionStatus.NEEDS_REVIEW,
+        )
+    )
+    if action != "reject" and promotion is not None:
+        return RedirectResponse(f"/cards/pricing/{card_id}", status_code=303)
 
     next_id = _next_pending_card_id(session, card_id)
     if next_id:

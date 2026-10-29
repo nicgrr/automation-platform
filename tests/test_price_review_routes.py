@@ -1,9 +1,11 @@
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -12,7 +14,10 @@ from automation_control.adapters.pokemontcg import PriceLookupError, PriceNotFou
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
-from automation_control.models import AuditEvent, CapturedCard, CardCaptureStatus, PricingStatus
+from automation_control.models import (AuditEvent, CardPrice, CapturedCard, CardCaptureStatus,
+                                       CardVariant, CapturePromotion, CatalogItem, CatalogItemType,
+                                       EbayListingLink, EbayListingLinkStatus, CapturePromotionStatus,
+                                       PricingStatus, ShopListing, ShopListingStatus)
 from automation_control.price_review import (_run_price_check, _try_start_price_check,
                                             _finish_price_check, needs_a_person)
 
@@ -84,7 +89,9 @@ def client(session: Session, price_check_session_local, tmp_path):
 
 
 def _reviewed_card(**overrides) -> CapturedCard:
-    defaults = dict(front_image_path="f", character="Flareon", set_name="Promo", card_number="167", status=CardCaptureStatus.REVIEWED, ai_raw_response={})
+    defaults = dict(front_image_path="f", character="Flareon", set_name="Promo", card_number="167",
+                    variant=CardVariant.NORMAL, condition="Near Mint",
+                    status=CardCaptureStatus.REVIEWED, ai_raw_response={})
     defaults.update(overrides)
     return CapturedCard(**defaults)
 
@@ -367,6 +374,44 @@ def test_price_review_approve_sets_approved_price(client, session):
     assert refreshed.bundle_id is None  # no bundle members selected
 
 
+def test_price_review_requires_a_physical_printing(client, session):
+    card = _reviewed_card(variant=None, pricing_status=PricingStatus.PENDING_PRICE_REVIEW)
+    session.add(card)
+    session.commit()
+
+    resp = client.post(
+        f"/cards/pricing/{card.id}",
+        data={"action": "approve", "price": "15.00"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 400
+    assert "physical printing" in resp.text
+
+
+def test_price_review_edits_identity_printing_and_condition_together(client, session):
+    card = _reviewed_card(pricing_status=PricingStatus.PENDING_PRICE_REVIEW)
+    session.add(card)
+    session.commit()
+
+    client.post(
+        f"/cards/pricing/{card.id}",
+        data={
+            "action": "approve", "price": "9.50", "character": "Terrakion EX",
+            "set_name": "Dragons Exalted", "card_number": "71/124", "rarity": "Rare Holo EX",
+            "language": "English", "variant": "holo", "condition": "Lightly Played",
+        },
+        follow_redirects=False,
+    )
+
+    session.expire_all()
+    refreshed = session.get(CapturedCard, card.id)
+    assert refreshed.character == "Terrakion EX"
+    assert refreshed.card_number == "71/124"
+    assert refreshed.variant == CardVariant.HOLO
+    assert refreshed.condition == "Lightly Played"
+
+
 def test_price_review_reject_does_not_set_a_price(client, session):
     card = _reviewed_card(pricing_status=PricingStatus.PENDING_PRICE_REVIEW, suggested_price=Decimal("12.50"))
     session.add(card)
@@ -456,6 +501,98 @@ def test_approved_cards_appear_in_their_own_section(client, session):
     assert "Snorlax" in page
     assert "AUD $8.00" in page
     assert f"/cards/pricing/{card.id}" in page
+
+
+def test_successful_handoff_is_visible_as_ready_for_bulk_upload(client, session):
+    card = _reviewed_card(pricing_status=PricingStatus.PRICE_APPROVED,
+                          approved_price=Decimal("8.00"))
+    session.add(card)
+    session.flush()
+    session.add(CapturePromotion(
+        captured_card_id=card.id, status=CapturePromotionStatus.PROMOTED,
+    ))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Ready in Bulk Upload (1)" in page
+    assert "Approved, not yet listed (0)" in page
+    assert "Open Bulk Upload" in page
+
+
+def test_stock_revision_can_be_explicitly_marked_complete(client, session):
+    card = _reviewed_card(pricing_status=PricingStatus.PRICE_APPROVED,
+                          approved_price=Decimal("8.00"))
+    session.add(card)
+    session.flush()
+    promotion = CapturePromotion(
+        captured_card_id=card.id,
+        status=CapturePromotionStatus.REVISION_REQUIRED,
+        shop_listing_id="shared-live-listing",
+        issue="Inventory recorded. Update the live eBay quantity to 2.",
+    )
+    second = _reviewed_card(character="Zapdos ex", card_number="049",
+                            pricing_status=PricingStatus.PRICE_APPROVED,
+                            approved_price=Decimal("8.00"))
+    session.add(second)
+    session.flush()
+    second_promotion = CapturePromotion(
+        captured_card_id=second.id,
+        status=CapturePromotionStatus.REVISION_REQUIRED,
+        shop_listing_id="shared-live-listing",
+        issue="Inventory recorded. Update the live eBay quantity to 3.",
+    )
+    session.add_all([promotion, second_promotion])
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+    assert "eBay stock updates required (1)" in page
+    assert "+2 copies" in page
+
+    response = client.post(
+        f"/cards/pricing/{card.id}/revision-complete", follow_redirects=False,
+    )
+    assert response.status_code == 303
+    session.expire_all()
+    assert session.get(CapturePromotion, promotion.id).status == CapturePromotionStatus.PROMOTED
+    assert session.get(CapturePromotion, second_promotion.id).status == CapturePromotionStatus.PROMOTED
+
+
+def test_shared_photo_can_be_recropped_without_destroying_the_original(client, session, tmp_path):
+    original_dir = app.state.settings.captured_cards_dir
+    root = tmp_path / "captured_cards"
+    root.mkdir()
+    source = root / "shared.jpg"
+    Image.new("RGB", (300, 100), "white").save(source)
+    app.state.settings.captured_cards_dir = str(root)
+    try:
+        card = _reviewed_card(front_image_path=str(source), pricing_status=PricingStatus.PRICE_APPROVED,
+                              approved_price=Decimal("8.00"))
+        session.add(card)
+        session.flush()
+        session.add(CapturePromotion(
+            captured_card_id=card.id, status=CapturePromotionStatus.NEEDS_REVIEW,
+            issue="This photo is shared and needs a card-specific crop.",
+        ))
+        session.commit()
+
+        page = client.get(f"/cards/pricing/{card.id}").text
+        assert "Drag a box around this card only" in page
+
+        response = client.post(
+            f"/cards/pricing/{card.id}/recrop",
+            data={"x0": "0.0", "y0": "0.0", "x1": "0.32", "y1": "1.0"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        session.expire_all()
+        refreshed = session.get(CapturedCard, card.id)
+        assert Path(refreshed.front_image_path).is_file()
+        assert refreshed.front_image_path != str(source)
+        assert source.is_file()
+        assert refreshed.ai_raw_response["manual_crop_source"] == str(source)
+    finally:
+        app.state.settings.captured_cards_dir = original_dir
 
 
 def test_reopening_an_approved_card_shows_its_current_price(client, session):
@@ -713,8 +850,8 @@ def test_a_crash_in_the_refresh_is_recorded_not_swallowed(client, session):
 
 
 def test_the_page_shows_the_ebay_signal_gap(client, session):
-    """ebay_active_low is what list_for_sale prices from, so a held card
-    without one is priced off a weaker source."""
+    """The low/median eBay import coverage is visible even though listing
+    creation now treats a lone cheap ask as a last-resort signal."""
     from automation_control.models import CardPrice, CardVariant
 
     _held_card(session, "xy11-1")
@@ -728,6 +865,32 @@ def test_the_page_shows_the_ebay_signal_gap(client, session):
     assert "eBay market signal" in page
     assert "1 held card has no eBay asking-price signal" in page
     assert "Refresh eBay prices" in page
+
+
+def test_pricing_page_shows_existing_live_listing_safety_holds(client, session):
+    session.add(CatalogItem(id="loki", item_type=CatalogItemType.TCG_CARD,
+                            name="Loki (Alternate Art)"))
+    session.add(ShopListing(
+        id="loki-listing", catalog_item_id="loki", title="Loki (Alternate Art) #OP17-119",
+        price=Decimal("36.36"), currency="AUD", quantity=2, status=ShopListingStatus.ACTIVE,
+    ))
+    session.add(CardPrice(
+        catalog_item_id="loki", source="ebay_active_median",
+        price=Decimal("90.00"), currency="AUD",
+    ))
+    session.add(EbayListingLink(
+        shop_listing_id="loki-listing", sku="loki-listing", marketplace_id="EBAY_AU",
+        ebay_listing_id="267813305719", status=EbayListingLinkStatus.ACTIVE,
+    ))
+    session.commit()
+
+    page = client.get("/cards/pricing").text
+
+    assert "Live eBay pricing safety review (1)" in page
+    assert "Loki (Alternate Art) #OP17-119" in page
+    assert "AUD $67.50" in page
+    assert "/shop-listings/loki-listing/edit" in page
+    assert "https://www.ebay.com.au/itm/267813305719" in page
 
 
 def test_refresh_ebay_runs_the_import_script(client, session):

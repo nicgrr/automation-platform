@@ -50,7 +50,7 @@ def run() -> dict[str, str]:
                     response = client.post(f"/suppliers/{supplier.id}/products", data={
                         "catalog_item_id": catalog.id, "cost": cost, "min_order_qty": "1",
                     }, follow_redirects=False)
-                    assert response.status_code == 303
+                    assert response.status_code == 303, response.text
                 products = session.scalars(select(SupplierProduct).order_by(SupplierProduct.cost)).all()
 
                 create = client.post("/purchase-lots", data={
@@ -63,12 +63,12 @@ def run() -> dict[str, str]:
                         "supplier_product_id": product.id, "market_value": market,
                         "quantity": quantity, "condition": "Sealed",
                     }, follow_redirects=False)
-                    assert response.status_code == 303
+                    assert response.status_code == 303, response.text
                 receipt = client.post(f"{lot_url}/status", data={
-                    "status": "purchased", "offered_price": "90",
+                    "status": "purchased", "offered_price": "90", "shipping_cost": "0",
                 }, follow_redirects=False)
                 repeated = client.post(f"{lot_url}/status", data={
-                    "status": "purchased", "offered_price": "90",
+                    "status": "purchased", "offered_price": "90", "shipping_cost": "0",
                 }, follow_redirects=False)
                 assert receipt.status_code == 303 and repeated.status_code == 409
 

@@ -288,6 +288,7 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
         for s in PurchaseLotStatus
     )
     offered_price_value = str(lot.offered_price) if lot.offered_price is not None else ""
+    shipping_cost_value = str(lot.shipping_cost) if lot.shipping_cost is not None else ""
     automated = lot.retailer_id is not None
     supplier_products = session.scalars(
         select(SupplierProduct).where(SupplierProduct.supplier_id == lot.supplier_id)
@@ -328,6 +329,8 @@ def purchase_lot_detail(lot_id: str, user: str = Depends(require_dashboard_user)
         "<p class='muted'>Selecting Purchased receives every line into inventory and permanently locks its cost allocation.</p>"
         f"<form method='post' action='/purchase-lots/{lot_id}/status' class='calc-form'>"
         f"<label>Final offered/purchase price<input name='offered_price' type='number' step='0.01' value='{offered_price_value}'></label>"
+        f"<label>Shipping paid<input name='shipping_cost' type='number' min='0' step='0.01' value='{shipping_cost_value}' "
+        "placeholder='Required; enter 0 for free pickup'></label>"
         f"<label>Status<select name='status'>{status_options}</select></label>"
         "<button type='submit'>Update status</button></form></div>"
     )
@@ -399,7 +402,7 @@ def add_purchase_lot_item(
 
 @router.post("/purchase-lots/{lot_id}/status")
 def update_purchase_lot_status(
-    lot_id: str, status: str = Form(...), offered_price: str = Form(""),
+    lot_id: str, status: str = Form(...), offered_price: str = Form(""), shipping_cost: str = Form(""),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     lot = session.get(PurchaseLot, lot_id)
@@ -415,6 +418,8 @@ def update_purchase_lot_status(
         raise HTTPException(status_code=400, detail="invalid purchase-lot status") from exc
     if offered_price.strip():
         lot.offered_price = _amount(offered_price, "offered price", positive=True)
+    if shipping_cost.strip():
+        lot.shipping_cost = _amount(shipping_cost, "shipping")
     if selected == PurchaseLotStatus.PURCHASED:
         lot.purchase_price = lot.offered_price or lot.asking_price
         try:

@@ -2,9 +2,10 @@ import re
 import threading
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html import escape
+from pathlib import Path
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
@@ -19,15 +20,25 @@ from .auth import require_dashboard_user
 from .classification import classify_pending_cards, load_pipeline_config
 from .scan_ingest.pricing import POKEMONPRICETRACKER_SOURCE_NAME
 from .database import SessionLocal, get_session
+from .image_processing import crop_card
 from .inventory_review import _latest_ebay_prices, _latest_prices
 from .models import (CapturePromotion, CapturePromotionStatus, CapturedCard, CardCaptureStatus,
-                     CardPrice, CardSet, CardVariant, CatalogItem, CatalogItemType, InventoryItem,
-                     InventoryStatus, PricingStatus, TcgCard)
+                     CardPrice, CardSet, CardVariant, CatalogItem, CatalogItemType,
+                     EbayExportItem, EbayExportItemStatus, EbayListingLink,
+                     EbayListingLinkStatus, InventoryItem, InventoryStatus,
+                     PricingStatus, ShopListing, ShopListingStatus, TcgCard)
+from .pricing_safety import (
+    MIN_MEANINGFUL_REFERENCE_AUD,
+    REFERENCE_MAX_AGE,
+    REFERENCE_SOURCES,
+    assess_listing_price,
+)
 from .ui import brand_header, page
 
 router = APIRouter(prefix="/cards/pricing", tags=["pricing"])
 
 PACING_DELAY_SECONDS = 1.0
+CARD_CONDITIONS = ("Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged")
 
 # Whether asking pokemontcg.io the same question again could plausibly give a
 # different answer. This is the difference between the two halves of the
@@ -374,6 +385,55 @@ def _next_price_review_card_id(session: Session, exclude_id: str) -> str | None:
     ).first()
 
 
+def _live_pricing_holds(session: Session):
+    """Existing eBay listings now caught by the forward-looking guard.
+
+    The broad SQL prefilter avoids running one price query for every live
+    card. The shared assessment remains the final decision, so this panel
+    cannot drift from the actual direct/bulk publish gate.
+    """
+    direct = {
+        link.shop_listing_id: link.ebay_listing_id
+        for link in session.scalars(
+            select(EbayListingLink).where(EbayListingLink.status == EbayListingLinkStatus.ACTIVE)
+        ).all()
+    }
+    bulk = {
+        item.sku: item.ebay_listing_id
+        for item in session.scalars(
+            select(EbayExportItem).where(EbayExportItem.status == EbayExportItemStatus.CONFIRMED)
+        ).all()
+        if item.ebay_listing_id
+    }
+    ebay_ids = {**bulk, **direct}
+    listing_ids = set(ebay_ids)
+    if not listing_ids:
+        return []
+
+    cutoff = datetime.now(UTC) - REFERENCE_MAX_AGE
+    # 1.5 is only a generous prefilter for USD/EUR observations. The actual
+    # comparison converts currency and applies the 0.75 review rule below.
+    candidates = session.scalars(
+        select(ShopListing)
+        .join(CardPrice, CardPrice.catalog_item_id == ShopListing.catalog_item_id)
+        .where(
+            ShopListing.id.in_(listing_ids),
+            ShopListing.status == ShopListingStatus.ACTIVE,
+            CardPrice.source.in_(tuple(REFERENCE_SOURCES)),
+            CardPrice.fetched_at >= cutoff,
+            CardPrice.price >= MIN_MEANINGFUL_REFERENCE_AUD,
+            ShopListing.price < CardPrice.price * Decimal("1.50"),
+        )
+        .distinct()
+    ).all()
+    held = []
+    for listing in candidates:
+        assessment = assess_listing_price(session, listing)
+        if assessment.blocked:
+            held.append((listing, assessment, ebay_ids.get(listing.id)))
+    return sorted(held, key=lambda row: row[0].price / row[1].review_floor)
+
+
 @router.get("", response_class=HTMLResponse)
 def pricing_list(request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
     classification = load_pipeline_config().classification
@@ -390,12 +450,25 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
                                    CapturedCard.id.not_in(handed_off))
         .order_by(CapturedCard.character)
     ).all()
+    ready_for_bulk = session.execute(
+        select(CapturedCard, CapturePromotion)
+        .join(CapturePromotion, CapturePromotion.captured_card_id == CapturedCard.id)
+        .where(CapturePromotion.status == CapturePromotionStatus.PROMOTED)
+        .order_by(CapturedCard.character)
+    ).all()
+    stock_revisions = session.execute(
+        select(CapturedCard, CapturePromotion)
+        .join(CapturePromotion, CapturePromotion.captured_card_id == CapturedCard.id)
+        .where(CapturePromotion.status == CapturePromotionStatus.REVISION_REQUIRED)
+        .order_by(CapturedCard.character)
+    ).all()
     handoff_issues = session.execute(
         select(CapturedCard, CapturePromotion)
         .join(CapturePromotion, CapturePromotion.captured_card_id == CapturedCard.id)
         .where(CapturePromotion.status == CapturePromotionStatus.NEEDS_REVIEW)
         .order_by(CapturedCard.character)
     ).all()
+    live_pricing_holds = _live_pricing_holds(session)
 
     pending_rows = "".join(
         f"<li><a href='/cards/pricing/{c.id}'>{escape(c.character or '?')} — {escape(c.set_name or '?')} #{escape(c.card_number or '?')} — AUD ${c.suggested_price}</a></li>"
@@ -503,19 +576,104 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
     approved_rows = "".join(_approved_row(c) for c in approved) or \
         "<li>Nothing approved yet.</li>"
 
+    ready_rows = "".join(
+        "<tr><td style='white-space:normal'>"
+        f"{escape(card.character or '?')} &mdash; {escape(card.set_name or '?')}"
+        + (f" #{escape(card.card_number)}" if card.card_number else "")
+        + "</td>"
+        f"<td>AUD ${card.approved_price}</td>"
+        f"<td><a href='/cards/pricing/{card.id}'>edit</a></td></tr>"
+        for card, _promotion in ready_for_bulk
+    )
+
+    def _latest_export_for_listing(listing_id: str | None) -> EbayExportItem | None:
+        if not listing_id:
+            return None
+        return session.scalar(
+            select(EbayExportItem)
+            .where(EbayExportItem.sku == listing_id)
+            .order_by(EbayExportItem.exported_at.desc(), EbayExportItem.id.desc())
+            .limit(1)
+        )
+
+    revision_groups: dict[str, list[tuple[CapturedCard, CapturePromotion]]] = {}
+    for card, promotion in stock_revisions:
+        key = promotion.shop_listing_id or promotion.id
+        revision_groups.setdefault(key, []).append((card, promotion))
+
+    revision_rows = ""
+    for entries in revision_groups.values():
+        card, promotion = entries[-1]
+        listing = session.get(ShopListing, promotion.shop_listing_id) if promotion.shop_listing_id else None
+        export = _latest_export_for_listing(promotion.shop_listing_id)
+        ebay_id = export.ebay_listing_id if export else None
+        ebay_link = (
+            f"<a href='https://www.ebay.com.au/itm/{escape(ebay_id)}' target='_blank' "
+            "rel='noopener'>open eBay listing</a> &middot; "
+            if ebay_id else ""
+        )
+        revision_rows += (
+            "<tr><td style='white-space:normal'>"
+            f"{escape(card.character or '?')} &mdash; {escape(card.set_name or '?')}"
+            + (f" #{escape(card.card_number)}" if card.card_number else "")
+            + (f" <span class='pill neutral'>+{len(entries)} copies</span>" if len(entries) > 1 else "")
+            + "</td>"
+            f"<td>{listing.quantity if listing else '?'} on hand</td>"
+            f"<td style='white-space:normal'>Set the live eBay quantity to "
+            f"{listing.quantity if listing else '?'}.</td>"
+            "<td>" + ebay_link
+            + f"<form method='post' action='/cards/pricing/{card.id}/revision-complete' "
+              "style='display:inline' onsubmit=\"return confirm('Confirm the live eBay quantity has been updated.');\">"
+              "<button class='ghost' style='padding:6px 10px'>Mark updated</button></form></td></tr>"
+        )
+
+    def _issue_action(issue: str | None) -> str:
+        lowered = (issue or "").lower()
+        if "crop" in lowered or "shared" in lowered:
+            return "crop photo &amp; retry"
+        if "printing" in lowered:
+            return "choose printing &amp; retry"
+        if "catalogue" in lowered or "identity" in lowered or "match" in lowered:
+            return "correct details &amp; retry"
+        return "review &amp; retry"
+
     issue_rows = "".join(
         "<tr><td style='white-space:normal'>"
         f"{escape(card.character or '?')} &mdash; {escape(card.set_name or '?')}"
         + (f" #{escape(card.card_number)}" if card.card_number else "")
         + "</td>"
         f"<td style='white-space:normal;color:var(--danger)'>{escape(promotion.issue or 'Needs review')}</td>"
-        f"<td><a href='/cards/pricing/{card.id}'>fix &amp; retry</a></td></tr>"
+        f"<td><a href='/cards/pricing/{card.id}'>{_issue_action(promotion.issue)}</a></td></tr>"
         for card, promotion in handoff_issues
+    )
+
+    pricing_hold_rows = "".join(
+        "<tr><td style='white-space:normal'>" + escape(listing.title) + "</td>"
+        f"<td>AUD ${listing.price}</td><td>AUD ${assessment.review_floor}</td>"
+        f"<td style='white-space:normal'>{escape(assessment.strongest.label)} "
+        f"AUD ${assessment.strongest.value_aud}</td>"
+        f"<td><a href='/shop-listings/{escape(listing.id)}/edit'>review price</a>"
+        + (
+            f" &middot; <a href='https://www.ebay.com.au/itm/{escape(ebay_id)}' "
+            "target='_blank' rel='noopener'>open eBay</a>"
+            if ebay_id else ""
+        )
+        + "</td></tr>"
+        for listing, assessment, ebay_id in live_pricing_holds
     )
 
     body = (
         brand_header("Price review")
         + checking_note
+        + f"<div class='panel'><h2>Live eBay pricing safety review ({len(live_pricing_holds)})</h2>"
+        + "<p class='subtitle'>Already-live listings priced more than 25% below a meaningful recent "
+          "market benchmark. This is a review list only: EzBay has not ended or repriced anything. "
+          "Verify the exact printing before changing a live listing.</p>"
+        + ("<div class='table-wrap'><table><thead><tr><th>Card</th><th>Live price</th>"
+           "<th>Review floor</th><th>Strongest evidence</th><th></th></tr></thead><tbody>"
+           + pricing_hold_rows + "</tbody></table></div>" if pricing_hold_rows else
+           "<p class='subtitle'>No existing live listing is currently below the safety threshold.</p>")
+        + "</div>"
         + f"<div class='panel'><h2>Awaiting approval ({len(pending)})</h2><ul class='events'>{pending_rows}</ul></div>"
         + f"<div class='panel'><h2>Ready to price ({len(retryable)})</h2>"
         + f"<p class='subtitle'>{retry_note}</p>"
@@ -532,12 +690,29 @@ def pricing_list(request: Request, user: str = Depends(require_dashboard_user), 
            "<button class='ghost'>Try these anyway</button></form>" if blocked else "")
         + "</div>"
         + f"<div class='panel'><h2>Approved, not yet listed ({len(approved)})</h2>"
-        + "<p class='subtitle'>Priced and approved, waiting to become individual single-card listings. "
-          "Click edit to change a price before that happens.</p>"
+        + "<p class='subtitle'>Priced and approved, but handoff has not run yet. "
+          "Each card remains an individual single-card listing.</p>"
         + f"<ul class='events'>{approved_rows}</ul></div>"
+        + f"<div class='panel'><h2>Ready in Bulk Upload ({len(ready_for_bulk)})</h2>"
+        + "<p class='subtitle'>Inventory and a single-card listing were created successfully. "
+          "These cards are visible on the Bulk Upload page unless an image or export-ledger check blocks them.</p>"
+        + ("<p><a class='button' href='/ebay-export'>Open Bulk Upload</a></p>"
+           "<div class='table-wrap'><table><thead><tr><th>Card</th><th>Price</th><th></th></tr></thead><tbody>"
+           + ready_rows + "</tbody></table></div>" if ready_rows else
+           "<p class='subtitle'>No successful handoffs yet.</p>")
+        + "</div>"
+        + f"<div class='panel'><h2>eBay stock updates required ({len(revision_groups)})</h2>"
+        + f"<p class='subtitle'>{len(stock_revisions)} extra physical copies are already recorded in Inventory "
+          f"across {len(revision_groups)} live listings. "
+          "Update the quantity on the existing eBay listing, then mark it complete here. "
+          "EzBay will not create a duplicate listing.</p>"
+        + ("<div class='table-wrap'><table><thead><tr><th>Card</th><th>Quantity</th><th>Action</th><th></th></tr></thead><tbody>"
+           + revision_rows + "</tbody></table></div>" if revision_rows else
+           "<p class='subtitle'>No live listing quantities need attention.</p>")
+        + "</div>"
         + f"<div class='panel'><h2>Listing handoff issues ({len(handoff_issues)})</h2>"
         + "<p class='subtitle'>Approved prices that could not safely enter Inventory and Bulk Upload. "
-          "Nothing here has changed stock or created a duplicate listing.</p>"
+          "Open a row to correct the identity, printing, condition or crop, then approve it again.</p>"
         + ("<div class='table-wrap'><table><thead><tr><th>Card</th><th>Issue</th><th></th></tr></thead><tbody>"
            + issue_rows + "</tbody></table></div>" if issue_rows else
            "<p class='subtitle'>No handoff issues.</p>")
@@ -666,7 +841,14 @@ def price_review_form(card_id: str, user: str = Depends(require_dashboard_user),
         ) or "<p class='subtitle'>No other unbundled cards available to bundle with.</p>"
         bundle_options = f"<h3>Bundle with</h3>{choices}"
 
-    error_html = f"<p class='pill bad'>{escape(card.price_lookup_error)}</p>" if card.price_lookup_error else ""
+    promotion = session.scalar(
+        select(CapturePromotion).where(CapturePromotion.captured_card_id == card.id)
+    )
+    errors = [value for value in (
+        card.price_lookup_error,
+        promotion.issue if promotion and promotion.status == CapturePromotionStatus.NEEDS_REVIEW else None,
+    ) if value]
+    error_html = "".join(f"<p class='pill bad'>{escape(value)}</p>" for value in errors)
     # approved_price is the authoritative, already-committed price -- a
     # card reopened for editing after approval must show what it's
     # actually set to, not fall through to the stale automated suggestion
@@ -691,6 +873,49 @@ def price_review_form(card_id: str, user: str = Depends(require_dashboard_user),
         f"<option value='{printing.value}'{' selected' if card.variant == printing else ''}>{label}</option>"
         for printing, label in variant_labels.items()
     )
+    current_condition = card.condition or "Near Mint"
+    condition_options = "".join(
+        f"<option value='{escape(value)}'{' selected' if value == current_condition else ''}>{escape(value)}</option>"
+        for value in CARD_CONDITIONS
+    )
+
+    crop_html = ""
+    if promotion and promotion.status == CapturePromotionStatus.NEEDS_REVIEW and \
+            "crop" in (promotion.issue or "").lower():
+        crop_html = f"""
+        <div class='crop-panel'>
+          <h3>Crop this card from the shared photo</h3>
+          <p class='subtitle'>Drag a box around this card only. The original photo is kept.</p>
+          <div class='crop-stage' id='crop-stage'>
+            <img id='crop-image' src='/cards/image/{escape(card_id)}/front' draggable='false' alt='Shared card photo'>
+            <div id='crop-selection'></div>
+          </div>
+          <form method='post' action='/cards/pricing/{escape(card_id)}/recrop' id='crop-form'>
+            <input type='hidden' name='x0' id='crop-x0'><input type='hidden' name='y0' id='crop-y0'>
+            <input type='hidden' name='x1' id='crop-x1'><input type='hidden' name='y1' id='crop-y1'>
+            <button id='crop-submit' disabled>Save crop</button>
+          </form>
+        </div>
+        """
+
+    crop_head = """
+    <style>
+      .crop-stage{position:relative;max-width:520px;touch-action:none;user-select:none;margin:12px 0}
+      .crop-stage img{display:block;width:100%;height:auto;border-radius:10px}
+      #crop-selection{display:none;position:absolute;border:3px solid var(--accent);background:rgba(20,184,166,.14);pointer-events:none}
+    </style>
+    <script>
+    document.addEventListener('DOMContentLoaded',function(){
+      const stage=document.getElementById('crop-stage'); if(!stage) return;
+      const sel=document.getElementById('crop-selection'), btn=document.getElementById('crop-submit');
+      let start=null;
+      function point(e){const r=stage.getBoundingClientRect();return {x:Math.max(0,Math.min(r.width,e.clientX-r.left)),y:Math.max(0,Math.min(r.height,e.clientY-r.top)),w:r.width,h:r.height};}
+      stage.addEventListener('pointerdown',function(e){start=point(e);stage.setPointerCapture(e.pointerId);sel.style.display='block';btn.disabled=true;e.preventDefault();});
+      stage.addEventListener('pointermove',function(e){if(!start)return;const p=point(e),x=Math.min(start.x,p.x),y=Math.min(start.y,p.y),w=Math.abs(p.x-start.x),h=Math.abs(p.y-start.y);sel.style.left=x+'px';sel.style.top=y+'px';sel.style.width=w+'px';sel.style.height=h+'px';});
+      stage.addEventListener('pointerup',function(e){if(!start)return;const p=point(e),x0=Math.min(start.x,p.x)/p.w,y0=Math.min(start.y,p.y)/p.h,x1=Math.max(start.x,p.x)/p.w,y1=Math.max(start.y,p.y)/p.h;start=null;if(x1-x0<.03||y1-y0<.03){sel.style.display='none';return;}document.getElementById('crop-x0').value=x0;document.getElementById('crop-y0').value=y0;document.getElementById('crop-x1').value=x1;document.getElementById('crop-y1').value=y1;btn.disabled=false;});
+    });
+    </script>
+    """ if crop_html else ""
 
     body = (
         brand_header("Price review")
@@ -698,17 +923,24 @@ def price_review_form(card_id: str, user: str = Depends(require_dashboard_user),
         + f"<h2>{escape(card.character or '?')} — {escape(card.set_name or '?')} #{escape(card.card_number or '?')}</h2>"
         + f"<p><img src='/cards/image/{card_id}/front' style='max-width:280px;border-radius:8px'></p>"
         + error_html + source_note
+        + crop_html
         + f"<form method='post' action='/cards/pricing/{card_id}'>"
+        + f"<label>Name <input name='character' value='{escape(card.character or '')}' required></label>"
+        + f"<label>Set <input name='set_name' value='{escape(card.set_name or '')}' required></label>"
+        + f"<label>Card number <input name='card_number' value='{escape(card.card_number or '')}' required></label>"
+        + f"<label>Rarity <input name='rarity' value='{escape(card.rarity or '')}'></label>"
+        + f"<label>Language <input name='language' value='{escape(card.language or 'English')}' required></label>"
         + f"<label>Price (AUD) <input name='price' value='{price_value}' required></label>"
         + f"<label>Printing <select name='variant' required>{variant_options}</select></label>"
-        + "<p class='subtitle'>Required for Inventory and Bulk Upload so a Holo copy is never filed or listed as Normal.</p>"
+        + f"<label>Condition <select name='condition' required>{condition_options}</select></label>"
+        + "<p class='subtitle'>Printing and condition describe this physical copy and carry through to Inventory and Bulk Upload.</p>"
         + bundle_options
         + "<div style='display:flex;gap:12px'>"
         + "<button name='action' value='approve' style='background:linear-gradient(120deg,var(--success),var(--accent))'>Approve</button>"
         + "<button name='action' value='reject' style='background:var(--danger);color:#fff'>Deny</button>"
         + "</div></form></div>"
     )
-    return HTMLResponse(page("EzBay — Price review", body))
+    return HTMLResponse(page("EzBay — Price review", body, head_extra=crop_head))
 
 
 @router.post("/{card_id}")
@@ -716,8 +948,14 @@ def price_review_submit(
     card_id: str,
     request: Request,
     action: str = Form("approve"),
+    character: str | None = Form(None),
+    set_name: str | None = Form(None),
+    card_number: str | None = Form(None),
+    rarity: str | None = Form(None),
+    language: str | None = Form(None),
     price: str = Form(""),
     variant: str = Form(""),
+    condition: str | None = Form(None),
     bundle_with: list[str] = Form([]),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -736,13 +974,33 @@ def price_review_submit(
             raise HTTPException(status_code=400, detail="price must be a valid number") from None
         if decimal_price <= 0:
             raise HTTPException(status_code=400, detail="price must be greater than zero")
+        selected_character = character if character is not None else card.character
+        selected_set = set_name if set_name is not None else card.set_name
+        selected_number = card_number if card_number is not None else card.card_number
+        selected_rarity = rarity if rarity is not None else card.rarity
+        selected_language = language if language is not None else card.language
+        if not (selected_character or "").strip() or not (selected_set or "").strip() or not (selected_number or "").strip():
+            raise HTTPException(status_code=400, detail="name, set and card number are required")
         if variant:
             try:
                 selected_variant = CardVariant(variant)
             except ValueError:
-                raise HTTPException(status_code=400, detail="unknown printing") from None
+                raise HTTPException(status_code=400, detail="choose the physical printing") from None
         else:
             selected_variant = card.variant
+        if selected_variant is None:
+            raise HTTPException(status_code=400, detail="choose the physical printing")
+        selected_condition = condition if condition is not None else (card.condition or "Near Mint")
+        if selected_condition not in CARD_CONDITIONS:
+            raise HTTPException(status_code=400, detail="unknown card condition")
+
+        card.character = selected_character.strip()
+        card.set_name = selected_set.strip()
+        card.card_number = selected_number.strip()
+        card.rarity = (selected_rarity or "").strip() or None
+        card.language = (selected_language or "").strip() or "English"
+        card.variant = selected_variant
+        card.condition = selected_condition
 
         classification = load_pipeline_config().classification
         bundling_enabled = bool(classification and classification.bundling_enabled)
@@ -754,7 +1012,6 @@ def price_review_submit(
 
         for member in bundle_members:
             member.approved_price = decimal_price
-            member.variant = selected_variant
             member.pricing_status = PricingStatus.PRICE_APPROVED
             if bundling_enabled and len(bundle_members) > 1:
                 member.bundle_id = bundle_id
@@ -782,4 +1039,111 @@ def price_review_submit(
     next_id = _next_price_review_card_id(session, card_id)
     if next_id:
         return RedirectResponse(f"/cards/pricing/{next_id}", status_code=303)
+    return RedirectResponse("/cards/pricing", status_code=303)
+
+
+@router.post("/{card_id}/recrop")
+def price_review_recrop(
+    card_id: str,
+    request: Request,
+    x0: float = Form(...),
+    y0: float = Form(...),
+    x1: float = Form(...),
+    y1: float = Form(...),
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Save a card-specific crop while retaining the original scan.
+
+    Coordinates are normalized by the browser.  The server validates both
+    the selection and the source path; a crafted request cannot use this
+    endpoint to crop arbitrary files from the host.
+    """
+    card = session.get(CapturedCard, card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="card not found")
+    box = [x0, y0, x1, y1]
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1) or x1 - x0 < .03 or y1 - y0 < .03:
+        raise HTTPException(status_code=400, detail="draw a larger box around the card")
+
+    root = Path(request.app.state.settings.captured_cards_dir).resolve()
+    raw = dict(card.ai_raw_response or {})
+    source_value = raw.get("manual_crop_source") or card.front_image_path
+    source = Path(source_value)
+    if not source.is_absolute():
+        source = source.resolve()
+    else:
+        source = source.resolve()
+    try:
+        source.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="capture image is outside the managed photo directory") from None
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="capture image is missing")
+
+    destination_dir = root / card.id
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / "manual_front.jpg"
+    try:
+        crop_card(source, destination, box, 0)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"could not crop photo: {exc}") from None
+
+    raw["manual_crop_source"] = str(source)
+    raw["manual_crop_box"] = box
+    card.ai_raw_response = raw
+    card.front_image_path = str(destination)
+    session.commit()
+    record_event(
+        session,
+        actor_type="user",
+        actor_id=user,
+        action="card.photo_recrop",
+        resource_type="captured_card",
+        resource_id=card_id,
+        outcome="success",
+        correlation_id=_correlation_id(),
+        details={"bounding_box": box},
+    )
+    return RedirectResponse(f"/cards/pricing/{card_id}", status_code=303)
+
+
+@router.post("/{card_id}/revision-complete")
+def price_review_revision_complete(
+    card_id: str,
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Acknowledge that the operator updated an existing live eBay listing."""
+    promotion = session.scalar(
+        select(CapturePromotion).where(CapturePromotion.captured_card_id == card_id)
+    )
+    if promotion is None:
+        raise HTTPException(status_code=404, detail="listing handoff not found")
+    if promotion.status != CapturePromotionStatus.REVISION_REQUIRED:
+        raise HTTPException(status_code=409, detail="this card has no outstanding eBay stock update")
+    if promotion.shop_listing_id:
+        completed = session.scalars(
+            select(CapturePromotion).where(
+                CapturePromotion.shop_listing_id == promotion.shop_listing_id,
+                CapturePromotion.status == CapturePromotionStatus.REVISION_REQUIRED,
+            )
+        ).all()
+    else:
+        completed = [promotion]
+    for row in completed:
+        row.status = CapturePromotionStatus.PROMOTED
+        row.issue = None
+    session.commit()
+    record_event(
+        session,
+        actor_type="user",
+        actor_id=user,
+        action="card.ebay_revision_complete",
+        resource_type="captured_card",
+        resource_id=card_id,
+        outcome="success",
+        correlation_id=_correlation_id(),
+        details={"shop_listing_id": promotion.shop_listing_id, "captures_completed": len(completed)},
+    )
     return RedirectResponse("/cards/pricing", status_code=303)

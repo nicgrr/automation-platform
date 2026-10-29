@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from automation_control.database import Base
-from automation_control.models import CardPrice, CatalogItem, TcgCard
+from automation_control.models import CardPrice, CardSet, CatalogItem, TcgCard
 
 ALL_SETS = [{"set_name": "Romance Dawn", "set_id": "OP-01"}]
 
@@ -263,6 +263,25 @@ def test_reimporting_updates_instead_of_duplicating(tmp_path, monkeypatch):
 
     with Session(engine) as session:
         assert session.query(TcgCard).filter_by(game="one_piece").count() == 2
+
+
+def test_imported_cards_reference_a_named_card_set(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 't.db'}")
+    Base.metadata.create_all(engine)
+
+    from scripts import import_one_piece_from_optcgapi as script
+    from sqlalchemy.orm import sessionmaker
+    monkeypatch.setattr(script, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(script.httpx, "Client", lambda **kwargs: _mock_client())
+    monkeypatch.setattr(script.time, "sleep", lambda *_: None)
+
+    script.main(["--no-prices"])
+
+    with Session(engine) as session:
+        card = session.query(TcgCard).filter_by(game="one_piece").first()
+        card_set = session.get(CardSet, card.set_id)
+        assert card_set.name == "Romance Dawn"
+        assert card_set.code == "OP-01"
 
 
 def test_dry_run_writes_nothing(tmp_path, monkeypatch):

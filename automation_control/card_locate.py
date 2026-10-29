@@ -11,9 +11,10 @@ living -- with a one-field form to set or correct that.
 
 from html import escape
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import CardSet, CatalogItem, InventoryItem, TcgCard
+from .models import CardSet, CatalogItem, InventoryItem, InventoryPlacement, StorageLocation, TcgCard
 
 # Where a card's real photo lives, from automation_control/inventory_review.py
 # -- both routes are already dashboard-auth-gated the same way this page is,
@@ -43,6 +44,18 @@ def line_detail(session: Session, inventory_item_id: str | None) -> dict | None:
                 card_set = session.get(CardSet, tcg.set_id)
                 set_name = card_set.name if card_set else ""
 
+    placement_locations = list(session.scalars(
+        select(StorageLocation.name)
+        .join(InventoryPlacement, InventoryPlacement.storage_location_id == StorageLocation.id)
+        .where(
+            InventoryPlacement.inventory_item_id == inv.id,
+            InventoryPlacement.confirmed_at.is_not(None),
+        )
+        .order_by(StorageLocation.name)
+    ))
+    if not placement_locations and inv.storage_location:
+        placement_locations = [inv.storage_location.name]
+
     return {
         "inventory_item_id": inv.id,
         "card_id": inv.catalog_item_id,
@@ -52,7 +65,8 @@ def line_detail(session: Session, inventory_item_id: str | None) -> dict | None:
         "set_name": set_name,
         "number": number,
         "rarity": rarity,
-        "location_name": inv.storage_location.name if inv.storage_location else None,
+        "location_name": placement_locations[0] if placement_locations else None,
+        "location_names": placement_locations,
         "has_scan": bool(inv.scan_image_path),
     }
 
@@ -66,9 +80,25 @@ def thumb_src(detail: dict) -> str:
 
 
 def location_pill_html(detail: dict) -> str:
-    if detail["location_name"]:
-        return f"<span class='loc-pill'>📍 {escape(detail['location_name'])}</span>"
+    names = detail.get("location_names") or ([detail["location_name"]] if detail["location_name"] else [])
+    if names:
+        return " ".join(f"<span class='loc-pill'>📍 {escape(name)}</span>" for name in names)
     return "<span class='loc-pill loc-missing'>Not located yet</span>"
+
+
+def pack_location_html(detail: dict) -> str:
+    """Make the pick location impossible to miss while packing.
+
+    The compact location pill is still useful on order summaries, but on the
+    packing assistant the physical slot is the operator's primary instruction.
+    Give it a labelled, full-width row instead of leaving it as small metadata.
+    """
+    return (
+        "<div class='pack-location'>"
+        "<span class='pack-location-label'>Pick location</span>"
+        f"<div>{location_pill_html(detail)}</div>"
+        "</div>"
+    )
 
 
 def location_form_html(detail: dict, back_url: str) -> str:
@@ -117,7 +147,7 @@ def pack_card_html(session: Session, inventory_item_id: str | None, *, title: st
         f"<div class='pack-card-title'>{escape(display_title)}</div>"
         f"<div class='muted'>{meta}</div>"
         f"<div class='pack-card-qty'>Qty {qty} &mdash; {price_html}</div>"
-        f"<div>{location_pill_html(detail)}</div>"
+        f"{pack_location_html(detail)}"
         f"{location_form_html(detail, back_url)}"
         "</div></div>"
     )
@@ -138,5 +168,11 @@ PACK_STYLE = """<style>
 .pack-photo.noart{display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px}
 .pack-card-title{font-weight:600}
 .pack-card-qty{font-size:13.5px;color:var(--text-dim)}
+.pack-location{margin-top:6px;padding:9px 10px;border:1px solid var(--panel-border);border-radius:9px;
+  background:var(--surface-sunken)}
+.pack-location-label{display:block;margin-bottom:5px;font-size:10.5px;font-weight:750;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--text-dim)}
+.pack-location .loc-pill{font-size:15px;padding:4px 10px;background:var(--panel);color:var(--text);font-weight:750}
+.pack-location .loc-pill.loc-missing{background:transparent;color:var(--text-dim)}
 .pack-footer{display:flex;justify-content:flex-end;margin-top:4px}
 </style>"""

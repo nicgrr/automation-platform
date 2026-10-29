@@ -24,12 +24,15 @@ def _money(value: Decimal) -> Decimal:
 
 def _receive_line(
     session: Session, lot: PurchaseLot, line: PurchaseLotItem,
-    allocated_total: Decimal,
+    allocated_purchase: Decimal, allocated_shipping: Decimal,
 ) -> InventoryItem:
     catalog = session.get(CatalogItem, line.catalog_item_id)
     if catalog is None:
         raise ValueError(f"{line.description} is not linked to a valid catalogue item.")
+    allocated_total = allocated_purchase + allocated_shipping
     unit_cost = _money(allocated_total / line.quantity)
+    purchase_unit = _money(allocated_purchase / line.quantity)
+    shipping_unit = _money(allocated_shipping / line.quantity)
     inventory = session.scalar(select(InventoryItem).where(
         InventoryItem.catalog_item_id == catalog.id,
         InventoryItem.variant == CardVariant.NORMAL,
@@ -43,14 +46,20 @@ def _receive_line(
             id=str(uuid.uuid4()), card_id=None, catalog_item_id=catalog.id,
             variant=CardVariant.NORMAL, condition=line.condition,
             quantity=line.quantity, allocated_cost_basis=unit_cost,
+            purchase_cost_basis=purchase_unit,
+            allocated_shipping_cost=shipping_unit,
             status=InventoryStatus.AVAILABLE, notes=note,
         )
         session.add(inventory)
     else:
         old_quantity = inventory.quantity
         old_cost = (inventory.allocated_cost_basis or ZERO) * old_quantity
+        old_purchase = (inventory.purchase_cost_basis or inventory.allocated_cost_basis or ZERO) * old_quantity
+        old_shipping = (inventory.allocated_shipping_cost or ZERO) * old_quantity
         inventory.quantity += line.quantity
         inventory.allocated_cost_basis = _money((old_cost + allocated_total) / inventory.quantity)
+        inventory.purchase_cost_basis = _money((old_purchase + allocated_purchase) / inventory.quantity)
+        inventory.allocated_shipping_cost = _money((old_shipping + allocated_shipping) / inventory.quantity)
         inventory.notes = (inventory.notes + "\n" if inventory.notes else "") + note
         if inventory.status in {
             InventoryStatus.SOLD, InventoryStatus.GIVEAWAY, InventoryStatus.RETURNED,
@@ -86,6 +95,10 @@ def receive_purchase_lot(session: Session, lot: PurchaseLot) -> list[InventoryIt
     purchase_total = lot.purchase_price
     if purchase_total is None or purchase_total <= 0:
         raise ValueError("Enter the final purchase price before receiving inventory.")
+    if lot.shipping_cost is None:
+        raise ValueError("Enter shipping, or explicitly enter 0.00 for free/local pickup, before receiving inventory.")
+    if lot.shipping_cost < 0:
+        raise ValueError("Shipping cannot be negative.")
     weights = [
         (line.quoted_unit_cost if line.quoted_unit_cost is not None else line.market_value) * line.quantity
         for line in lines
@@ -110,15 +123,22 @@ def receive_purchase_lot(session: Session, lot: PurchaseLot) -> list[InventoryIt
         return []
 
     received: list[InventoryItem] = []
-    allocated = ZERO
+    allocated_purchase = ZERO
+    allocated_shipping = ZERO
     for index, (line, weight) in enumerate(zip(lines, weights)):
-        line_total = (
-            _money(purchase_total - allocated)
+        line_purchase = (
+            _money(purchase_total - allocated_purchase)
             if index == len(lines) - 1
             else _money(purchase_total * weight / weight_total)
         )
-        allocated += line_total
-        received.append(_receive_line(session, lot, line, line_total))
+        line_shipping = (
+            _money(lot.shipping_cost - allocated_shipping)
+            if index == len(lines) - 1
+            else _money(lot.shipping_cost * weight / weight_total)
+        )
+        allocated_purchase += line_purchase
+        allocated_shipping += line_shipping
+        received.append(_receive_line(session, lot, line, line_purchase, line_shipping))
     session.expire(lot)
     session.flush()
     return received

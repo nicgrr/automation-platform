@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh due EZBay collectible prices
+
+[Timer]
+OnCalendar=*-*-* 04:10:00 Australia/Sydney
+Persistent=true
+RandomizedDelaySec=20m
+Unit=collectible-pricing-refresh.service
+
+[Install]
+WantedBy=timers.target
+

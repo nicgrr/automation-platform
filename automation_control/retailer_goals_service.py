@@ -511,7 +511,7 @@ def _purchase_lot_for_retailer_purchase(
         lot = PurchaseLot(
             id=str(uuid.uuid4()), source=f"{retailer.name} retailer purchase",
             seller=retailer.name, asking_price=landed_total, offered_price=landed_total,
-            purchase_price=landed_total, status=PurchaseLotStatus.PURCHASED,
+            purchase_price=landed_total, shipping_cost=ZERO, status=PurchaseLotStatus.PURCHASED,
             notes=note, retailer_id=retailer.id, external_order_number=order_number,
             purchased_at=datetime.combine(purchase.purchase_date, datetime.min.time(), tzinfo=UTC),
             inventory_received_at=datetime.combine(purchase.purchase_date, datetime.min.time(), tzinfo=UTC),

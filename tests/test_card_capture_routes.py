@@ -38,8 +38,10 @@ def session(engine):
 def client(session: Session, engine, tmp_path):
     original_api_key = app.state.settings.anthropic_api_key
     original_dir = app.state.settings.captured_cards_dir
+    original_bulk_only = app.state.settings.card_bulk_upload_only
     app.state.settings.anthropic_api_key = "test-key"
     app.state.settings.captured_cards_dir = str(tmp_path / "captured_cards")
+    app.state.settings.card_bulk_upload_only = False
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[require_dashboard_user] = lambda: "testuser"
     # Bulk capture processes in a background task using its own fresh DB
@@ -52,6 +54,7 @@ def client(session: Session, engine, tmp_path):
     app.dependency_overrides.clear()
     app.state.settings.anthropic_api_key = original_api_key
     app.state.settings.captured_cards_dir = original_dir
+    app.state.settings.card_bulk_upload_only = original_bulk_only
 
 
 def _upload_files():
@@ -72,6 +75,20 @@ def test_capture_page_allows_choosing_from_photo_library(client):
     # into the camera, hiding the "choose from library" option entirely.
     resp = client.get("/cards/capture")
     assert "capture=" not in resp.text
+
+
+def test_single_capture_routes_redirect_to_bulk_when_bulk_only(client, session):
+    app.state.settings.card_bulk_upload_only = True
+
+    page_response = client.get("/cards/capture", follow_redirects=False)
+    post_response = client.post("/cards/capture", follow_redirects=False)
+
+    assert page_response.status_code == 303
+    assert page_response.headers["location"] == "/cards/capture/bulk"
+    assert post_response.status_code == 303
+    assert post_response.headers["location"] == "/cards/capture/bulk"
+    assert session.query(CapturedCard).count() == 0
+    app.state.settings.card_bulk_upload_only = False
 
 
 def test_capture_submit_success_creates_reviewed_fields(client, session):
@@ -113,6 +130,24 @@ def test_review_form_shows_no_back_photo_when_absent(client, session):
     assert resp.status_code == 200
     assert "no back photo" in resp.text
     assert "/cards/image/abc123/back" not in resp.text
+    assert "Choose printing" in resp.text
+    assert "Condition" in resp.text
+
+
+def test_review_approve_rejects_missing_printing(client, session):
+    card = CapturedCard(id="needs-printing", front_image_path="f", status=CardCaptureStatus.PENDING_REVIEW,
+                        ai_raw_response={})
+    session.add(card)
+    session.commit()
+
+    resp = client.post(
+        "/cards/review/needs-printing",
+        data={"action": "approve", "character": "Pikachu", "set_name": "Base Set",
+              "card_number": "58/102", "condition": "Near Mint"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 400
 
 
 def test_card_image_404_when_back_not_captured(client, session):
@@ -133,7 +168,7 @@ def test_review_approve_marks_reviewed_and_advances_to_next_pending(client, sess
 
     resp = client.post(
         "/cards/review/first",
-        data={"action": "approve", "character": "Pikachu", "set_name": "Base Set", "card_number": "58/102", "rarity": "Common", "language": "English", "graded": "Raw"},
+        data={"action": "approve", "character": "Pikachu", "set_name": "Base Set", "card_number": "58/102", "rarity": "Common", "language": "English", "graded": "Raw", "variant": "normal", "condition": "Near Mint"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -456,7 +491,7 @@ def test_review_submit_marks_reviewed_and_updates_fields(client, session):
 
     resp = client.post(
         "/cards/review/abc123",
-        data={"character": "Pikachu", "set_name": "Base Set", "card_number": "58/102", "rarity": "Common", "language": "English", "graded": "Raw"},
+        data={"character": "Pikachu", "set_name": "Base Set", "card_number": "58/102", "rarity": "Common", "language": "English", "graded": "Raw", "variant": "normal", "condition": "Near Mint"},
         follow_redirects=False,
     )
 
@@ -487,6 +522,3 @@ def test_card_image_404_when_file_missing(client, session, tmp_path):
     session.commit()
     resp = client.get("/cards/image/abc123/front")
     assert resp.status_code == 404
-
-
-

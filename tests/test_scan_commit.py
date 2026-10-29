@@ -139,8 +139,30 @@ def test_commit_stores_image_under_predictable_name(session, tmp_path):
     result = commit_card(session, _confident(), _scan_image(tmp_path), tmp_path / "media")
 
     item = session.get(InventoryItem, result.item_id)
-    assert item.scan_image_path.endswith("STS-31-normal-near-mint.jpg")  # set, number, variant, condition
-    assert (tmp_path / "media" / "cards" / "STS-31-normal-near-mint.jpg").exists()
+    # set, number, card id, variant, condition
+    assert item.scan_image_path.endswith("STS-31-xy11-31-normal-near-mint.jpg")
+    assert (tmp_path / "media" / "cards" / "STS-31-xy11-31-normal-near-mint.jpg").exists()
+
+
+def test_two_printings_sharing_a_printed_number_keep_their_own_photos(session, tmp_path):
+    """A base card and its alternate art print the same code; the second
+    scan used to overwrite the first's photo."""
+    from automation_control.models import CatalogCard
+
+    base = session.get(CatalogCard, "xy11-31")
+    session.add(CatalogCard(id="xy11-31-alt", set_id=base.set_id, number=base.number, name="Dewott (Alternate Art)"))
+    session.add(CatalogItem(id="xy11-31-alt", item_type=session.get(CatalogItem, "xy11-31").item_type, name="Dewott (Alternate Art)"))
+    session.commit()
+    first = tmp_path / "a.jpg"; second = tmp_path / "b.jpg"
+    _scan_image(tmp_path).rename(first)
+    second.write_bytes(first.read_bytes() + b"x")
+    r1 = commit_card(session, _confident("xy11-31"), first, tmp_path / "media")
+    alt = Identification(card_id="xy11-31-alt", number="31", name="Dewott", source=Source.BOTH, confidence=1.0)
+    r2 = commit_card(session, alt, second, tmp_path / "media")
+    p1 = session.get(InventoryItem, r1.item_id).scan_image_path
+    p2 = session.get(InventoryItem, r2.item_id).scan_image_path
+    assert p1 != p2
+    assert Path(p1).read_bytes() != Path(p2).read_bytes()
 
 
 def test_commit_makes_manual_scan_readable_by_the_shared_web_group(session, tmp_path):

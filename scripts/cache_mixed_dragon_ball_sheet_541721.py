@@ -54,9 +54,9 @@ CARDS = (
         "Krillin", "クリリン", "Normal", "Japanese", "1992-08-01",
     ),
     ManualCard(
-        2, "dbha10-unofficial-08", "dbha10-unofficial",
-        "Dragon Ball Heroes Inspired Art Cards DBHA10 (Unofficial)", "DBHA10",
-        "SDBH Inspired Art Cards (Unofficial)", "dragon_ball_art_card", "DBHA10-08",
+        2, "dbha7-unofficial-07", "dbha7-unofficial",
+        "Dragon Ball Heroes Inspired Art Cards DBHA7 (Unofficial)", "DBHA7",
+        "SDBH Inspired Art Cards (Unofficial)", "dragon_ball_art_card", "DBHA7-07",
         "Turles", "ターレス", "Unofficial Art Card", "Japanese", "2022",
         "Foil Art Card",
     ),

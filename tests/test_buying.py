@@ -87,7 +87,9 @@ def test_purchase_lot_lifecycle(client, session):
     assert "$500.00" in detail.text   # market value of lines
     assert "RED" in detail.text       # asking $1000 vs $500 market is a bad deal
 
-    updated = client.post(f"{lot_url}/status", data={"status": PurchaseLotStatus.PURCHASED.value, "offered_price": "300"}, follow_redirects=False)
+    updated = client.post(f"{lot_url}/status", data={
+        "status": PurchaseLotStatus.PURCHASED.value, "offered_price": "300", "shipping_cost": "0",
+    }, follow_redirects=False)
     assert updated.status_code == 303
     inventory = session.scalars(select(InventoryItem).order_by(InventoryItem.catalog_item_id)).all()
     assert len(inventory) == 2
@@ -156,6 +158,35 @@ def test_empty_purchase_lot_cannot_be_received(client):
     assert "Add at least one" in response.text
 
 
+def test_purchase_lot_does_not_assume_unknown_shipping_is_zero(client, session):
+    catalog = CatalogItem(id="pig-sonny", name="Pig Sonny Angel", item_type=CatalogItemType.COLLECTIBLE)
+    session.add(catalog)
+    session.commit()
+    created = client.post("/purchase-lots", data={
+        "source": "Two Sonny Angels", "asking_price": "168", "target_buy_pct": "55",
+    }, follow_redirects=False)
+    lot_url = created.headers["location"]
+    client.post(f"{lot_url}/items", data={
+        "description": "Pig Sonny Angel", "catalog_item_id": catalog.id,
+        "market_value": "90", "quantity": "1", "condition": "New",
+    }, follow_redirects=False)
+
+    blocked = client.post(f"{lot_url}/status", data={
+        "status": "purchased", "offered_price": "168", "shipping_cost": "",
+    }, follow_redirects=False)
+    assert blocked.status_code == 409
+    assert "Enter shipping" in blocked.text
+
+    received = client.post(f"{lot_url}/status", data={
+        "status": "purchased", "offered_price": "168", "shipping_cost": "12",
+    }, follow_redirects=False)
+    assert received.status_code == 303
+    inventory = session.scalar(select(InventoryItem).where(InventoryItem.catalog_item_id == catalog.id))
+    assert inventory.purchase_cost_basis == Decimal("168.00")
+    assert inventory.allocated_shipping_cost == Decimal("12.00")
+    assert inventory.allocated_cost_basis == Decimal("180.00")
+
+
 def test_automated_retailer_lot_is_read_only_on_purchase_lot_routes(client, session):
     retailer = Retailer(name="Test retailer")
     session.add(retailer)
@@ -222,11 +253,11 @@ def test_supplier_purchase_lot_allocates_cost_and_receives_inventory_once(client
     }, follow_redirects=False).status_code == 303
 
     received = client.post(
-        f"{lot_url}/status", data={"status": "purchased", "offered_price": "90"},
+            f"{lot_url}/status", data={"status": "purchased", "offered_price": "90", "shipping_cost": "0"},
         follow_redirects=False,
     )
     repeated = client.post(
-        f"{lot_url}/status", data={"status": "purchased", "offered_price": "90"},
+            f"{lot_url}/status", data={"status": "purchased", "offered_price": "90", "shipping_cost": "0"},
         follow_redirects=False,
     )
 

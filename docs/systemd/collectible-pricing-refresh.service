@@ -1,0 +1,14 @@
+[Unit]
+Description=EZBay non-TCG collectible pricing refresh
+After=network-online.target ezbay.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ezbay
+Group=ezbay
+WorkingDirectory=/home/nic/automation-platform
+EnvironmentFile=/home/nic/automation-platform/.env.local
+ExecStart=/home/nic/automation-platform/.venv/bin/python -m scripts.refresh_collectible_prices
+MemoryMax=384M
+
