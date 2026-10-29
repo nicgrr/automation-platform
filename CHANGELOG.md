@@ -3,6 +3,56 @@
 Entries from the point this file was created (2026-09-07) onward. Earlier history
 lives in `git log`.
 
+## 2026-10-29 — Release checkpoint for three weeks of live work
+
+Between 8 and 29 October the running platform drifted well ahead of Git: the
+production database was migrated through nine revisions (`20261006_01` to
+`20261023_02`) and roughly 170 eBay publishes, 87 revisions and 48 listing ends
+were made by uncommitted code. This entry records that work and the checkpoint
+release that captures it; no behaviour changed in the checkpoint itself.
+
+**eBay.** Listing Studio stores eBay-specific titles, descriptions and ordered
+photo sets on each shop listing and revises an already-live listing only after
+explicit approval, through a narrow Trading API write adapter that cannot create
+or relist. Ordered front/back photo batches repair existing listings via CRM
+draft proposals; applying one never writes to eBay by itself. Buyer-facing
+80-character titles and deterministic listing-quality checks are shared by
+direct publishing and the CSV export. Bulk eBay orders get persistent picking
+manifests, including operator-reported variants. A conservative price-safety
+gate holds any handoff priced more than 25% below a recent market reference for
+human review; it never reprices automatically.
+
+**Stock, identity and pricing.** Card capture preserves physical condition
+through promotion. One Piece rarity stars and printing families are derived
+rather than hand-typed, so a base card and its alternate art are not confused.
+Category-routed collectible pricing adds eBay automatic refresh plus attributed
+manual comparables for Depop and Vinted, with a daily refresh timer. Purchase
+lots carry explicit shipping into landed inventory cost. Photographed cards get
+stable tray slots whose put-away is confirmed. Postage labels print landscape on
+the HotLabel HL-M9 and include the recipient phone number.
+
+**NL Vault.** The storefront is public at nlvault.com.au through the Cloudflare
+tunnel and runs in `STOREFRONT_MODE=catalogue`: it shows stock and links buyers
+to eBay, Vinted or Whatnot, while cart and checkout URLs redirect home (payment
+webhooks are left reachable). Setting the mode back to `shop` restores the
+original checkout unchanged. Departments can be switched to "coming soon",
+Bulk & Bundles shows multi-card eBay lots straight from the live listings cache,
+and live eBay links are a read-only projection that never writes prices back.
+Legal pages now describe marketplace purchasing.
+
+**Operations performed by dated scripts.** Duplicate-listing consolidation,
+live listing discrepancy cleanup, reviewed Dragon Ball single publishing and a
+$3 One Piece price raise were run as one-off, dry-run-by-default scripts with
+confirmation tokens and audit-event idempotency. They are committed as a record
+of what touched production.
+
+**Release hygiene.** Pre-change `.env.local` copies under `backups/` and ad-hoc
+pytest base-temp directories are now ignored, new files were made readable by
+the `ezbay` service group, and a stale backfill test was updated for the
+photos-or-description behaviour. Known open item: `alembic check` still reports
+the intentionally retained, empty `captured_games`/`game_products` tables (see
+migration `20261003_01`) because their models were removed on 6 October.
+
 ## 2026-10-03 — First direct eBay listing live
 
 The owner reconnected the production eBay account with the expanded account

@@ -2,8 +2,13 @@
 
 ## Security boundary
 
-- Keep both web processes bound to localhost. Private access is through Tailscale;
-  do not expose the CRM directly or enable Tailscale Funnel.
+- Keep both web processes bound to localhost. The CRM (`ezbay.service`, port 8080)
+  is private: reach it through Tailscale only, never expose it directly and never
+  enable Tailscale Funnel.
+- NL Vault (`nl-vault.service`, port 8090) is deliberately public at
+  `nlvault.com.au`/`www.nlvault.com.au` through the Cloudflare tunnel defined in
+  `~/server/cloudflared/config.yml`. It currently runs in catalogue mode (no
+  cart or checkout). Never add a tunnel route that points at port 8080.
 - Dashboard sessions are signed, time-limited and protected by login throttling
   and CSRF checks on browser forms. JSON requests remain subject to the same
   private-network and authentication boundary.
