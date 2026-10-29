@@ -29,6 +29,10 @@ captured_cards/
 /backups/review-crops-*/
 /backups/*relink*.json
 /backups/ebay-variation-labels-*.json
+# Pre-change copies of .env.local hold live credentials -- never commit them.
+/backups/env.local*
+# Ad-hoc pytest --basetemp directories from release runs.
+/.pytest-*/
 *.egg-info/
 *.db-wal
 *.db-shm
