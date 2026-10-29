@@ -87,6 +87,16 @@ from).
   Only `AGENTS.md` and `HANDOFF.md` changed in this follow-up. `CLAUDE.md` and
   the Claude work-history subsection remain unchanged. No tests or services ran.
 
+4. **Photo batch af62ce68 (in progress, 2026-10-30):** 26 cards, 6 done, 20
+   held. Claude identified all 20 (see chat). Operator approved: (a) link
+   photos + set finishes + Listing Studio drafts (no eBay publish); (b) add
+   4 Chinese csv10C cards (Dudunsparce ex 179, Mamoswine ex 104, TR Crobat ex
+   130, Psyduck 043) to catalogue + inventory; (c) eBay category mapping for
+   pokemon_japan; (d) redesign the bulk photo review page. Trubbish, Deerling,
+   Ferroseed, Houndour, Seaking are EXTRA copies (new inventory rows; leave
+   the 2026-10-27 bulk-lot rows alone). Operator is confirming each finish in
+   chat before (a) is applied.
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
