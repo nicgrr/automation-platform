@@ -52,11 +52,22 @@ async def run(args) -> int:
         adapter = EbayTradingReadAdapter(token, settings.ebay_client_id, environment=settings.ebay_env,
                                          marketplace_id=settings.ebay_marketplace_id)
 
-        rows = session.scalars(select(EbayListing)).all()
-        targets = [r for r in rows if (r.raw_snapshot or {}).get("source") == SOURCE
-                  and not (r.raw_snapshot or {}).get("image_urls")]
+        rows = session.scalars(
+            select(EbayListing).where(EbayListing.listing_status == "Active")
+        ).all()
+        targets = [
+            r for r in rows
+            if (r.raw_snapshot or {}).get("source") == SOURCE
+            and (
+                not (r.raw_snapshot or {}).get("image_urls")
+                or not str((r.raw_snapshot or {}).get("description") or "").strip()
+            )
+        ]
 
-        print(f"{len(targets)} of {len(rows)} cached listing(s) have no photos on file.\n")
+        print(
+            f"{len(targets)} of {len(rows)} active cached listing(s) are missing "
+            "photos or a description.\n"
+        )
 
         for row in targets:
             try:
@@ -66,8 +77,8 @@ async def run(args) -> int:
                 failed += 1
                 continue
 
-            if not details.picture_urls:
-                print(f"  no photos returned for {row.ebay_listing_id} ({row.title[:50]}) -- skipped")
+            if not details.picture_urls and not details.description:
+                print(f"  no details returned for {row.ebay_listing_id} ({row.title[:50]}) -- skipped")
                 skipped += 1
                 continue
 
@@ -79,8 +90,8 @@ async def run(args) -> int:
 
             row.raw_snapshot = {
                 **(row.raw_snapshot or {}),
-                "image_urls": details.picture_urls,
-                "description": details.description,
+                "image_urls": details.picture_urls or (row.raw_snapshot or {}).get("image_urls") or [],
+                "description": details.description or (row.raw_snapshot or {}).get("description") or "",
                 "details_source": "ebay_get_item",
                 "details_imported_at": datetime.now(UTC).isoformat(),
             }

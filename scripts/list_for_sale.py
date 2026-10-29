@@ -5,9 +5,10 @@ this reads inventory_items, applies your filters, and creates
 shop_listings rows. Nothing appears in the shop until this is run, and
 inventory is never mutated by it.
 
-Pricing starts from the best market signal on file for each card
-(`ebay_active_low` first -- the conservative figure -- then any other
-source), with an optional margin over it. Anything with no price signal
+Pricing starts from the best market signal on file for each card. A manual
+valuation wins, followed by established market feeds and the eBay active
+median; the cheapest active eBay ask is a last resort because one outlier
+must not set the sale price. Anything with no price signal
 at all is skipped rather than guessed at, since a wrong price in a public
 shop is a real-money mistake.
 
@@ -61,13 +62,24 @@ from sqlalchemy.orm import Session
 from automation_control.database import SessionLocal
 from automation_control.models import (
     CardPrice, CatalogCard, CatalogItem, InventoryItem, ShippingRate, ShippingZone,
-    ShopListing, ShopListingStatus,
+    ShopListing, ShopListingStatus, TcgCard,
 )
+from automation_control.scan_ingest import fx
 from automation_control.shop_pricing import default_costs, price_floor
 
 # "manual" wins over every live-market source -- see
 # automation_control/personal_collection.py's identical constant for why.
-PREFERRED_SOURCES = ["manual", "ebay_active_low", "optcgapi_market", "pokemonpricetracker_market"]
+PREFERRED_SOURCES = [
+    "manual",
+    "tcgcsv_tcgplayer_market",
+    "tcgplayer_market",
+    "pokemontcg_tcgplayer_market",
+    "optcgapi_market",
+    "pokemonpricetracker_market",
+    "pricecharting_market",
+    "ebay_active_median",
+    "ebay_active_low",
+]
 MAX_MARKUP = Decimal("2")
 
 
@@ -83,10 +95,22 @@ def best_price(session: Session, catalog_item_id: str) -> tuple[Decimal, str] | 
     for source in PREFERRED_SOURCES:
         for row in rows:
             if row.source == source and row.price and row.price > 0:
-                return Decimal(str(row.price)), row.source
+                converted = (
+                    float(row.price)
+                    if (row.currency or "").upper() == "AUD"
+                    else fx.to_aud(row.price, row.currency)
+                )
+                if converted is not None:
+                    return Decimal(str(converted)), row.source
     for row in rows:
         if row.price and row.price > 0:
-            return Decimal(str(row.price)), row.source
+            converted = (
+                float(row.price)
+                if (row.currency or "").upper() == "AUD"
+                else fx.to_aud(row.price, row.currency)
+            )
+            if converted is not None:
+                return Decimal(str(converted)), row.source
     return None
 
 
@@ -100,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-price", type=float, default=5.0, help="skip items worth less than this (default 5)")
     parser.add_argument("--margin", type=float, default=0.0, help="percent to add over the market signal")
     parser.add_argument("--limit", type=int, default=500, help="max listings to create in one run")
+    parser.add_argument("--game", help="only list inventory for this TCG game key (for example one_piece)")
     parser.add_argument("--activate", action="store_true", help="publish immediately instead of creating drafts")
     parser.add_argument("--withdraw-all", action="store_true", help="take every listing off sale and exit")
     args = parser.parse_args(argv)
@@ -115,9 +140,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         already = {row for row in session.scalars(select(ShopListing.inventory_item_id)) if row}
-        items = session.scalars(
-            select(InventoryItem).where(InventoryItem.catalog_item_id.isnot(None), InventoryItem.quantity > 0)
-        ).all()
+        item_query = select(InventoryItem).where(
+            InventoryItem.catalog_item_id.isnot(None), InventoryItem.quantity > 0,
+        )
+        if args.game:
+            item_query = item_query.join(
+                TcgCard, TcgCard.catalog_item_id == InventoryItem.catalog_item_id,
+            ).where(TcgCard.game == args.game)
+        items = session.scalars(item_query).all()
 
         # The floor every listing gets checked against: what it costs to
         # fulfil an AU order (the common case), grossed up to the target

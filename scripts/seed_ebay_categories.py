@@ -8,14 +8,15 @@ seeded here; a game with no row simply can't be published yet (a clear
 adds the real id, e.g. via eBay's Taxonomy API `getCategorySuggestions`
 or Seller Hub's own category picker.
 
-Confirmed: 183454 = "Pokémon Individual Cards" (verified independently
-across multiple eBay category-browse URLs, both EBAY_AU and EBAY_US use
-the same numeric id -- eBay's category tree is shared across English-
-language sites). One Piece's individual-card category could not be
-confirmed distinctly from search alone as of this writing -- eBay's own
-generic "Collectible Card Game Singles" category shares the same visible
-id in some result snippets, which isn't trustworthy enough to seed
-blind. Left unseeded deliberately; add it once confirmed.
+Confirmed against eBay's production Taxonomy/Browse APIs for EBAY_AU on
+2026-10-06: Pokemon, One Piece, Dragon Ball Fusion World, Super Dragon
+Ball Heroes, Dragon Ball Super Divers, and Dragon Ball Super Card Game
+single-card searches resolve to 183454, "Collectable Card Games > CCG
+Individual Cards".  Carddass' free-text taxonomy suggestion is too broad,
+so that mapping was checked against live Australian Carddass single-card
+results instead; the matching singles overwhelmingly use the same 183454
+leaf. Keeping one row per game still prevents an unknown game from silently
+inheriting a category that was never checked.
 
     .venv/bin/python -m scripts.seed_ebay_categories --dry-run
     .venv/bin/python -m scripts.seed_ebay_categories
@@ -31,6 +32,12 @@ from automation_control.models import EbayCategoryMapping
 # (marketplace_id, catalog_item_type, game, ebay_category_id)
 SEED_ROWS = [
     ("EBAY_AU", "tcg_card", "pokemon", "183454"),
+    ("EBAY_AU", "tcg_card", "one_piece", "183454"),
+    ("EBAY_AU", "tcg_card", "dragon_ball_fusion_world", "183454"),
+    ("EBAY_AU", "tcg_card", "super_dragon_ball_heroes", "183454"),
+    ("EBAY_AU", "tcg_card", "dragon_ball_super_divers", "183454"),
+    ("EBAY_AU", "tcg_card", "dragon_ball_super", "183454"),
+    ("EBAY_AU", "tcg_card", "dragon_ball_carddass", "183454"),
 ]
 
 

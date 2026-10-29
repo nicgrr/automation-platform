@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from automation_control.adapters.ebay import EbayApiError, EbayNotConfigured, EbaySandboxReadAdapter
@@ -107,3 +108,37 @@ async def test_error_messages_name_the_real_environment_not_hardcoded_sandbox():
     sandbox = EbaySandboxReadAdapter("tok", client=_FailingClient(), environment="sandbox")
     with pytest.raises(EbayApiError, match="sandbox"):
         await sandbox._get("/x")
+
+
+@pytest.mark.asyncio
+async def test_transient_ebay_timeout_is_retried(monkeypatch):
+    """One Browse API timeout must not abort the entire nightly price sweep."""
+    class _FlakyClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls < 3:
+                raise httpx.ReadTimeout("temporary eBay timeout")
+
+            class _Response:
+                status_code = 200
+
+                @staticmethod
+                def json():
+                    return {"itemSummaries": []}
+
+            return _Response()
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr("automation_control.adapters.ebay.asyncio.sleep", no_wait)
+    client = _FlakyClient()
+    adapter = EbaySandboxReadAdapter("tok", client=client, environment="production")
+
+    payload = await adapter.search_market("Pikachu")
+
+    assert payload == {"itemSummaries": []}
+    assert client.calls == 3

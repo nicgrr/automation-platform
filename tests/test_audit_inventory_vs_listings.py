@@ -15,6 +15,7 @@ from automation_control.models import (
     CardVariant,
     CatalogItem,
     CatalogItemType,
+    AuditEvent,
     EbayExportBatch,
     EbayExportItem,
     EbayExportItemStatus,
@@ -102,6 +103,26 @@ def test_an_unapplied_order_is_not_a_finding(session):
     assert check_sold_but_available(session) == []
 
 
+def test_cancelled_order_whose_stock_was_explicitly_restored_is_not_a_finding(session):
+    inv = make_inventory(session, status=InventoryStatus.AVAILABLE, quantity=2)
+    listing = make_listing(session, inventory_item_id=inv.id, title="Relisted Loki")
+    applied_at = datetime.now(UTC)
+    session.add(EbayImportedOrder(
+        ebay_order_id="CANCELLED-1", sku=listing.id, quantity=2, marketplace_id="EBAY_AU",
+        observed_at=applied_at, applied_at=applied_at,
+        shop_listing_id=listing.id, raw_snapshot={},
+    ))
+    session.add(AuditEvent(
+        actor_type="user", actor_id="tester",
+        action="listing.cancelled_order_stock_restored",
+        resource_type="shop_listing", resource_id=listing.id,
+        outcome="success", correlation_id=str(uuid.uuid4()), details={"quantity": 2},
+    ))
+    session.commit()
+
+    assert check_sold_but_available(session) == []
+
+
 def test_catches_an_active_listing_whose_inventory_already_sold(session):
     inv = make_inventory(session, status=InventoryStatus.SOLD, quantity=0)
     listing = make_listing(session, inventory_item_id=inv.id, status=ShopListingStatus.ACTIVE,
@@ -123,6 +144,12 @@ def test_catches_an_active_listing_pointing_at_a_deleted_inventory_row(session):
 def test_a_withdrawn_listing_with_sold_inventory_is_not_a_finding(session):
     inv = make_inventory(session, status=InventoryStatus.SOLD, quantity=0)
     make_listing(session, inventory_item_id=inv.id, status=ShopListingStatus.WITHDRAWN)
+    assert check_active_listing_gone_inventory(session) == []
+
+
+def test_an_active_listing_with_listed_inventory_is_not_a_finding(session):
+    inv = make_inventory(session, status=InventoryStatus.LISTED)
+    make_listing(session, inventory_item_id=inv.id, status=ShopListingStatus.ACTIVE)
     assert check_active_listing_gone_inventory(session) == []
 
 

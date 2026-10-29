@@ -59,6 +59,19 @@ def test_an_expensive_item_is_not_touched_by_the_floor(session):
     assert listing.price == Decimal("80.00")
 
 
+def test_a_single_cheap_ebay_ask_does_not_beat_the_market_median(session):
+    item_id = add_inventory(session, "Rare", price="20.00", source="ebay_active_low")
+    session.add(CardPrice(
+        catalog_item_id=item_id, source="ebay_active_median",
+        price=Decimal("70.00"), currency="AUD",
+    ))
+    session.commit()
+
+    main(["--min-price", "0", "--activate"])
+
+    assert session.scalars(select(ShopListing)).one().price == Decimal("70.00")
+
+
 def test_the_floor_applies_after_the_margin_flag_not_instead_of_it(session):
     add_inventory(session, "Rare", price="80.00")
     main(["--min-price", "0", "--margin", "10", "--activate"])
@@ -160,3 +173,15 @@ def test_draft_by_default_active_only_when_requested(session):
     add_inventory(session, "Common", price="20.00")
     main(["--min-price", "0"])
     assert session.scalars(select(ShopListing)).one().status == ShopListingStatus.DRAFT
+
+
+def test_game_filter_only_lists_inventory_from_that_game(session):
+    one_piece_id = add_inventory(session, "Nami", price="20.00")
+    pokemon_id = add_inventory(session, "Pikachu", price="20.00")
+    session.add(TcgCard(catalog_item_id=one_piece_id, game="one_piece", number="1"))
+    session.add(TcgCard(catalog_item_id=pokemon_id, game="pokemon", number="25"))
+    session.commit()
+
+    main(["--min-price", "0", "--game", "one_piece"])
+
+    assert [listing.catalog_item_id for listing in session.scalars(select(ShopListing)).all()] == [one_piece_id]

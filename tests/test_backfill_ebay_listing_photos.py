@@ -18,11 +18,14 @@ def Session(tmp_path):
     return sessionmaker(bind=engine)
 
 
-def _seed_listing(Session, *, ebay_listing_id="1", title="Pikachu", image_urls=None, source="trading_api"):
+def _seed_listing(Session, *, ebay_listing_id="1", title="Pikachu", image_urls=None, description=None,
+                  source="trading_api"):
     with Session() as session:
         snapshot = {"source": source}
         if image_urls is not None:
             snapshot["image_urls"] = image_urls
+        if description is not None:
+            snapshot["description"] = description
         session.add(EbayListing(ebay_listing_id=ebay_listing_id, title=title, currency="AUD",
                                 current_price_minor=500, listing_status="Active", quantity=1,
                                 raw_snapshot=snapshot))
@@ -68,8 +71,8 @@ def test_backfills_photos_and_description_for_a_listing_missing_them(monkeypatch
         assert row.raw_snapshot["details_source"] == "ebay_get_item"
 
 
-def test_a_listing_that_already_has_photos_is_skipped(monkeypatch, Session):
-    _seed_listing(Session, ebay_listing_id="1", image_urls=["https://x/existing.jpg"])
+def test_a_listing_that_already_has_photos_and_a_description_is_skipped(monkeypatch, Session):
+    _seed_listing(Session, ebay_listing_id="1", image_urls=["https://x/existing.jpg"], description="<p>NM</p>")
     adapter = _patch_common(monkeypatch, Session, adapter_return=ItemDetails(picture_urls=["https://x/new.jpg"], description=None))
 
     script.main([])
@@ -78,6 +81,18 @@ def test_a_listing_that_already_has_photos_is_skipped(monkeypatch, Session):
     with Session() as session:
         row = session.query(EbayListing).filter_by(ebay_listing_id="1").one()
         assert row.raw_snapshot["image_urls"] == ["https://x/existing.jpg"]
+
+
+def test_a_listing_missing_only_its_description_keeps_its_photos(monkeypatch, Session):
+    _seed_listing(Session, ebay_listing_id="1", image_urls=["https://x/existing.jpg"])
+    _patch_common(monkeypatch, Session, adapter_return=ItemDetails(picture_urls=[], description="<p>NM</p>"))
+
+    script.main([])
+
+    with Session() as session:
+        row = session.query(EbayListing).filter_by(ebay_listing_id="1").one()
+        assert row.raw_snapshot["image_urls"] == ["https://x/existing.jpg"]
+        assert row.raw_snapshot["description"] == "<p>NM</p>"
 
 
 def test_a_sell_api_sourced_row_is_never_touched(monkeypatch, Session):

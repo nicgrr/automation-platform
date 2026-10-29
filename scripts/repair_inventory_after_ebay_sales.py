@@ -17,11 +17,11 @@ resolved) but whose linked InventoryItem never moved.
 import argparse
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from automation_control.audit import record_event
 from automation_control.database import SessionLocal
-from automation_control.models import EbayImportedOrder, InventoryItem, InventoryStatus, ShopListing
+from automation_control.models import AuditEvent, EbayImportedOrder, InventoryItem, InventoryStatus, ShopListing
 
 REASON = ("Backfilled: this card sold via eBay before decrement_listing_quantity actually touched "
           "inventory (fixed 2026-09-28) -- see scripts/repair_inventory_after_ebay_sales.py.")
@@ -42,6 +42,16 @@ def main(argv: list[str] | None = None) -> int:
 
         fixed = 0
         for order_row, listing in sold_rows:
+            restored_at = session.scalar(
+                select(func.max(AuditEvent.occurred_at)).where(
+                    AuditEvent.action == "listing.cancelled_order_stock_restored",
+                    AuditEvent.resource_type == "shop_listing",
+                    AuditEvent.resource_id == listing.id,
+                    AuditEvent.outcome == "success",
+                )
+            )
+            if restored_at is not None and restored_at >= order_row.applied_at:
+                continue
             if not listing.inventory_item_id:
                 continue
             item = session.get(InventoryItem, listing.inventory_item_id)

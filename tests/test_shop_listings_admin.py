@@ -9,7 +9,8 @@ from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
 from automation_control.models import (
-    CardSet, CatalogItem, CatalogItemType, InventoryItem, InventoryStatus, ShopListing, ShopListingStatus, TcgCard,
+    CardSet, CatalogItem, CatalogItemType, EbayExportBatch, EbayExportItem, EbayExportItemStatus,
+    EbayListing, EbayListingLink, EbayListingLinkStatus, InventoryItem, InventoryStatus, ShopListing, ShopListingStatus, TcgCard,
 )
 
 
@@ -30,12 +31,12 @@ def client(session):
 
 
 def make_listing(session, name, *, status=ShopListingStatus.DRAFT, price="10.00",
-                 set_id="sv1", set_name="Scarlet & Violet"):
+                 set_id="sv1", set_name="Scarlet & Violet", game="pokemon"):
     session.merge(CardSet(id=set_id, name=set_name))
     item_id = f"i-{name}"
     listing_id = f"l-{name}"
     session.add(CatalogItem(id=item_id, item_type=CatalogItemType.TCG_CARD, name=name))
-    session.add(TcgCard(catalog_item_id=item_id, game="pokemon", set_id=set_id, number="1"))
+    session.add(TcgCard(catalog_item_id=item_id, game=game, set_id=set_id, number="1"))
     session.add(ShopListing(id=listing_id, catalog_item_id=item_id, title=f"{name} #1",
                             price=Decimal(price), currency="AUD", quantity=1, status=status))
     session.commit()
@@ -44,12 +45,35 @@ def make_listing(session, name, *, status=ShopListingStatus.DRAFT, price="10.00"
 
 # --- the page itself ---------------------------------------------------
 
-def test_shop_listings_page_defaults_to_the_draft_filter(client, session):
+def test_shop_listings_page_defaults_to_all_local_statuses(client, session):
     make_listing(session, "Charizard", status=ShopListingStatus.DRAFT)
     make_listing(session, "Pikachu", status=ShopListingStatus.ACTIVE)
     body = client.get("/shop-listings").text
     assert "Charizard" in body
+    assert "Pikachu" in body
+
+
+def test_shop_listings_page_defaults_to_not_listed_on_ebay(client, session):
+    unlisted_id = make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE)
+    live_id = make_listing(session, "Pikachu", status=ShopListingStatus.ACTIVE)
+    session.add(EbayListingLink(
+        shop_listing_id=live_id, sku=live_id, marketplace_id="EBAY_AU",
+        status=EbayListingLinkStatus.ACTIVE, ebay_listing_id="123456789",
+    ))
+    session.add(EbayListing(ebay_listing_id="123456789", title="Live card", currency="AUD",
+        current_price_minor=1000, listing_status="Active", quantity=1))
+    session.commit()
+
+    body = client.get("/shop-listings").text
+    assert "Charizard" in body
     assert "Pikachu" not in body
+
+
+def test_shop_listings_uses_explicit_filters_without_hidden_redirects(client, session):
+    make_listing(session, "Charizard")
+    body = client.get("/shop-listings?status=draft&ebay=not_listed&category=pokemon").text
+    assert "ezbay.shop-listings.filters" not in body
+    assert "window.location.replace" not in body
 
 
 def test_a_draft_is_actually_visible_here(client, session):
@@ -61,12 +85,85 @@ def test_a_draft_is_actually_visible_here(client, session):
     assert "DRAFT" in body
 
 
+def test_listing_handoff_offers_direct_publish_and_bulk_upload(client, session):
+    make_listing(session, "Charizard", status=ShopListingStatus.DRAFT)
+    body = client.get("/shop-listings?status=draft").text
+    assert "Review & Publish" in body
+    assert "/shop-listings/l-Charizard/ebay-preview" in body
+    assert "Bulk Upload" in body
+    assert "/ebay-export" in body
+
+
 def test_status_filter_tabs_switch_what_shows(client, session):
     make_listing(session, "Charizard", status=ShopListingStatus.DRAFT)
     make_listing(session, "Pikachu", status=ShopListingStatus.ACTIVE)
     body = client.get("/shop-listings?status=active").text
     assert "Pikachu" in body
     assert "Charizard" not in body
+
+
+def test_ebay_filter_separates_live_direct_listings_from_unlisted(client, session):
+    live_id = make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE)
+    make_listing(session, "Pikachu", status=ShopListingStatus.ACTIVE)
+    session.add(EbayListingLink(
+        shop_listing_id=live_id, sku=live_id, marketplace_id="EBAY_AU",
+        status=EbayListingLinkStatus.ACTIVE, ebay_listing_id="123456789",
+    ))
+    session.add(EbayListing(ebay_listing_id="123456789", title="Live card", currency="AUD",
+        current_price_minor=1000, listing_status="Active", quantity=1))
+    session.commit()
+
+    live_page = client.get("/shop-listings?status=active&ebay=live").text
+    assert "Charizard" in live_page
+    assert "Pikachu" not in live_page
+    assert "LIVE ON EBAY" in live_page
+
+    unlisted_page = client.get("/shop-listings?status=active&ebay=not_listed").text
+    assert "Pikachu" in unlisted_page
+    assert "Charizard" not in unlisted_page
+
+
+def test_bulk_confirmed_listing_is_live_and_has_no_publish_action(client, session):
+    listing_id = make_listing(session, "Nami", status=ShopListingStatus.ACTIVE, game="one_piece")
+    batch = EbayExportBatch(filename="upload.csv", row_count=1, selected_count=1, created_by="testuser")
+    session.add(batch)
+    session.flush()
+    session.add(EbayExportItem(
+        batch_id=batch.id, sku=listing_id, title="Nami #1", kind="single",
+        status=EbayExportItemStatus.CONFIRMED, ebay_listing_id="123456789",
+    ))
+    session.add(EbayListing(ebay_listing_id="123456789", title="Live card", currency="AUD",
+        current_price_minor=1000, listing_status="Active", quantity=1))
+    session.commit()
+
+    body = client.get("/shop-listings?status=active&ebay=live").text
+    assert "Nami" in body
+    assert "LIVE ON EBAY" in body
+    # A live listing still needs a local-only improvement workspace; the
+    # studio does not write revisions without a separate approval.
+    assert f"/shop-listings/{listing_id}/ebay-preview" in body
+    assert "Improve listing" in body
+
+
+def test_category_filter_separates_card_games(client, session):
+    make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE, game="pokemon")
+    make_listing(session, "Nami", status=ShopListingStatus.ACTIVE, game="one_piece", set_id="op01", set_name="Romance Dawn")
+
+    body = client.get("/shop-listings?status=active&category=one_piece").text
+    assert "Nami" in body
+    assert "Charizard" not in body
+
+
+def test_dragon_ball_category_includes_dbz_era_card_systems(client, session):
+    make_listing(session, "Goku Artbox", status=ShopListingStatus.ACTIVE, game="dragon_ball_artbox")
+    make_listing(
+        session, "Gohan Carddass", status=ShopListingStatus.ACTIVE,
+        game="dragon_ball_carddass", set_id="db-carddass", set_name="Dragon Ball Carddass",
+    )
+
+    body = client.get("/shop-listings?status=active&category=dragon_ball").text
+    assert "Goku Artbox" in body
+    assert "Gohan Carddass" in body
 
 
 def test_search_narrows_by_title(client, session):
@@ -93,6 +190,32 @@ def test_the_row_carries_a_mobile_meta_line_with_qty_price_and_status(client, se
     assert "12.50" in body
 
 
+def test_mobile_listing_layout_uses_cards_and_full_width_actions(client, session):
+    """The desktop table must not be squeezed into a phone viewport: its
+    rows become cards and the action cell spans the whole card."""
+    make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE)
+    body = client.get("/shop-listings?status=active").text
+    assert "panel listing-results" in body
+    assert ".listing-table tr {" in body
+    assert "grid-template-columns: 66px minmax(0, 1fr)" in body
+    assert ".listing-actions {" in body
+    assert "grid-column: 1 / -1" in body
+    assert "min-height: 44px" in body
+
+
+def test_mobile_filters_are_compact_and_do_not_use_horizontal_status_strips(client, session):
+    make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE)
+    body = client.get("/shop-listings?status=all&ebay=not_listed").text
+    assert "listing-desktop-filters" in body
+    assert "listing-mobile-filters" in body
+    assert "mobile-filter-summary" in body
+    assert "All · Not listed / ended · All categories" in body
+    assert "<select name='status'>" in body
+    assert "<select name='ebay'>" in body
+    assert "<select name='category'>" in body
+    assert ".listing-desktop-filters { display: none; }" in body
+
+
 def test_a_listing_with_no_image_gets_an_empty_thumbnail_placeholder(client, session):
     make_listing(session, "Charizard")
     body = client.get("/shop-listings").text
@@ -104,8 +227,8 @@ def test_a_listing_with_an_image_shows_it_as_a_thumbnail(client, session):
     session.get(ShopListing, listing_id).image_url = "https://example.com/charizard.jpg"
     session.commit()
     body = client.get("/shop-listings").text
-    assert f"src='/shop-listings/{listing_id}/thumb'" in body
-    assert f"href='/shop-listings/{listing_id}/image'" in body
+    assert f"src='/shop-listings/{listing_id}/thumb?v=" in body
+    assert f"href='/shop-listings/{listing_id}/image?v=" in body
 
 
 def test_the_thumb_route_redirects_to_a_remote_image_url(client, session):
@@ -225,7 +348,7 @@ def test_a_withdrawn_listing_with_no_recorded_reason_shows_none(client, session)
 def test_withdraw_asks_for_confirmation(client, session):
     make_listing(session, "Charizard", status=ShopListingStatus.ACTIVE)
     body = client.get("/shop-listings?status=active").text
-    assert "onsubmit=\"return confirm('Withdraw this listing?');\"" in body
+    assert "onsubmit=\"return confirm('Hide this record in EZBay? This does not end an eBay listing.');\"" in body
 
 
 def test_a_draft_has_an_activate_button(client, session):
@@ -238,7 +361,7 @@ def test_the_bulk_activate_button_names_the_real_count(client, session):
     make_listing(session, "Charizard", status=ShopListingStatus.DRAFT)
     make_listing(session, "Pikachu", status=ShopListingStatus.DRAFT)
     body = client.get("/shop-listings?status=draft").text
-    assert "Activate all 2 draft(s)" in body
+    assert "Enable 2 draft(s) in EZBay" in body
 
 
 def test_no_bulk_button_when_there_are_no_drafts(client, session):
@@ -253,6 +376,7 @@ def test_activating_a_draft_makes_it_active(client, session):
     listing_id = make_listing(session, "Charizard", status=ShopListingStatus.DRAFT)
     response = client.post(f"/shop-listings/{listing_id}/activate", follow_redirects=False)
     assert response.status_code == 303
+    assert response.headers["location"] == "/shop-listings"
     session.expire_all()
     assert session.get(ShopListing, listing_id).status == ShopListingStatus.ACTIVE
 
@@ -329,7 +453,7 @@ def test_the_edit_form_shows_the_photo_when_there_is_one(client, session):
     session.get(ShopListing, listing_id).image_url = "https://example.com/kappa.jpg"
     session.commit()
     page = client.get(f"/shop-listings/{listing_id}/edit").text
-    assert f"src='/shop-listings/{listing_id}/thumb'" in page
+    assert f"src='/shop-listings/{listing_id}/thumb?v=" in page
     assert "edit-photo-empty" not in page
     assert "not a photo of your card" in page
 
@@ -374,12 +498,12 @@ def test_saving_corrects_title_and_price(client, session):
     assert listing.price == Decimal("18.04")
 
 
-def test_editing_redirects_back_to_the_listings_status_filter(client, session):
+def test_editing_redirects_back_to_all_local_statuses(client, session):
     listing_id = make_listing(session, "Kappa", status=ShopListingStatus.WITHDRAWN, price="10.00")
     resp = client.post(f"/shop-listings/{listing_id}/edit",
                        data={"title": "Kappa", "price": "10.00", "quantity": "1", "condition": ""},
                        follow_redirects=False)
-    assert resp.headers["location"] == "/shop-listings?status=withdrawn"
+    assert resp.headers["location"] == "/shop-listings"
 
 
 def test_an_empty_title_is_rejected(client, session):
@@ -455,3 +579,94 @@ def test_the_row_links_to_edit_regardless_of_status(client, session):
     listing_id = make_listing(session, "Kappa", status=ShopListingStatus.WITHDRAWN, price="10.00")
     page = client.get("/shop-listings?status=withdrawn").text
     assert f"href='/shop-listings/{listing_id}/edit'" in page
+
+
+def test_ended_remote_overrides_stale_active_link(client, session):
+    lid = make_listing(session, "Ended card", status=ShopListingStatus.ACTIVE)
+    session.add(EbayListingLink(shop_listing_id=lid, sku=lid, marketplace_id="EBAY_AU",
+        status=EbayListingLinkStatus.ACTIVE, ebay_listing_id="ended-1"))
+    session.add(EbayListing(ebay_listing_id="ended-1", title="Ended card", currency="AUD",
+        current_price_minor=1000, listing_status="Ended", quantity=1))
+    session.commit()
+    assert "Ended card #1" not in client.get("/shop-listings?ebay=live").text
+    body = client.get("/shop-listings?ebay=unpublished").text
+    assert "Ended card #1" in body
+    assert "NOT ON EBAY" in body
+    assert "EZBAY: ENABLED" in body
+
+
+def test_failed_publication_is_in_outstanding_view(client, session):
+    lid = make_listing(session, "Failed card", status=ShopListingStatus.ACTIVE)
+    session.add(EbayListingLink(shop_listing_id=lid, sku=lid, marketplace_id="EBAY_AU",
+        status=EbayListingLinkStatus.FAILED))
+    session.commit()
+    body = client.get("/shop-listings?ebay=unpublished").text
+    assert "Failed card #1" in body
+    assert "NEEDS ATTENTION" in body
+    assert "More options" in body
+
+
+def test_publish_awaiting_refresh_cannot_be_mistaken_for_unpublished(client, session):
+    lid = make_listing(session, "New publication")
+    session.add(EbayListingLink(shop_listing_id=lid, sku=lid, marketplace_id="EBAY_AU",
+        status=EbayListingLinkStatus.ACTIVE, ebay_listing_id="awaiting-sync"))
+    session.commit()
+    body = client.get("/shop-listings?ebay=pending").text
+    assert "New publication #1" in body
+    assert "EBAY UPDATE PENDING" in body
+    assert "Review & Publish" not in body
+
+
+def test_possible_live_match_requires_link_review_not_republication(client, session):
+    make_listing(session, "Unlinked card", status=ShopListingStatus.ACTIVE)
+    session.add(EbayListing(ebay_listing_id="unlinked-1", title="Unlinked card #1", currency="AUD",
+        current_price_minor=1000, listing_status="Active", quantity=1))
+    session.commit()
+    assert "Unlinked card #1" not in client.get("/shop-listings?ebay=unpublished").text
+    body = client.get("/shop-listings?ebay=attention").text
+    assert "Unlinked card #1" in body
+    assert "Check the link before publishing another copy" in body
+
+
+def test_gallery_photo_overrides_old_inventory_scan_and_versions_url(client, session):
+    lid = make_listing_with_inventory(session, "Updated", scan_image_path="old-scan.jpg")
+    listing = session.get(ShopListing, lid)
+    listing.ebay_photo_paths = ["https://example.com/new-front.jpg", "https://example.com/back.jpg"]
+    session.commit()
+    from automation_control.shop_listings_admin import _photo_version
+    body = client.get("/shop-listings").text
+    assert "Your photo" in body
+    assert f"/thumb?v={_photo_version(listing.ebay_photo_paths[0])}" in body
+    response = client.get(f"/shop-listings/{lid}/thumb", follow_redirects=False)
+    assert response.headers["location"] == listing.ebay_photo_paths[0]
+    assert client.get(f"/shop-listings/{lid}/image", follow_redirects=False).headers["location"] == listing.ebay_photo_paths[0]
+    listing.ebay_photo_paths = ["https://example.com/replacement.jpg"]
+    session.commit()
+    assert f"/thumb?v={_photo_version(listing.ebay_photo_paths[0])}" in client.get("/shop-listings").text
+
+
+def test_empty_gallery_does_not_restore_deleted_inventory_photo(client, session):
+    lid = make_listing_with_inventory(session, "Removed", scan_image_path="old-scan.jpg")
+    session.get(ShopListing, lid).ebay_photo_paths = []
+    session.commit()
+    assert client.get(f"/shop-listings/{lid}/thumb").status_code == 404
+    assert "listing-thumb-empty" in client.get("/shop-listings").text
+
+
+def test_out_of_stock_is_separate_from_all_and_publish_views(client, session):
+    make_listing(session, "Available card", status=ShopListingStatus.ACTIVE)
+    zero = make_listing(session, "Zero stock card", status=ShopListingStatus.ACTIVE)
+    session.get(ShopListing, zero).quantity = 0
+    make_listing(session, "Sold card", status=ShopListingStatus.SOLD_OUT)
+    session.commit()
+    for url in ("/shop-listings?ebay=all", "/shop-listings?ebay=unpublished"):
+        body = client.get(url).text
+        assert "Available card #1" in body
+        assert "Zero stock card #1" not in body
+        assert "Sold card #1" not in body
+        assert "Out of stock (2)" in body
+    body = client.get("/shop-listings?status=sold_out&ebay=all").text
+    assert "Zero stock card #1" in body
+    assert "Sold card #1" in body
+    assert "Available card #1" not in body
+    assert "Back to current listings" in body

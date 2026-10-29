@@ -17,6 +17,7 @@ from automation_control.config import Settings
 from automation_control.database import Base, get_session
 from automation_control.models import (
     BulkLot,
+    CardPrice,
     CardSet,
     CatalogItem,
     CatalogItemType,
@@ -24,6 +25,8 @@ from automation_control.models import (
     EbayExportItem,
     EbayExportItemStatus,
     EbayListing,
+    EbayListingLink,
+    EbayListingLinkStatus,
     ShopListing,
     ShopListingStatus,
     TcgCard,
@@ -215,6 +218,61 @@ def test_build_exports_only_the_selected_single(client, session):
     assert "Kadabra" not in body
 
 
+def test_bulk_export_blocks_a_materially_underpriced_selected_card(client, session):
+    sku = _single(session, "sku-risk", "Loki (Alternate Art) #OP17-119", price="36.36")
+    session.add(CardPrice(
+        catalog_item_id="item-sku-risk", source="ebay_active_median",
+        price=Decimal("90.00"), currency="AUD",
+    ))
+    session.commit()
+
+    response = client.post(
+        "/ebay-export/build", data={"sku": [sku]}, follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "Pricing%20safety%20stopped%201%20selected%20card" in response.headers["location"]
+    assert "%2467.50" in response.headers["location"]
+    assert session.scalars(select(EbayExportBatch)).all() == []
+
+
+def test_bulk_page_offers_an_explicit_override_for_a_pricing_hold(client, session):
+    _single(session, "sku-risk", "Loki (Alternate Art) #OP17-119", price="36.36")
+    session.add(CardPrice(
+        catalog_item_id="item-sku-risk", source="ebay_active_median",
+        price=Decimal("90.00"), currency="AUD",
+    ))
+    session.commit()
+
+    page = client.get("/ebay-export").text
+
+    assert "Pricing safety holds" in page
+    assert "PRICING HOLD" in page
+    assert "review floor $67.50" in page
+    checkbox = page.split("value='sku-risk'", 1)[1].split(">", 1)[0]
+    assert "disabled" not in checkbox
+    assert "name='pricing_override'" in page
+    assert "Tick to override the hold and include this listing" in page
+
+
+def test_bulk_export_accepts_an_explicit_pricing_hold_override(client, session):
+    sku = _single(session, "sku-risk", "Loki (Alternate Art) #OP17-119", price="36.36")
+    session.add(CardPrice(
+        catalog_item_id="item-sku-risk", source="ebay_active_median",
+        price=Decimal("90.00"), currency="AUD",
+    ))
+    session.commit()
+
+    response = client.post(
+        "/ebay-export/build", data={"pricing_override": [sku]}, follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert "attachment; filename=ebay_bulk_listing_ready.csv" in response.headers["content-disposition"]
+    assert sku in response.content.decode("utf-8-sig")
+    assert session.scalar(select(EbayExportBatch)).selected_count == 1
+
+
 def test_build_streams_a_real_file_exchange_shaped_csv(client, session):
     _single(session, "sku-1", "Abra #54", number="54")
     resp = client.post("/ebay-export/build", data={"sku": ["sku-1"]})
@@ -240,6 +298,44 @@ def test_download_records_each_sku_pending_and_withholds_it_from_next_export(cli
     page = client.get("/ebay-export").text
     assert "1 awaiting eBay" in page
     assert "value='sku-1'" not in page
+
+
+def test_active_direct_publish_link_is_withheld_from_bulk_export(client, session):
+    """A directly published card must not remain selectable in the CSV
+    workflow, or using both supported handoffs creates a duplicate listing."""
+    _single(session, "sku-direct", "Abra #54", number="54")
+    session.add(EbayListingLink(
+        shop_listing_id="sku-direct",
+        sku="sku-direct",
+        marketplace_id="EBAY_AU",
+        ebay_listing_id="267800000001",
+        status=EbayListingLinkStatus.ACTIVE,
+    ))
+    session.commit()
+
+    page = client.get("/ebay-export").text
+    assert "value='sku-direct'" not in page
+    assert "No active singles ready to export" in page
+
+
+def test_direct_publish_race_is_rechecked_when_building_csv(client, session):
+    """The submit route rebuilds populations, so a direct publish that
+    happened after the page opened still blocks a stale checked SKU."""
+    _single(session, "sku-direct", "Abra #54", number="54")
+    session.add(EbayListingLink(
+        shop_listing_id="sku-direct",
+        sku="sku-direct",
+        marketplace_id="EBAY_AU",
+        ebay_listing_id="267800000001",
+        status=EbayListingLinkStatus.ACTIVE,
+    ))
+    session.commit()
+
+    response = client.post(
+        "/ebay-export/build", data={"sku": ["sku-direct"]}, follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "direct_active" in response.headers["location"]
 
 
 def test_reselecting_an_already_pending_sku_gives_the_real_reason_not_a_duplicate_number_guess(client, session):

@@ -627,6 +627,29 @@ def test_single_row_set_name_comes_from_the_cards_own_set(session):
     assert rows[0]["set_name"] == "Steam Siege"
 
 
+def test_single_row_carries_an_exact_printing_ebay_title_without_replacing_internal_title(session):
+    session.add(CardSet(id="fb11", name="Brightness of Hope"))
+    item = _item(session, image_url="https://example.test/item.jpg")
+    session.add(TcgCard(
+        catalog_item_id=item.id, game="dragon_ball_fusion_world", set_id="fb11",
+        number="FB11-121", rarity="Secret Rare", language="Japanese",
+    ))
+    session.add(ShopListing(
+        catalog_item_id=item.id, title="Son Goku #FB11-121", price=Decimal("30.25"),
+        status=ShopListingStatus.ACTIVE,
+    ))
+    session.commit()
+
+    rows, _ = build_single_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter")
+
+    assert rows[0]["title"] == "Son Goku #FB11-121"
+    assert rows[0]["ebay_title"] == (
+        "Test Card FB11-121 Brightness of Hope Secret Rare DB Fusion World Japanese"
+    )
+    assert rows[0]["card_name"] == "Test Card"
+    assert rows[0]["card_number"] == "FB11-121"
+
+
 def test_lot_row_set_name_comes_from_the_lots_own_card_set(session):
     session.add(CardSet(id="sv3", name="Obsidian Flames"))
     session.add(BulkLot(title="Obsidian Flames — bulk lot (21 cards)", set_id="sv3", card_count=21,
@@ -873,8 +896,8 @@ def test_set_grouped_rows_ignores_bulk_lot_status_entirely(session):
     assert len(groups["No Lot Set"]) == 2
 
 
-# --- eBay fee markup: Dragon Ball (any rarity) + rare-or-better Pokemon --
-# Nic's request 2026-09-22, added to build_set_grouped_rows only --
+# --- eBay uplift: Dragon Ball (any rarity) + rare-or-better Pokemon --
+# Nic's updated request 2026-10-15, added to build_set_grouped_rows only --
 # build_single_rows itself keeps returning the real, unmodified price
 # (see the test right above this section, and build_single_rows' own
 # tests elsewhere in this file).
@@ -887,7 +910,7 @@ def test_set_grouped_rows_marks_up_a_dragon_ball_card_regardless_of_rarity(sessi
 
     _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
     by_title = {r["title"]: r["price"] for r in groups["Dragon Ball Super Divers SDV11"]}
-    assert by_title == {"Card A": "4.54", "Card B": "3.48"}  # +13%, rounded
+    assert by_title == {"Card A": "4.42", "Card B": "3.39"}  # +10%, rounded
 
 
 def test_set_grouped_rows_marks_up_a_rare_pokemon_card(session):
@@ -901,7 +924,7 @@ def test_set_grouped_rows_marks_up_a_rare_pokemon_card(session):
     session.commit()
 
     _singles, groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
-    assert groups["Obsidian Flames"][0]["price"] == "11.30"  # +13% of $10.00
+    assert groups["Obsidian Flames"][0]["price"] == "11.00"  # +10% of $10.00
 
 
 def test_set_grouped_rows_does_not_mark_up_common_or_uncommon_pokemon(session):
@@ -925,7 +948,7 @@ def test_markup_also_applies_to_a_single_not_a_group(session):
     session.commit()
 
     singles, _groups, _ = build_set_grouped_rows(session, status=ShopListingStatus.ACTIVE, letter_policy="Letter", min_set_size=2)
-    assert singles[0]["price"] == "11.30"
+    assert singles[0]["price"] == "11.00"
 
 
 def test_set_grouped_rows_includes_a_non_pokemon_set(session):

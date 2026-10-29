@@ -132,6 +132,7 @@ GAME_ITEM_SPECIFICS: dict[str, tuple[str, str]] = {
     "dragon_ball_super_divers": ("Dragon Ball", "Bandai"),
     "super_dragon_ball_heroes": ("Dragon Ball", "Bandai"),
     "dragon_ball_carddass": ("Dragon Ball", "Bandai"),
+    "dragon_ball_itajaga": ("Dragon Ball", "Bandai"),
     # NOT Bandai either -- this catalogue's only dragon_ball_art_card set
     # is dbha10-unofficial, whose own name says "(Unofficial)" (confirmed
     # 2026-09-28: a fan-made product, not a real Bandai release). Claiming
@@ -174,6 +175,7 @@ GAME_DISPLAY_NAMES: dict[str, str] = {
     "dragon_ball_z": "Dragon Ball Z Card Game",
     "dragon_ball_super_divers": "Dragon Ball Super Divers",
     "super_dragon_ball_heroes": "Super Dragon Ball Heroes",
+    "dragon_ball_itajaga": "Dragon Ball Itajaga",
 }
 
 # Verified against eBay's own category URLs (multiple independent listing
@@ -267,8 +269,14 @@ def _build_description(row: dict, *, is_lot: bool, name: str, number: str, game_
 
 def convert_row(row: dict, args) -> dict:
     is_lot = "bulk lot" in row["title"].lower()
-    title = sanitize_title(row["title"])
-    name, _, number = title.partition(" #")
+    internal_title = sanitize_title(row["title"])
+    title = sanitize_title(row.get("ebay_title") or internal_title)
+    parsed_name, _, parsed_number = internal_title.partition(" #")
+    # New exports carry the canonical identity separately because the
+    # buyer-facing title now contains set/rarity/game/language too.  Keep
+    # the fallback for older saved intermediate CSVs.
+    name = sanitize_title(row.get("card_name") or parsed_name)
+    number = sanitize_title(row.get("card_number") or parsed_number)
     franchise, manufacturer = GAME_ITEM_SPECIFICS.get(row.get("game") or "pokemon", (FRANCHISE, MANUFACTURER))
     game_name = GAME_DISPLAY_NAMES.get(row.get("game") or "pokemon")
 

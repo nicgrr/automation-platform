@@ -44,7 +44,11 @@ def main(argv: list[str] | None = None) -> int:
         fixed = 0
         for listing in active:
             item = session.get(InventoryItem, listing.inventory_item_id)
-            if item is None or item.status == InventoryStatus.AVAILABLE:
+            # LISTED is a healthy state for stock behind an active listing.
+            # This repair is deliberately limited to stock that is actually
+            # gone; treating every non-AVAILABLE state as sold would withdraw
+            # legitimate LISTED inventory.
+            if item is None or item.status != InventoryStatus.SOLD:
                 continue
 
             before = {"status": listing.status.value, "quantity": listing.quantity}

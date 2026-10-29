@@ -1,5 +1,5 @@
 [Unit]
-Description=EzBay daily eBay active-listings cache refresh
+Description=EzBay near-live eBay active-listings cache refresh
 After=network-online.target
 Wants=network-online.target
 

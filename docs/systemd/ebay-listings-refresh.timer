@@ -1,12 +1,13 @@
 [Unit]
-Description=Refresh the eBay active-listings cache daily
+Description=Refresh the eBay active-listings cache every 10 minutes
 
 [Timer]
-# A few minutes after the eBay price refresh (03:17) and well clear of the
-# noon pokemonpricetracker backfill and the ten-minutely order import --
-# same reasoning as ebay-price-import.timer's own placement.
-OnCalendar=*-*-* 03:31:00
-RandomizedDelaySec=300
+# Five minutes after the ten-minutely order import. This keeps the CRM's
+# active-listing count close to eBay without making both jobs compete for
+# the API and database at the same moment.
+OnCalendar=*-*-* *:05/10:00
+RandomizedDelaySec=45
+AccuracySec=30s
 Persistent=true
 
 [Install]

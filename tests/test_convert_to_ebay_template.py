@@ -175,6 +175,19 @@ def test_a_single_card_row_splits_name_and_number_from_the_title():
     assert "C:Number of Cards" not in out
 
 
+def test_exact_printing_title_does_not_pollute_card_name_or_number_specifics():
+    out = convert_row(_row(
+        title="Son Goku #FB11-121",
+        ebay_title="Son Goku FB11-121 Brightness of Hope SCR DB Fusion World Japanese",
+        card_name="Son Goku",
+        card_number="FB11-121",
+    ), _args())
+
+    assert out["*Title"] == "Son Goku FB11-121 Brightness of Hope SCR DB Fusion World Japanese"
+    assert out["C:Card Name"] == "Son Goku"
+    assert out["C:Card Number"] == "FB11-121"
+
+
 def test_a_card_name_over_65_chars_is_truncated_not_rejected():
     """Real upload failure (2026-09-26, ErrorCode 21919308): 'Card Name's
     value of "Majin Buu : Evil - FB04-091 (Dragon Ball Z Dokkan Battle

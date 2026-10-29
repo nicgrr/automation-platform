@@ -70,10 +70,14 @@ from .models import (
     EbayExportItem,
     EbayExportItemStatus,
     EbayListing,
+    EbayListingLink,
+    EbayListingLinkStatus,
     ShopListing,
     ShopListingStatus,
     TcgCard,
 )
+from .pricing_safety import assess_listing_price
+from .listing_quality import australian_active_listings_url, australian_sold_listings_url
 from .ui import brand_header, page
 
 router = APIRouter()
@@ -152,6 +156,26 @@ def _latest_export_items(session: Session) -> dict[str, EbayExportItem]:
 
 def _blocks_export(item: EbayExportItem | None) -> bool:
     return bool(item and item.status in (EbayExportItemStatus.PENDING, EbayExportItemStatus.CONFIRMED))
+
+
+_DIRECT_LINK_BLOCKING_STATUSES = (
+    EbayListingLinkStatus.PUBLISHING,
+    EbayListingLinkStatus.ACTIVE,
+    EbayListingLinkStatus.ENDING,
+    # A failed direct run may still have created an Inventory API offer.
+    # Its own retry path knows how to discover and reuse that offer; sending
+    # the same SKU through File Exchange instead could create a duplicate.
+    EbayListingLinkStatus.FAILED,
+)
+
+
+def _direct_links_blocking_export(session: Session) -> dict[str, EbayListingLink]:
+    return {
+        link.shop_listing_id: link
+        for link in session.scalars(
+            select(EbayListingLink).where(EbayListingLink.status.in_(_DIRECT_LINK_BLOCKING_STATUSES))
+        ).all()
+    }
 
 
 def _active_variation_parents(session: Session) -> dict[str, EbayListing]:
@@ -243,6 +267,7 @@ def _build_populations(session: Session, settings):
         _enforce_ebay_min_price(cards)
 
     latest = _latest_export_items(session)
+    direct_links = _direct_links_blocking_export(session)
     active_parents = _active_variation_parents(session)
     tracked: list[dict] = []
     new_for_existing: list[dict] = []
@@ -259,7 +284,10 @@ def _build_populations(session: Session, settings):
     eligible_singles = []
     for row in singles:
         item = latest.get(row["sku"])
-        if _blocks_export(item):
+        direct_link = direct_links.get(row["sku"])
+        if direct_link is not None:
+            tracked.append({"row": row, "status": f"direct_{direct_link.status.value}", "via": "direct"})
+        elif _blocks_export(item):
             tracked.append({"row": row, "status": item.status.value, "via": "sku"})
         else:
             eligible_singles.append(row)
@@ -284,7 +312,10 @@ def _build_populations(session: Session, settings):
             already_listed = []
             for card in cards:
                 child = latest.get(card["sku"])
-                if _blocks_export(child):
+                direct_link = direct_links.get(card["sku"])
+                if direct_link is not None:
+                    tracked.append({"row": card, "status": f"direct_{direct_link.status.value}", "via": "direct"})
+                elif _blocks_export(child):
                     tracked.append({"row": card, "status": child.status.value, "via": "sku"})
                 elif _created_after_parent(created_by_sku.get(card["sku"]), active_parent):
                     new_for_existing.append(card)
@@ -303,7 +334,10 @@ def _build_populations(session: Session, settings):
             # can add them to the existing parent.
             for card in cards:
                 child = latest.get(card["sku"])
-                if _blocks_export(child):
+                direct_link = direct_links.get(card["sku"])
+                if direct_link is not None:
+                    tracked.append({"row": card, "status": f"direct_{direct_link.status.value}", "via": "direct"})
+                elif _blocks_export(child):
                     tracked.append({"row": card, "status": child.status.value, "via": "sku"})
                 else:
                     eligible_singles.append(card)
@@ -312,7 +346,10 @@ def _build_populations(session: Session, settings):
         available = []
         for card in cards:
             item = latest.get(card["sku"])
-            if _blocks_export(item):
+            direct_link = direct_links.get(card["sku"])
+            if direct_link is not None:
+                tracked.append({"row": card, "status": f"direct_{direct_link.status.value}", "via": "direct"})
+            elif _blocks_export(item):
                 tracked.append({"row": card, "status": item.status.value, "via": "sku"})
             else:
                 available.append(card)
@@ -342,7 +379,7 @@ def _group_by_set(rows: list[dict]) -> dict[str, list[dict]]:
     return dict(sorted(groups.items()))
 
 
-def _row_html(row: dict, *, checked: bool, extra_label: str = "") -> str:
+def _row_html(row: dict, *, checked: bool, extra_label: str = "", pricing_hold=None) -> str:
     price = Decimal(row["price"])
     # English is the overwhelming default and gets no badge; a set-level
     # (Japanese) suffix on the group heading already covers a card that's
@@ -353,24 +390,42 @@ def _row_html(row: dict, *, checked: bool, extra_label: str = "") -> str:
     # incident was about, so it's flagged here too, at the row itself.
     language = row.get("language") or "English"
     language_badge = f" &middot; <b class='xlang'>{escape(language)}</b>" if language != "English" else ""
+    held = bool(pricing_hold and pricing_hold.blocked)
+    hold_label = (
+        f" &middot; <b class='xhold'>PRICING HOLD &mdash; review floor ${pricing_hold.review_floor:,.2f}</b>"
+        f"<span class='xproof'>Proof: {escape(pricing_hold.strongest.label)} AU ${pricing_hold.strongest.value_aud:.2f}, "
+        f"observed {pricing_hold.strongest.observed_at.astimezone(UTC):%-d %b %Y} UTC. "
+        f"<a href='{escape(australian_active_listings_url(row['title']), quote=True)}' target='_blank' "
+        "rel='noopener noreferrer' onclick='event.stopPropagation()'>Active eBay</a> &middot; "
+        f"<a href='{escape(australian_sold_listings_url(row['title']), quote=True)}' target='_blank' "
+        "rel='noopener noreferrer' onclick='event.stopPropagation()'>Sold eBay</a></span>"
+        "<span class='xoverride-note'>Tick to override the hold and include this listing</span>"
+        if held else ""
+    )
+    checkbox_name = "pricing_override" if held else "sku"
     return (
-        "<label class='xrow'>"
-        f"<input type='checkbox' name='sku' value='{escape(row['sku'])}' {'checked' if checked else ''}>"
+        f"<label class='xrow{' xrow-held' if held else ''}'>"
+        f"<input type='checkbox' name='{checkbox_name}' value='{escape(row['sku'])}' "
+        f"{'checked' if checked and not held else ''} aria-label='"
+        f"{'Override pricing hold and include listing' if held else 'Include listing'}'>"
         f"<img class='xthumb' src='{escape(row['image_url'])}' loading='lazy' alt=''>"
         "<span class='xinfo'>"
         f"<span class='xtitle'>{escape(row['title'])}</span>"
         f"<span class='xmeta'>{row['condition'] and escape(row['condition']) + ' &middot; ' or ''}"
         f"qty {escape(str(row['quantity']))}"
-        f"{language_badge}{extra_label}</span>"
+        f"{language_badge}{extra_label}{hold_label}</span>"
         "</span>"
         f"<span class='xprice'>{escape(row['currency'])} ${price:,.2f}</span>"
         "</label>"
     )
 
 
-def _set_group_html(set_name: str, rows: list[dict], *, group_id: str) -> str:
+def _set_group_html(set_name: str, rows: list[dict], *, group_id: str, pricing_holds=None) -> str:
     total = sum(Decimal(r["price"]) for r in rows)
-    items = "".join(_row_html(r, checked=True) for r in rows)
+    pricing_holds = pricing_holds or {}
+    items = "".join(
+        _row_html(r, checked=True, pricing_hold=pricing_holds.get(r["sku"])) for r in rows
+    )
     return (
         f"<details class='xgroup'{' open' if len(rows) <= 5 else ''}>"
         f"<summary><label class='xgroup-all'>"
@@ -564,6 +619,19 @@ def ebay_export_page(request: Request, error: str = "", notice: str = "",
     single_groups = _group_by_set(singles)
     new_for_existing_groups = _group_by_set(new_for_existing)
 
+    candidate_rows = [*singles, *new_for_existing]
+    for rows in variation_groups.values():
+        candidate_rows.extend(rows)
+    candidate_skus = {row["sku"] for row in candidate_rows}
+    candidate_listings = session.scalars(
+        select(ShopListing).where(ShopListing.id.in_(candidate_skus))
+    ).all() if candidate_skus else []
+    pricing_holds = {
+        listing.id: assessment
+        for listing in candidate_listings
+        if (assessment := assess_listing_price(session, listing)).blocked
+    }
+
     error_html = f"<p class='linkfill-note bad'>{escape(error)}</p>" if error else ""
     notice_html = f"<p class='linkfill-note ok'>{escape(notice)}</p>" if notice else ""
 
@@ -588,23 +656,33 @@ def ebay_export_page(request: Request, error: str = "", notice: str = "",
         f"{tracked_counts['confirmed']} confirmed</div></div>"
         f"<div class='stat-card'><div class='label'>Bulk Master lots</div><div class='value'>{len(lots)}</div>"
         "<div class='value-sub'>not exportable yet, see below</div></div>"
+        f"<div class='stat-card'><div class='label'>Pricing safety holds</div>"
+        f"<div class='value'>{len(pricing_holds)}</div>"
+        "<div class='value-sub'>review or override individually</div></div>"
         "</div>"
         f"<p class='subtitle'>Every Dragon Ball card, and every Pokémon card rarer than Uncommon, is priced "
-        f"{EBAY_FEE_MARKUP_PCT}% over market here to cover eBay's own cut -- "
+        f"{EBAY_FEE_MARKUP_PCT}% over its reviewed inventory price for eBay -- "
         "singles and variation groups both, wherever the card lands below.</p>"
+        + (
+            f"<p class='linkfill-note bad'><b>{len(pricing_holds)} card{'s are' if len(pricing_holds) != 1 else ' is'} "
+            "on a pricing safety hold.</b> The proposed price is materially below recent market evidence. "
+            "Verify the exact card and price, then tick that card's override checkbox if you still want to "
+            "include it. Overrides are recorded in the export audit.</p>"
+            if pricing_holds else ""
+        )
     )
 
     singles_html = (
-        "".join(_set_group_html(name, rows, group_id=f"s-{i}") for i, (name, rows) in enumerate(single_groups.items()))
+        "".join(_set_group_html(name, rows, group_id=f"s-{i}", pricing_holds=pricing_holds) for i, (name, rows) in enumerate(single_groups.items()))
         if singles else "<p class='muted'>No active singles ready to export.</p>"
     )
     variation_html = (
-        "".join(_set_group_html(name, rows, group_id=f"v-{i}") for i, (name, rows) in enumerate(variation_groups.items()))
+        "".join(_set_group_html(name, rows, group_id=f"v-{i}", pricing_holds=pricing_holds) for i, (name, rows) in enumerate(variation_groups.items()))
         if variation_groups else "<p class='muted'>No new variation listings are ready right now.</p>"
     )
     new_for_existing_html = (
         "".join(
-            _set_group_html(name, rows, group_id=f"u-{i}")
+            _set_group_html(name, rows, group_id=f"u-{i}", pricing_holds=pricing_holds)
             for i, (name, rows) in enumerate(new_for_existing_groups.items())
         )
         if new_for_existing else "<p class='muted'>No newly scanned cards need attention inside an existing variation.</p>"
@@ -680,6 +758,7 @@ def ebay_export_page(request: Request, error: str = "", notice: str = "",
         + "</div>"
         + _ledger_html(session)
         + _SCRIPT + _STYLE
+        + "<style>.xrow-held{background:#fff4f4}.xhold{color:var(--bad,#b42318)}</style>"
     )
     return HTMLResponse(page("EzBay — eBay bulk upload file", body))
 
@@ -735,9 +814,40 @@ async def ebay_export_build(request: Request,
     # "unlimited", so a runaway form still fails loudly instead of the
     # request body growing without bound.
     form = await request.form(max_fields=MAX_EXPORT_FIELDS, max_files=0)
-    selected = set(form.getlist("sku"))
+    pricing_overrides = set(form.getlist("pricing_override"))
+    selected = set(form.getlist("sku")) | pricing_overrides
     if not selected:
         return RedirectResponse(f"/ebay-export?error={quote('Nothing selected -- tick at least one listing first.')}", status_code=303)
+
+    # Re-run the same pricing gate used by direct Inventory API publication
+    # at submit time. The page may have been open while prices refreshed,
+    # and a hand-crafted POST must not bypass the review UI. Bulk-lot SKUs
+    # are ignored here: this guard is for individually valued cards.
+    selected_listings = session.scalars(
+        select(ShopListing).where(ShopListing.id.in_(selected))
+    ).all()
+    unsafe = [
+        (listing, assessment)
+        for listing in selected_listings
+        if (assessment := assess_listing_price(session, listing)).blocked
+        and listing.id not in pricing_overrides
+    ]
+    if unsafe:
+        examples = "; ".join(
+            f"{listing.title}: ${assessment.proposed_price:.2f} (review floor ${assessment.review_floor:.2f})"
+            for listing, assessment in unsafe[:5]
+        )
+        more = f"; plus {len(unsafe) - 5} more" if len(unsafe) > 5 else ""
+        reason = (
+            f"Pricing safety stopped {len(unsafe)} selected card(s). {examples}{more}. "
+            "Review their prices before exporting."
+        )
+        _record(session, user, correlation_id, "failed", {
+            "stage": "pricing_safety", "blocked": len(unsafe),
+            "skus": [listing.id for listing, _assessment in unsafe],
+            "requested_overrides": sorted(pricing_overrides),
+        })
+        return RedirectResponse(f"/ebay-export?error={quote(reason)}", status_code=303)
 
     args = _convert_args(settings)
     (
@@ -841,6 +951,10 @@ async def ebay_export_build(request: Request,
     _record(session, user, correlation_id, "success", {
         "rows": len(out_rows), "selected": len(selected), "bytes": len(content),
         "variation_skipped": len(variation_skipped), "batch_id": batch.id,
+        "pricing_safety_overrides": sorted(
+            listing.id for listing in selected_listings
+            if listing.id in pricing_overrides and assess_listing_price(session, listing).blocked
+        ),
     })
 
     return Response(
@@ -1078,12 +1192,12 @@ def ebay_export_retry_batch(batch_id: str, user: str = Depends(require_dashboard
 
 _SCRIPT = """<script>
 function toggleGroup(id, checked) {
-  document.getElementById(id).querySelectorAll("input[type=checkbox]").forEach(cb => cb.checked = checked);
+  document.getElementById(id).querySelectorAll("input[type=checkbox][name=sku]:not(:disabled)").forEach(cb => cb.checked = checked);
 }
 function toggleAll(prefix, checked) {
   document.querySelectorAll("details.xgroup").forEach(d => {
     if (d.querySelector(".xrows").id.startsWith(prefix + "-")) {
-      d.querySelectorAll("input[type=checkbox]").forEach(cb => cb.checked = checked);
+      d.querySelectorAll("input[type=checkbox][name=sku]:not(:disabled)").forEach(cb => cb.checked = checked);
     }
   });
 }
@@ -1213,6 +1327,8 @@ _STYLE = """<style>
 .xtitle{font-size:13.5px;font-weight:600;word-break:break-word}
 .xmeta{font-size:11.5px;color:var(--text-dim)}
 .xlang{color:var(--accent);font-weight:700}
+.xoverride-note{display:block;margin-top:3px;color:var(--bad,#b42318);font-weight:650}
+.xproof{display:block;margin-top:3px;color:var(--text-dim)}
 .xpanel-fold summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
 .xpanel-fold summary::-webkit-details-marker{display:none}
 .xpanel-fold summary::before{content:"\25B8";font-size:12px;color:var(--text-dim);transition:transform .15s ease}

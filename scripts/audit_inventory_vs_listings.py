@@ -32,7 +32,7 @@ a glance whether the printed detail is worth reading.
 import sys
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
@@ -40,6 +40,7 @@ from automation_control.discord_notify import send_discord_message
 from automation_control.ebay_bulk_export import _latest_export_items, _variation_group_children
 from automation_control.models import (
     CatalogItem,
+    AuditEvent,
     EbayExportItemStatus,
     EbayImportedOrder,
     InventoryItem,
@@ -58,6 +59,21 @@ def check_sold_but_available(session) -> list[str]:
     ).all()
     findings = []
     for order_row, listing in rows:
+        # A cancelled eBay order may legitimately be followed by the owner
+        # restoring and relisting the same stock.  Keep the imported order as
+        # immutable history, but do not report it as an overselling risk once
+        # that explicit restoration has been audited after the sale was
+        # applied.
+        restored_at = session.scalar(
+            select(func.max(AuditEvent.occurred_at)).where(
+                AuditEvent.action == "listing.cancelled_order_stock_restored",
+                AuditEvent.resource_type == "shop_listing",
+                AuditEvent.resource_id == listing.id,
+                AuditEvent.outcome == "success",
+            )
+        )
+        if restored_at is not None and restored_at >= order_row.applied_at:
+            continue
         if not listing.inventory_item_id:
             continue
         inv = session.get(InventoryItem, listing.inventory_item_id)
@@ -77,7 +93,7 @@ def check_active_listing_gone_inventory(session) -> list[str]:
         inv = session.get(InventoryItem, listing.inventory_item_id)
         if inv is None:
             findings.append(f"{listing.title}  ({listing.id})  -- inventory_item_id points to a deleted row")
-        elif inv.status != InventoryStatus.AVAILABLE:
+        elif inv.status not in (InventoryStatus.AVAILABLE, InventoryStatus.LISTED):
             findings.append(f"{listing.title}  ({listing.id})  -- ACTIVE but inventory is {inv.status.value}")
     return findings
 

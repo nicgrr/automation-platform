@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,7 +42,18 @@ class EbaySandboxReadAdapter:
 
     async def _get(self, path: str, **kwargs: Any) -> dict:
         headers = {**self._headers(), **kwargs.pop("headers", {})}
-        response = await self.client.get(f"{self.base_url}{path}", headers=headers, **kwargs)
+        response = None
+        for attempt in range(3):
+            try:
+                response = await self.client.get(f"{self.base_url}{path}", headers=headers, **kwargs)
+                break
+            except httpx.TransportError as exc:
+                if attempt == 2:
+                    raise EbayApiError(
+                        f"eBay {self.environment} API could not be reached after 3 attempts: {exc}"
+                    ) from exc
+                await asyncio.sleep(0.5 * (2 ** attempt))
+        assert response is not None
         if response.status_code >= 400:
             raise EbayApiError(f"eBay {self.environment} API request failed ({response.status_code})")
         return response.json()

@@ -44,6 +44,7 @@ from .database import get_session
 from .ebay_oauth import OAuthError, ebay_services, valid_user_access_token
 from .models import CardSet, CatalogCard, CatalogItem, EbayListing, InventoryItem
 from .ui import brand_header, page
+from .listing_quality import australian_sold_listings_url
 
 router = APIRouter()
 
@@ -132,7 +133,16 @@ def _upsert(session: Session, listings: list[ActiveListing]) -> int:
 
 
 def _cached_rows(session: Session) -> list[EbayListing]:
-    rows = session.scalars(select(EbayListing).order_by(EbayListing.observed_at.desc())).all()
+    # This page is the seller's current eBay inventory, not a history view.
+    # Ended rows remain in the mirror for audit/reconciliation purposes, but
+    # showing them here made the page claim that cancelled and sold listings
+    # were still live (most visibly after eBay's Relist action created a new
+    # item id for the same card).
+    rows = session.scalars(
+        select(EbayListing)
+        .where(EbayListing.listing_status == "Active")
+        .order_by(EbayListing.observed_at.desc())
+    ).all()
     return [r for r in rows if (r.raw_snapshot or {}).get("source") == SOURCE]
 
 
@@ -245,6 +255,8 @@ def _detail_html(row: EbayListing) -> str:
 
     return (
         "<a class='back-link' href='/ebay-listings'>&larr; Back to eBay listings</a>"
+        "<p><a class='btn ghost' href='/shop-listings'>Back to Listing Studio</a> "
+        f"<a class='btn ghost' href='{escape(australian_sold_listings_url(row.title), quote=True)}' target='_blank' rel='noopener noreferrer'>Sold listings · Australia</a></p>"
         f"<h1 class='page-title'>{escape(row.title)}</h1>"
         f"<p class='subtitle'>{escape(row.ebay_listing_id)}"
         f"{' &middot; ' + escape(listing_type) if listing_type else ''}</p>"

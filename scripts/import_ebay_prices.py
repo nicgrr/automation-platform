@@ -58,6 +58,9 @@ from automation_control.adapters.ebay import EbayApiError, EbaySandboxReadAdapte
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import OAuthError, configured, ebay_services
+from automation_control.rarity import (
+    is_single_raw_card, listing_is_wrong_language, listing_matches_card, printing_families,
+)
 from automation_control.models import (
     CardPrice, CardSet, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem, InventoryStatus,
     SealedProduct, TcgCard,
@@ -114,6 +117,10 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
         # relevance filter throw away every genuine result.
         base_name = re.sub(r"\s+-\s+[A-Z0-9]+-\d+\b.*$", "", item.name).strip()
         base_name = re.sub(r"\s*\((?:\d+|reprint)\)\s*$", "", base_name, flags=re.I).strip() or item.name
+        # A trailing "(Serial Numbered)" / "(Parallel)" names the printing, not
+        # the card: no listing title contains it verbatim, and the printing is
+        # matched separately (rarity.listing_matches_card) in _price_values.
+        base_name = re.sub(r"(?:\s*\([^)]*\))+\s*$", "", base_name).strip() or base_name
         language = " Japanese" if (tcg.language or "").lower() == "japanese" else ""
         if tcg.set_code and tcg.number:
             # Some rows store the full printed code ("OP07-029") as the number.
@@ -125,12 +132,25 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
             # "... FB03-070 FB03-070".
             if code.lower() in item.name.lower():
                 return f"{item.name}{language}".strip(), base_name
-            return f"{base_name} {code}{language}".strip(), base_name
+            return f"{base_name} {code}{language}{_printing_words(f"{item.name} {tcg.parallel or ''}")}".strip(), base_name
         if set_name and tcg.number:
             return f"{item.name} {set_name} {tcg.number}".strip(), item.name
         if tcg.number:
             return f"{item.name} {tcg.number}".strip(), item.name
     return item.name, item.name
+
+
+# Words that steer eBay's search toward the right printing of a code. The
+# listing filter (rarity.listing_matches_card) is what actually enforces it.
+_PRINTING_QUERY_WORDS = {"serial": "serial numbered", "manga": "manga", "wanted": "wanted", "sp": "SP", "alt": "alt art"}
+
+
+def _printing_words(name: str) -> str:
+    families = printing_families(name)
+    for family in ("serial", "manga", "wanted", "sp", "alt"):
+        if family in families:
+            return f" {_PRINTING_QUERY_WORDS[family]}"
+    return ""
 
 
 # Confirmed live pricing sealed product (2026-09-11): a genuine, single-box
@@ -144,7 +164,26 @@ def build_query(item: CatalogItem, tcg: TcgCard | None, set_name: str | None = N
 _MULTIPLE_UNIT_MARKERS = ("pair", "bundle", "lot of", "both ", " x2", " x3", " x4", " x5", "case of", "2x ", "3x ")
 
 
-def _price_values(listings: list[dict], must_contain: str | None = None, exclude_multiples: bool = False) -> list[Decimal]:
+# A listing priced more than this many times the median of the others is a
+# different (rarer) printing that slipped through, not the going rate.
+_OUTLIER_FACTOR = 5
+
+
+def _drop_outliers(values: list[Decimal]) -> list[Decimal]:
+    """Trim a stray far-too-dear listing (a rarer printing that slipped
+    through) and, with enough data, a far-too-cheap one (a mislabelled
+    or damaged copy), so neither becomes the "low" or skews the median."""
+    if len(values) < 3:
+        return values
+    median = Decimal(str(statistics.median(values)))
+    kept = [v for v in values if v <= median * _OUTLIER_FACTOR]
+    if len(kept) >= 5:
+        kept = [v for v in kept if v >= median / _OUTLIER_FACTOR]
+    return kept or values
+
+
+def _price_values(listings: list[dict], must_contain: str | None = None, exclude_multiples: bool = False,
+                  card_name: str | None = None, language: str | None = None) -> list[Decimal]:
     """Prices of the listings that actually look like the thing we asked
     for. eBay's search is fuzzy and happily returns adjacent products, so
     a title that doesn't even mention the item is dropped rather than
@@ -167,6 +206,12 @@ def _price_values(listings: list[dict], must_contain: str | None = None, exclude
             continue
         if exclude_multiples and any(marker in title for marker in _MULTIPLE_UNIT_MARKERS):
             continue
+        if card_name is not None and not (
+            is_single_raw_card(title)
+            and not listing_is_wrong_language(title, language)
+            and listing_matches_card(title, card_name)
+        ):
+            continue
         raw = listing.get("price")
         if raw is None:
             continue
@@ -176,7 +221,7 @@ def _price_values(listings: list[dict], must_contain: str | None = None, exclude
             continue
         if value > 0:
             values.append(value)
-    return values
+    return _drop_outliers(values)
 
 
 def _targets(session, *, price_all: bool, game: str | None, limit: int,
@@ -237,9 +282,11 @@ def _targets(session, *, price_all: bool, game: str | None, limit: int,
 async def _price_one(adapter, item: CatalogItem, tcg: TcgCard | None, set_name: str | None, collectible: CollectibleProduct | None,
                      marketplace: str, sealed: SealedProduct | None = None) -> tuple[list[Decimal], str | None, int]:
     query, must_contain = build_query(item, tcg, set_name, collectible, sealed)
-    payload = await adapter.search_market(query, limit=20, marketplace=marketplace)
+    payload = await adapter.search_market(query, limit=50, marketplace=marketplace)
     listings = normalize_market(payload)
-    values = _price_values(listings, must_contain, exclude_multiples=sealed is not None)
+    values = _price_values(listings, must_contain, exclude_multiples=sealed is not None,
+                           card_name=f"{item.name} {tcg.parallel or ''}".strip() if tcg is not None else None,
+                           language=tcg.language if tcg is not None else None)
     currency = next((listing.get("currency") for listing in listings if listing.get("currency")), None)
     return values, currency, len(listings)
 

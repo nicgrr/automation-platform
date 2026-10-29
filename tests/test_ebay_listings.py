@@ -241,6 +241,10 @@ def test_a_delisted_item_stops_appearing_on_the_page_but_the_row_stays(client, s
         client.post("/ebay-listings/refresh")
 
     assert session.query(EbayListing).count() == 2  # row for "b" untouched, not deleted
+    page = client.get("/ebay-listings").text
+    assert "Test Item" in page
+    assert "href='/ebay-listings/b'" not in page
+    assert "1 active listing" in page
 
 
 def test_a_sell_api_row_does_not_appear_on_this_page(client, session):

@@ -8,7 +8,25 @@ from sqlalchemy.orm import Session
 from automation_control.api import app
 from automation_control.auth import require_dashboard_user
 from automation_control.database import Base, get_session
-from automation_control.models import EbayImportedOrder
+from automation_control.models import (
+    CardSet,
+    CardVariant,
+    CatalogItem,
+    CatalogItemType,
+    EbayBulkPickItem,
+    EbayBulkPickManifest,
+    EbayExportBatch,
+    EbayExportItem,
+    EbayExportItemStatus,
+    EbayImportedOrder,
+    EbayListing,
+    InventoryItem,
+    InventoryStatus,
+    ShopListing,
+    ShopListingStatus,
+    StorageLocation,
+    TcgCard,
+)
 
 
 @pytest.fixture
@@ -157,3 +175,189 @@ def test_a_completed_order_is_collapsed_by_default(client, session):
     body = client.get("/ebay-sales?status=completed").text
     assert "<details class='panel order-block' open>" not in body
     assert "<details class='panel order-block'>" in body
+
+
+def make_bulk_order(session, ebay_order_id="ORD-BULK"):
+    row = make_order(session, ebay_order_id)
+    snapshot = dict(row.raw_snapshot)
+    snapshot["lineItems"] = list(snapshot["lineItems"]) + [{
+        "lineItemId": "bulk-line-1",
+        "legacyItemId": "267785473779",
+        "title": "Pokemon TCG Bulk Lot 150+ Cards Common Uncommon Mixed Sets NM-LP",
+        "lineItemCost": {"value": "25.95", "currency": "AUD"},
+    }]
+    row.raw_snapshot = snapshot
+    session.commit()
+    return row
+
+
+def seed_bulk_candidates(session):
+    set_names = (
+        "Prismatic Evolutions", "White Flare", "Phantasmal Flames", "Perfect Order", "Black Bolt",
+    )
+    batch = EbayExportBatch(filename="confirmed.csv", row_count=150, selected_count=150)
+    session.add(batch)
+    session.flush()
+    for set_index, set_name in enumerate(set_names):
+        set_id = f"set-{set_index}"
+        session.add(CardSet(id=set_id, name=set_name, game="pokemon"))
+        parent_id = f"parent-{set_index}"
+        session.add(EbayListing(
+            ebay_listing_id=parent_id, title=f"{set_name} variations", currency="AUD",
+            current_price_minor=100, listing_status="Active", marketplace="EBAY_AU",
+        ))
+        for card_index in range(30):
+            catalog_id = f"card-{set_index}-{card_index}"
+            listing_id = f"listing-{set_index}-{card_index}"
+            inventory_id = f"inventory-{set_index}-{card_index}"
+            session.add(CatalogItem(
+                id=catalog_id, item_type=CatalogItemType.TCG_CARD, name=f"Card {set_index}-{card_index}"
+            ))
+            session.add(TcgCard(
+                catalog_item_id=catalog_id, game="pokemon", set_id=set_id,
+                number=str(card_index + 1), rarity="Common" if card_index % 2 else "Uncommon",
+                language="English",
+            ))
+            session.add(InventoryItem(
+                id=inventory_id, catalog_item_id=catalog_id, card_id=None,
+                variant=CardVariant.NORMAL, condition="Near Mint", quantity=2,
+                status=InventoryStatus.AVAILABLE,
+            ))
+            session.add(ShopListing(
+                id=listing_id, catalog_item_id=catalog_id, inventory_item_id=inventory_id,
+                title=f"Card {set_index}-{card_index}", price="0.20", quantity=2,
+                status=ShopListingStatus.ACTIVE,
+            ))
+            session.add(EbayExportItem(
+                batch_id=batch.id, sku=listing_id, kind="variation_child",
+                status=EbayExportItemStatus.CONFIRMED, ebay_listing_id=parent_id,
+            ))
+    session.commit()
+
+
+def test_sku_less_bulk_line_is_visible_and_blocks_order_completion(client, session):
+    make_bulk_order(session)
+    body = client.get("/ebay-sales").text
+    assert "150+ Cards" in body
+    assert "Build 150-card pick list" in body
+    assert "Finish the bulk-card checklist" in body
+
+    client.post("/ebay-sales/ORD-BULK/complete", follow_redirects=False)
+    row = session.query(EbayImportedOrder).filter_by(ebay_order_id="ORD-BULK").one()
+    assert row.dismissed_at is None
+
+
+def test_building_bulk_manifest_selects_30_distinct_duplicates_from_each_set(client, session):
+    make_bulk_order(session)
+    seed_bulk_candidates(session)
+    response = client.post(
+        "/ebay-sales/ORD-BULK/bulk-picks", data={"line_item_id": "bulk-line-1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    manifest = session.query(EbayBulkPickManifest).one()
+    items = session.query(EbayBulkPickItem).filter_by(manifest_id=manifest.id).all()
+    assert manifest.requested_quantity == 150
+    assert len(items) == 150
+    assert len({item.inventory_item_id for item in items}) == 150
+    assert all(session.get(InventoryItem, item.inventory_item_id).quantity == 2 for item in items)
+
+    body = client.get(f"/ebay-sales/bulk-picks/{manifest.id}").text
+    assert "0 / 150 found" in body
+    for set_name in ("Prismatic Evolutions", "White Flare", "Phantasmal Flames", "Perfect Order", "Black Bolt"):
+        assert f"{set_name} <span class='muted'>0/30</span>" in body
+
+
+def test_bulk_pick_cards_show_the_physical_location(client, session):
+    make_bulk_order(session)
+    seed_bulk_candidates(session)
+    first = session.query(InventoryItem).order_by(InventoryItem.id).first()
+    location = StorageLocation(name="Pokemon Tray-007", kind="card_slot")
+    session.add(location)
+    session.flush()
+    first.storage_location_id = location.id
+    session.commit()
+
+    client.post("/ebay-sales/ORD-BULK/bulk-picks", data={"line_item_id": "bulk-line-1"})
+    manifest = session.query(EbayBulkPickManifest).one()
+    body = client.get(f"/ebay-sales/bulk-picks/{manifest.id}").text
+    assert "Pick location" in body
+    assert "Pokemon Tray-007" in body
+
+
+def test_manifest_cannot_update_stock_until_every_card_is_marked_found(client, session):
+    make_bulk_order(session)
+    seed_bulk_candidates(session)
+    client.post("/ebay-sales/ORD-BULK/bulk-picks", data={"line_item_id": "bulk-line-1"})
+    manifest = session.query(EbayBulkPickManifest).one()
+
+    response = client.post(
+        f"/ebay-sales/bulk-picks/{manifest.id}/confirm",
+        data={"confirmed": "yes"}, follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "All+cards+must+be+found" in response.headers["location"]
+    assert session.query(InventoryItem).filter(InventoryItem.quantity == 1).count() == 0
+
+
+def test_pick_progress_counts_physical_quantity_not_database_rows(client, session):
+    make_bulk_order(session)
+    seed_bulk_candidates(session)
+    client.post("/ebay-sales/ORD-BULK/bulk-picks", data={"line_item_id": "bulk-line-1"})
+    manifest = session.query(EbayBulkPickManifest).one()
+    items = session.query(EbayBulkPickItem).filter_by(manifest_id=manifest.id).all()
+    items[0].quantity = 2
+    items[0].picked_at = datetime.now(UTC)
+    session.delete(items[1])
+    session.commit()
+
+    body = client.get(f"/ebay-sales/bulk-picks/{manifest.id}").text
+    assert "2 / 150 found" in body
+    assert "× 2" in body
+
+
+def test_confirming_a_complete_pick_updates_ebay_then_local_stock(client, session, monkeypatch):
+    make_bulk_order(session)
+    seed_bulk_candidates(session)
+    client.post("/ebay-sales/ORD-BULK/bulk-picks", data={"line_item_id": "bulk-line-1"})
+    manifest = session.query(EbayBulkPickManifest).one()
+    now = datetime.now(UTC)
+    items = session.query(EbayBulkPickItem).filter_by(manifest_id=manifest.id).all()
+    # Aggregate two physical copies into one manifest row, exhausting that
+    # inventory identity. This is the voice-entered picker shape used by the
+    # real 150-card order, and must be allowed to send quantity zero to eBay.
+    items[0].quantity = 2
+    session.delete(items[1])
+    for item in items[0:1] + items[2:]:
+        item.picked_at = now
+    session.commit()
+
+    sent = []
+
+    class FakeAdapter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def revise_inventory_status(self, revisions):
+            assert 1 <= len(revisions) <= 4
+            sent.extend(revisions)
+
+    async def fake_token(*args, **kwargs):
+        return "token"
+
+    monkeypatch.setattr("automation_control.ebay_sales.ebay_services", lambda settings: (object(), object()))
+    monkeypatch.setattr("automation_control.ebay_sales.valid_user_access_token", fake_token)
+    monkeypatch.setattr("automation_control.ebay_sales.EbayTradingQuantityAdapter", FakeAdapter)
+
+    response = client.post(
+        f"/ebay-sales/bulk-picks/{manifest.id}/confirm",
+        data={"confirmed": "yes"}, follow_redirects=False,
+    )
+    assert response.status_code == 303
+    session.expire_all()
+    assert session.get(EbayBulkPickManifest, manifest.id).status == "completed"
+    assert len(sent) == 149
+    assert sum(revision.quantity == 0 for revision in sent) == 1
+    assert session.query(InventoryItem).filter(InventoryItem.quantity == 1).count() == 148
+    assert session.query(ShopListing).filter(ShopListing.quantity == 1).count() == 148
+    assert session.query(ShopListing).filter(ShopListing.status == ShopListingStatus.SOLD_OUT).count() == 1

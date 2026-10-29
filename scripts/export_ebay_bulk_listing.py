@@ -79,6 +79,7 @@ from automation_control.adapters.r2 import R2UploadError, ensure_uploaded, is_co
 from automation_control.classification import load_pipeline_config
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
+from automation_control.ebay_titles import build_single_card_ebay_title
 from automation_control.models import (
     BulkLot, CardSet, CatalogCard, CatalogItem, InventoryItem, ShopListing, ShopListingStatus, TcgCard,
 )
@@ -99,12 +100,12 @@ LOT_PACKAGING_GRAMS = 80
 # toploadered card plus its envelope and stiffener.
 SINGLE_CARD_WEIGHT_GRAMS = 15
 
-FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total", "variant", "set_logo_url", "game", "language"]
+FIELDNAMES = ["sku", "title", "ebay_title", "card_name", "card_number", "description", "condition", "price", "currency", "quantity", "weight_grams", "image_url", "shipping_policy", "set_name", "rarity", "set_total", "variant", "set_logo_url", "game", "language"]
 
-# Nic's request 2026-09-22: list Dragon Ball cards and rare-or-better
-# Pokemon cards 13% over market to cover eBay's own cut (matches eBay
-# AU's real final value fee for this category) rather than have a sale
-# net less than the card's actual market price. See
+# Nic's updated request 2026-10-15: list Dragon Ball cards and rare-or-
+# better Pokemon cards exactly 10% over the reviewed inventory price.
+# This replaces the earlier 13% fee-covering uplift; it is a requested
+# sale-price policy, not a claim that 10% covers every eBay fee. See
 # _needs_ebay_fee_markup/_apply_ebay_fee_markup, applied only in
 # build_set_grouped_rows -- build_single_rows itself keeps returning the
 # listing's real, unmodified price (its own tests assert that), since
@@ -124,7 +125,7 @@ FIELDNAMES = ["sku", "title", "description", "condition", "price", "currency", "
 # website (which has no such minimum).
 EBAY_MIN_FIXED_PRICE = Decimal("1.00")
 
-EBAY_FEE_MARKUP_PCT = Decimal("13")
+EBAY_FEE_MARKUP_PCT = Decimal("10")
 DRAGON_BALL_GAMES = {
     "dragon_ball_fusion_world", "dragon_ball_super", "dragon_ball_z",
     "dragon_ball_super_divers", "super_dragon_ball_heroes",
@@ -434,9 +435,21 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
         if not url:
             skipped.append(f"{listing.title} ({listing.id}) -- no publicly-hosted image on file")
             continue
+        inventory = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
+        card_set = session.get(CardSet, tcg.set_id) if tcg.set_id else None
+        outgoing_title = (
+            build_single_card_ebay_title(item, tcg, card_set, inventory)
+            if item is not None else listing.title
+        )
         rows.append({
             "sku": listing.id,
+            # Keep the short internal title for EzBay's review UI and set
+            # grouping.  The final converter uses this exact-printing title
+            # only for the buyer-facing eBay Title field.
             "title": listing.title,
+            "ebay_title": outgoing_title,
+            "card_name": item.name if item else listing.title,
+            "card_number": tcg.number or "",
             "description": listing.description or listing.title,
             "condition": listing.condition or "",
             "price": f"{listing.price:.2f}",
@@ -502,10 +515,8 @@ def build_set_grouped_rows(session, *, status: ShopListingStatus, letter_policy:
     (set, language) didn't reach min_set_size. Every price is the
     listing's own real price, EXCEPT a Dragon Ball card or a
     rare-or-better Pokemon card, which gets EBAY_FEE_MARKUP_PCT added on
-    top of its full market value (see _needs_ebay_fee_markup) -- both are
-    Nic's explicit choices (2026-09-22): full market value once expensive
-    cards are included in this grouping at all, and a fee-covering markup
-    on the ones actually worth protecting the margin on.
+    top of its reviewed inventory value (see _needs_ebay_fee_markup) --
+    the current policy is the requested 10% eBay uplift.
     """
     all_rows, skipped = build_single_rows(session, status=status, letter_policy=letter_policy,
                                           lot_overlap_max_price=None)
@@ -577,6 +588,8 @@ def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: s
         rows.append({
             "sku": listing.id,
             "title": listing.title,
+            "card_name": item.name if item else listing.title,
+            "card_number": tcg.number or "",
             "description": listing.description or listing.title,
             "condition": listing.condition or "",
             "price": f"{price:.2f}",
