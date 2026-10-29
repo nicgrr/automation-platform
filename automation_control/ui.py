@@ -1312,13 +1312,17 @@ NAV_RETURN_SCRIPT = r"""<script>
   // - ?_saved=<text> on arrival shows a brief toast, then is removed from
   //   the address so a refresh doesn't show it again.
   var TRAIL = 'ezbay-trail', SCROLL = 'ezbay-scroll';
+  // One-off messages a page shows after redirecting to itself. Ignoring
+  // them keeps "?notice=Photo+removed" from counting as a new page, which
+  // would turn the Back link into a reload of the same page.
+  var MESSAGE_PARAMS = ['_saved', 'notice', 'error', 'refreshed', 'checking'];
   function load(key, fallback){
     try { return JSON.parse(sessionStorage.getItem(key)) || fallback; } catch(e){ return fallback; }
   }
   function save(key, value){ try { sessionStorage.setItem(key, JSON.stringify(value)); } catch(e){} }
   function here(){
     var u = new URL(location.href);
-    u.searchParams.delete('_saved');
+    MESSAGE_PARAMS.forEach(function(p){ u.searchParams.delete(p); });
     return u.pathname + u.search;
   }
   function rememberScroll(){

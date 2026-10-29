@@ -21,7 +21,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import Session
@@ -46,6 +46,7 @@ from .models import (
     ShopListingStatus,
     TcgCard,
 )
+from .navigation import redirect_back
 from .ui import brand_header, page, pill
 
 router = APIRouter(tags=["shop-listings"])
@@ -617,7 +618,7 @@ def shop_listings_page(
 
 @router.post("/shop-listings/{listing_id}/activate")
 def activate_listing(
-    listing_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+    listing_id: str, request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     listing = session.get(ShopListing, listing_id)
     if listing is None:
@@ -628,12 +629,12 @@ def activate_listing(
         record_event(session, actor_type="user", actor_id=user, action="shop_listing.activate",
                     resource_type="shop_listing", resource_id=listing_id, outcome="success",
                     correlation_id=listing_id, details={})
-    return RedirectResponse("/shop-listings", status_code=303)
+    return redirect_back(request, "/shop-listings", saved="Listing activated")
 
 
 @router.post("/shop-listings/{listing_id}/withdraw")
 def withdraw_listing(
-    listing_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
+    listing_id: str, request: Request, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     listing = session.get(ShopListing, listing_id)
     if listing is None:
@@ -644,7 +645,7 @@ def withdraw_listing(
         record_event(session, actor_type="user", actor_id=user, action="shop_listing.withdraw",
                     resource_type="shop_listing", resource_id=listing_id, outcome="success",
                     correlation_id=listing_id, details={})
-    return RedirectResponse("/shop-listings", status_code=303)
+    return redirect_back(request, "/shop-listings", saved="Listing hidden")
 
 
 @router.get("/shop-listings/{listing_id}/edit", response_class=HTMLResponse)
@@ -689,7 +690,7 @@ def edit_listing_form(
 
 @router.post("/shop-listings/{listing_id}/edit")
 def edit_listing_save(
-    listing_id: str, title: str = Form(...), price: str = Form(...), quantity: str = Form(...),
+    listing_id: str, request: Request, title: str = Form(...), price: str = Form(...), quantity: str = Form(...),
     condition: str = Form(""), description: str = Form(""), finish: str | None = Form(None),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
@@ -732,11 +733,12 @@ def edit_listing_save(
                 details={"before": before, "after": {"finish": listing.finish, "title": listing.title, "price": str(listing.price),
                                                       "quantity": listing.quantity, "condition": listing.condition,
                                                       "description": listing.description}})
-    return RedirectResponse("/shop-listings", status_code=303)
+    return redirect_back(request, "/shop-listings", saved="Listing saved")
 
 
 @router.post("/shop-listings/activate-all")
 def activate_all_drafts(
+    request: Request,
     status: str = Query("draft"), q: str = Query(""), category: str = Query("all"),
     ebay: str = Query("all"),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
@@ -754,7 +756,7 @@ def activate_all_drafts(
         record_event(session, actor_type="user", actor_id=user, action="shop_listing.activate_all",
                     resource_type="shop_listing", resource_id="bulk", outcome="success",
                     correlation_id=str(uuid.uuid4()), details={"count": count, "query": query})
-    return RedirectResponse("/shop-listings", status_code=303)
+    return redirect_back(request, "/shop-listings", saved="Drafts activated")
 
 
 _STYLE = """<style>

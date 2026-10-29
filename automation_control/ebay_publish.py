@@ -20,7 +20,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
@@ -85,6 +85,7 @@ from .models import (
     TcgCard,
 )
 
+from .navigation import redirect_back
 from .pricing_safety import assess_listing_price
 from .ui import brand_header, page, pill
 
@@ -805,6 +806,7 @@ def _cleanup_review_fingerprint(
 @router.post("/ebay-listing-cleanup/{ebay_listing_id}/dismiss")
 def dismiss_ebay_listing_cleanup(
     ebay_listing_id: str,
+    request: Request,
     fingerprint: str = Form(""),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -834,7 +836,7 @@ def dismiss_ebay_listing_cleanup(
         resource_type="ebay_listing", resource_id=ebay_listing_id, outcome="success",
         correlation_id=str(uuid.uuid4()), details={},
     )
-    return RedirectResponse("/ebay-listing-cleanup", status_code=303)
+    return redirect_back(request, "/ebay-listing-cleanup", saved="Dismissed")
 
 
 def _confirmed_export_target(session: Session, listing_id: str) -> EbayExportItem | None:

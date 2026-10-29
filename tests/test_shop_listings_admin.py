@@ -692,3 +692,20 @@ def test_finish_selector_saves_listing_override_without_changing_rarity(client, 
     session.refresh(listing)
     assert listing.title == 'Fossil #1'
     assert listing.finish == 'masterball_pattern'
+
+
+def test_hiding_a_listing_returns_to_the_filtered_list_it_was_hidden_from(client, session):
+    listing_id = make_listing(session, "Son Gohan", status=ShopListingStatus.ACTIVE)
+    resp = client.post(f"/shop-listings/{listing_id}/withdraw",
+                       params={"_return_to": "/shop-listings?status=active&q=gohan"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/shop-listings?status=active&q=gohan&_saved=Listing+hidden"
+
+
+def test_saving_the_edit_page_returns_to_where_it_was_opened_from(client, session):
+    listing_id = make_listing(session, "Gohan")
+    edit_page = f"/shop-listings/{listing_id}/edit"
+    resp = client.post(edit_page,
+                       params={"_return_to": edit_page, "_return_prev": f"/shop-listings/{listing_id}/ebay-preview"},
+                       data={"title": "Edited", "price": "5.00", "quantity": "1"}, follow_redirects=False)
+    assert resp.headers["location"] == f"/shop-listings/{listing_id}/ebay-preview?_saved=Listing+saved"
