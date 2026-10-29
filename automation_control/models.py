@@ -99,11 +99,30 @@ class CapturePromotionStatus(str, enum.Enum):
 
     PROMOTED = "promoted"
     NEEDS_REVIEW = "needs_review"
+    # The physical copy is safely recorded in Inventory and its local
+    # ShopListing quantity is correct, but an already-live eBay listing must
+    # still be revised.  This is deliberately not NEEDS_REVIEW: retrying the
+    # capture must never count the same physical copy twice.
+    REVISION_REQUIRED = "revision_required"
 
 
 class CaptureBatchStatus(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
+
+
+class ListingPhotoBatchStatus(str, enum.Enum):
+    RUNNING = "running"
+    DONE = "done"
+
+
+class ListingPhotoPairStatus(str, enum.Enum):
+    PROCESSING = "processing"
+    READY = "ready"
+    NEEDS_REVIEW = "needs_review"
+    APPLIED = "applied"
+    PUBLISHED = "published"
+    FAILED = "failed"
 
 
 class ListingBuildStatus(str, enum.Enum):
@@ -553,6 +572,57 @@ class EbayImportedOrder(Base):
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class EbayBulkPickManifest(Base):
+    """A fixed, resumable packing list for a legacy eBay bulk-card line.
+
+    Older bulk listings have no per-card SKU, so the order importer cannot
+    decrement a specific InventoryItem.  A manifest records the exact cards
+    selected to fulfil that line and keeps the physical-picking step separate
+    from the later stock/eBay quantity update.
+    """
+
+    __tablename__ = "ebay_bulk_pick_manifests"
+    __table_args__ = (UniqueConstraint("ebay_order_id", "line_item_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ebay_order_id: Mapped[str] = mapped_column(String(128), index=True)
+    line_item_id: Mapped[str] = mapped_column(String(256))
+    ebay_listing_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    title: Mapped[str] = mapped_column(String(512))
+    requested_quantity: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="picking", index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EbayBulkPickItem(Base):
+    """One physical card reserved for an EbayBulkPickManifest."""
+
+    __tablename__ = "ebay_bulk_pick_items"
+    __table_args__ = (UniqueConstraint("manifest_id", "inventory_item_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("ebay_bulk_pick_manifests.id", ondelete="CASCADE"), index=True
+    )
+    inventory_item_id: Mapped[str] = mapped_column(ForeignKey("inventory_items.id"), index=True)
+    shop_listing_id: Mapped[str] = mapped_column(ForeignKey("shop_listings.id"), index=True)
+    # Variation parent ItemID.  ReviseInventoryStatus identifies the child
+    # using this parent id plus shop_listing_id (the variation SKU).
+    ebay_listing_id: Mapped[str] = mapped_column(String(128), index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    # What the person physically handling the card reported. Usually this
+    # matches InventoryItem.variant; kept separately so a packing list can
+    # preserve a spoken correction without silently rewriting an aggregated
+    # inventory row or the live eBay variation before final confirmation.
+    reported_variant: Mapped[str | None] = mapped_column(String(64))
+    picked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    remote_quantity_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    manifest: Mapped[EbayBulkPickManifest] = relationship()
+
+
 class EbayCategoryMapping(Base):
     """Which eBay category a card belongs to, keyed loosely enough to cover
     most of the catalogue from a handful of seeded rows rather than one
@@ -637,6 +707,11 @@ class CapturedCard(Base):
     rarity: Mapped[str | None] = mapped_column(String(128))
     language: Mapped[str | None] = mapped_column(String(64))
     graded: Mapped[str | None] = mapped_column(String(128))
+    # Condition belongs to the photographed physical copy, not the catalogue
+    # card.  Keeping it on the capture lets the reviewer decide it once and
+    # carry the same value through Inventory and the listing handoff instead
+    # of silently labelling every card Near Mint.
+    condition: Mapped[str | None] = mapped_column(String(64))
     ai_raw_response: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[CardCaptureStatus] = mapped_column(Enum(CardCaptureStatus), default=CardCaptureStatus.PENDING_REVIEW, index=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -691,6 +766,91 @@ class CaptureBatch(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_by: Mapped[str | None] = mapped_column(String(128))
+
+
+class ListingPhotoBatch(Base):
+    """One ordered front/back upload used to repair existing listings.
+
+    Recognition runs in the background and only prepares CRM draft changes;
+    no row in this workflow is itself permission to revise eBay.
+    """
+
+    __tablename__ = "listing_photo_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    total_pairs: Mapped[int] = mapped_column(Integer, default=0)
+    processed_pairs: Mapped[int] = mapped_column(Integer, default=0)
+    ready_pairs: Mapped[int] = mapped_column(Integer, default=0)
+    review_pairs: Mapped[int] = mapped_column(Integer, default=0)
+    failed_pairs: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[ListingPhotoBatchStatus] = mapped_column(
+        Enum(ListingPhotoBatchStatus), default=ListingPhotoBatchStatus.RUNNING, index=True
+    )
+    game_hint: Mapped[str | None] = mapped_column(String(64))
+    storage_tray: Mapped[str | None] = mapped_column(String(32))
+    starting_slot: Mapped[int | None] = mapped_column(Integer)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_by: Mapped[str | None] = mapped_column(String(128))
+
+
+class ListingPhotoPair(Base):
+    """A staged pair and its reviewable listing-repair proposal."""
+
+    __tablename__ = "listing_photo_pairs"
+    __table_args__ = (UniqueConstraint("batch_id", "position", name="uq_listing_photo_pair_position"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("listing_photo_batches.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    front_image_path: Mapped[str] = mapped_column(String(512))
+    back_image_path: Mapped[str | None] = mapped_column(String(512))
+    extracted: Mapped[dict] = mapped_column(JSON, default=dict)
+    matched_shop_listing_id: Mapped[str | None] = mapped_column(
+        ForeignKey("shop_listings.id", ondelete="SET NULL"), index=True
+    )
+    proposed_catalog_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("catalog_items.id", ondelete="SET NULL"), index=True
+    )
+    proposed_title: Mapped[str | None] = mapped_column(String(80))
+    proposed_description: Mapped[str | None] = mapped_column(Text)
+    proposed_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    price_source: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[ListingPhotoPairStatus] = mapped_column(
+        Enum(ListingPhotoPairStatus), default=ListingPhotoPairStatus.PROCESSING, index=True
+    )
+    issue: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class InventoryPlacement(Base):
+    """One photographed physical card in one stable tray slot.
+
+    InventoryItem intentionally aggregates identical copies, so its legacy
+    storage_location_id cannot say where two separate copies live. A placement
+    keeps the physical photo pair and slot distinct while optionally linking
+    back to the aggregate inventory row after recognition succeeds.
+    """
+
+    __tablename__ = "inventory_placements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="SET NULL"), index=True
+    )
+    listing_photo_pair_id: Mapped[str] = mapped_column(
+        ForeignKey("listing_photo_pairs.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    storage_location_id: Mapped[str] = mapped_column(
+        ForeignKey("storage_locations.id"), index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_by: Mapped[str | None] = mapped_column(String(128))
 
 
 class PendingListing(Base):
@@ -1003,6 +1163,9 @@ class PurchaseLot(Base):
     target_buy_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("55"))
     offered_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    # NULL means genuinely unknown. It must never be silently treated as
+    # free shipping when inventory cost is allocated.
+    shipping_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     status: Mapped[PurchaseLotStatus] = mapped_column(Enum(PurchaseLotStatus), default=PurchaseLotStatus.EVALUATING, index=True)
     notes: Mapped[str | None] = mapped_column(Text)
     retailer_id: Mapped[str | None] = mapped_column(ForeignKey("retailers.id"), index=True)
@@ -1340,6 +1503,8 @@ class InventoryItem(Base):
     storage_location_id: Mapped[str | None] = mapped_column(ForeignKey("storage_locations.id"), index=True)
     status: Mapped[InventoryStatus] = mapped_column(Enum(InventoryStatus), default=InventoryStatus.AVAILABLE, index=True)
     allocated_cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    purchase_cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    allocated_shipping_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     grading_company: Mapped[str | None] = mapped_column(String(64))
     # Kept separate from condition: "Near Mint" and "PSA 10" are not two
     # spellings of one fact and must never share pricing comparisons.
@@ -1445,6 +1610,35 @@ class PricingProvider(Base):
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PricingProviderRule(Base):
+    """Operator-configurable provider routing for one catalogue category.
+
+    TCG pricing continues through its existing game-specific pipelines. These
+    rows govern the generic pricing service only, making the collectible
+    provider boundary explicit rather than a set of brand-name exceptions.
+    """
+
+    __tablename__ = "pricing_provider_rules"
+    __table_args__ = (
+        UniqueConstraint("catalog_item_type", "provider_key", name="uq_pricing_provider_rule"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    catalog_item_type: Mapped[CatalogItemType] = mapped_column(Enum(CatalogItemType), index=True)
+    provider_key: Mapped[str] = mapped_column(
+        ForeignKey("pricing_providers.key", ondelete="CASCADE"), index=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    access_mode: Mapped[str] = mapped_column(String(16), default="disabled")
+    allow_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_sold: Mapped[bool] = mapped_column(Boolean, default=False)
+    refresh_seconds: Mapped[int] = mapped_column(Integer, default=86_400)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    limitation: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -1946,6 +2140,17 @@ class ShopListing(Base):
     )
     title: Mapped[str] = mapped_column(String(256))
     description: Mapped[str | None] = mapped_column(Text)
+    # The storefront/admin title has a different job from eBay's search
+    # title.  Keeping an explicit channel override prevents the edit screen
+    # from claiming it changed eBay while ebay_publish silently regenerates
+    # a different title from catalogue metadata.
+    ebay_title: Mapped[str | None] = mapped_column(String(80))
+    ebay_description: Mapped[str | None] = mapped_column(Text)
+    # Ordered, operator-owned photos for the eBay listing. Values may be a
+    # local processed-photo path (uploaded to R2 only after final publish
+    # confirmation) or an existing public HTTPS URL. Originals are kept on
+    # disk beside processed uploads and are never overwritten.
+    ebay_photo_paths: Mapped[list[str] | None] = mapped_column(JSON)
     condition: Mapped[str | None] = mapped_column(String(64))
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     currency: Mapped[str] = mapped_column(String(3), default="AUD")
@@ -1986,6 +2191,7 @@ class ShopOrder(Base):
     email: Mapped[str] = mapped_column(String(256), index=True)
     ship_to_name: Mapped[str] = mapped_column(String(256))
     ship_to_address: Mapped[str] = mapped_column(Text)
+    ship_to_phone: Mapped[str | None] = mapped_column(String(64))
     ship_to_country: Mapped[str] = mapped_column(String(64), default="Australia")
     zone: Mapped[ShippingZone] = mapped_column(Enum(ShippingZone), default=ShippingZone.AU)
     items_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))

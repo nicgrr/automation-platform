@@ -18,6 +18,7 @@ dependencies = [
   "opencv-python-headless>=4.9,<5",
   "openpyxl>=3.1,<4",
   "pillow>=10,<12",
+  "pillow-heif>=1,<2",
   "pydantic-settings>=2.6,<3",
   "pytesseract>=0.3,<1",
   "python-multipart>=0.0.20,<1",

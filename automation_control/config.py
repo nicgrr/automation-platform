@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # this alone never causes a listing to be created or ended on its own.
     # Defaults to sandbox; this app never assumes production on your behalf.
     ebay_env: Literal["sandbox", "production"] = "sandbox"
+    # Both the reviewed CSV/File Exchange workflow and the explicitly
+    # confirmed single-listing Inventory API workflow are supported. This
+    # switch is an emergency/operator control that can force all direct-
+    # publish links back to Bulk Upload without removing listing sync.
+    ebay_bulk_upload_only: bool = False
     ebay_client_id: str | None = None
     ebay_client_secret: str | None = None
     ebay_runame: str | None = None
@@ -97,6 +102,13 @@ class Settings(BaseSettings):
     storefront_gst_statement: str | None = None
     storefront_retention_period: str | None = None
     storefront_legal_approved: bool = False
+    # "shop" runs the cart and checkout; "catalogue" is display-only and sends
+    # buyers to eBay/Vinted/Whatnot instead (see storefront/catalogue.py).
+    storefront_mode: str = "shop"
+    # Comma-separated department slugs shown as "coming soon": the tile and
+    # page stay, but their items are hidden everywhere (see
+    # storefront/departments.py coming_soon_slugs). e.g. "collectibles".
+    storefront_coming_soon: str = ""
     anthropic_api_key: str | None = None
     # Reverse image search for a captured collectible photo (see
     # reverse_image_search.py) -- a real Google Lens actor run on Apify's
@@ -105,6 +117,10 @@ class Settings(BaseSettings):
     apify_token: str | None = None
     apify_google_lens_actor_id: str = "borderline~google-lens"
     captured_cards_dir: str = "captured_cards"
+    # Cards enter as a batch (phone photo batch or flatbed sheet), so every
+    # card follows the same review/pricing/listing handoff.  The legacy
+    # one-photo endpoint remains behind this switch for recovery only.
+    card_bulk_upload_only: bool = True
     pokemontcg_api_key: str | None = None
     # pokemonpricetracker.com -- real TCGPlayer market + eBay sold-comp
     # pricing per specific printing, not pokemontcg.io's snapshot data (see
