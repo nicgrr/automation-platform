@@ -44,7 +44,16 @@ from).
    snapshot first; re-running refuses). The other 12 Needs attention entries
    need no action per Codex's report (8 already withdrawn, 3 live with
    unrecognised `imported` links — a UI classification bug, 1 withdrawn).
-3. **CRM navigation fix (next):** plan below in "Next steps". Throwaway test
+3. **CRM navigation fix (in progress):** plan below in "Next steps".
+   - Batch 1 DONE `ff5c543`: `navigation.redirect_back`, shared ui.py
+     script (return params, trail, scroll, toast, Back link); card edits and
+     photo audit converted; browser-checked; full suite green.
+   - Batch 2 IN PROGRESS (uploads): remember where an upload started
+     (`ezbay_flow_origin` cookie, 1 h, set by capture POSTs from
+     `_return_to`) and return there when the review/pricing queue ends
+     instead of the empty list (capture.py review end, price_review queue
+     end, collectibles and accessories review ends). Personal collection
+     photo upload → `redirect_back`. Next: batch 3 listings, batch 4 pricing. Throwaway test
    instance on 127.0.0.1:8091 (snapshot DB at `~/.cache/ezbay-navtest`, no API
    keys) is approved by the operator for browser checks.
 
