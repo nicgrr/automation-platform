@@ -2151,6 +2151,7 @@ class ShopListing(Base):
     # confirmation) or an existing public HTTPS URL. Originals are kept on
     # disk beside processed uploads and are never overwritten.
     ebay_photo_paths: Mapped[list[str] | None] = mapped_column(JSON)
+    finish: Mapped[str | None] = mapped_column(String(40))
     condition: Mapped[str | None] = mapped_column(String(64))
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     currency: Mapped[str] = mapped_column(String(3), default="AUD")

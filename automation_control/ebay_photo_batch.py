@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from scripts.convert_to_ebay_template import sanitize_title
 from scripts.list_for_sale import best_price
 
+from .representative_backs import attach_to_pair, is_representative, with_notice
 from .audit import record_event
 from .auth import require_dashboard_user
 from .card_recognition import RecognitionError, extract_card_details, suggest_ebay_listing_copy
@@ -277,7 +278,7 @@ def _prepare_pair(pair_id: str, settings) -> None:
         try:
             extracted = extract_card_details(
                 Path(pair.front_image_path),
-                Path(pair.back_image_path) if pair.back_image_path else None,
+                Path(pair.back_image_path) if pair.back_image_path and not is_representative(pair.back_image_path) else None,
                 api_key=settings.anthropic_api_key,
                 game=game,
             )
@@ -309,6 +310,7 @@ def _prepare_pair(pair_id: str, settings) -> None:
                 pair.issue = resolved
                 return
             item, card = resolved
+            attach_to_pair(pair, card.game, found.language, card.rarity)
             card_set = session.get(CardSet, card.set_id) if card.set_id else None
             inventory_matches = list(session.scalars(
                 select(InventoryItem).where(
@@ -341,7 +343,7 @@ def _prepare_pair(pair_id: str, settings) -> None:
             )
             try:
                 suggestion = suggest_ebay_listing_copy(
-                    [Path(pair.front_image_path), *([Path(pair.back_image_path)] if pair.back_image_path else [])],
+                    [Path(pair.front_image_path), *([Path(pair.back_image_path)] if pair.back_image_path and not is_representative(pair.back_image_path) else [])],
                     api_key=settings.anthropic_api_key,
                     known_facts=_known_facts(
                         listing, item, card, card_set, inventory,
@@ -357,7 +359,7 @@ def _prepare_pair(pair_id: str, settings) -> None:
 
             pair.proposed_price, pair.price_source = _proposal_price(session, item, listing)
             pair.proposed_title = proposed_title
-            pair.proposed_description = proposed_description[:5000]
+            pair.proposed_description = with_notice(proposed_description[:4500], [pair.back_image_path])
             pair.status = ListingPhotoPairStatus.READY
             pair.issue = None
         except Exception as exc:
@@ -584,7 +586,7 @@ def bulk_photo_page(
         + "<fieldset class='photo-mode'><legend>Which photos are you uploading?</legend>"
         + "<label class='check'><input type='radio' name='has_backs' value='no' checked> Fronts only — one photo per card</label>"
         + "<label class='check'><input type='radio' name='has_backs' value='yes'> Front + back pairs — two photos per card</label>"
-        + "</fieldset><p id='photo-mode-help' class='subtitle' aria-live='polite'>Select front, front, front. Keep any shared back photo out of this selection.</p>"
+        + "</fieldset><p id='photo-mode-help' class='subtitle' aria-live='polite'>Select front, front, front. A representative back is added automatically after identification; you do not need to upload it.</p>"
         + "<div class='storage-fields'><label>Storage tray code<input name='storage_tray' id='storage-tray' "
         + "placeholder='DB-01' maxlength='32' autocomplete='off'></label>"
         + "<label>Starting slot (optional)<input name='starting_slot' type='number' min='1' inputmode='numeric' "
@@ -626,7 +628,7 @@ def bulk_photo_page(
  function isPaired(){return document.querySelector("input[name='has_backs']:checked").value==='yes';}
  function render(){
   const files=selectedFiles, paired=isPaired();
-  modeHelp.textContent=paired?'Select front, back, front, back. Each back must immediately follow its matching front.':'Select front, front, front. Keep any shared back photo out of this selection.';
+  modeHelp.textContent=paired?'Select front, back, front, back. Each back must immediately follow its matching front.':'Select front, front, front. A representative back is added automatically after identification; you do not need to upload it.';
   input.setCustomValidity('');
   previewUrls.forEach(url=>URL.revokeObjectURL(url)); previewUrls=[];
   preview.innerHTML='';
@@ -858,6 +860,7 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
             f"<div class='callout ok'>eBay {escape(live_ebay_id or '')} was updated.</div>"
             f"<a class='btn small ghost' href='/shop-listings/{listing.id}/ebay-preview'>Open Listing Studio</a>"
         )
+    action += f"<p><a class='btn small ghost' href='/photo-review/{pair.id}'>Identify / match catalogue</a></p>"
     back = (
         f"<a href='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/back' target='_blank'>"
         f"<img loading='lazy' decoding='async' src='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/back?thumb=1' alt='Back'></a>"

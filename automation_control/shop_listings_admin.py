@@ -26,6 +26,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import Session
 
+from .listing_finishes import FINISHES, finish_field, save_finish
 from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
@@ -676,6 +677,7 @@ def edit_listing_form(
         + f"<label class='field'>Price<input name='price' type='number' step='0.01' min='0.01' value='{listing.price}' required></label>"
         + f"<label class='field'>Quantity<input name='quantity' type='number' step='1' min='0' value='{listing.quantity}' required></label>"
         + f"<label class='field'>Condition<input name='condition' value='{escape(listing.condition or "")}' maxlength='120'></label>"
+        + finish_field(listing)
         + f"<label class='field'>Description<textarea name='description' rows='4' maxlength='4000'>{escape(listing.description or "")}</textarea></label>"
         + "<div class='listing-edit-actions'>"
         + "<button class='btn small'>Save</button>"
@@ -688,7 +690,7 @@ def edit_listing_form(
 @router.post("/shop-listings/{listing_id}/edit")
 def edit_listing_save(
     listing_id: str, title: str = Form(...), price: str = Form(...), quantity: str = Form(...),
-    condition: str = Form(""), description: str = Form(""),
+    condition: str = Form(""), description: str = Form(""), finish: str | None = Form(None),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     from urllib.parse import quote
@@ -713,18 +715,21 @@ def edit_listing_save(
     if quantity_value < 0:
         return RedirectResponse(f"/shop-listings/{listing_id}/edit?error={quote('Quantity cannot be negative')}", status_code=303)
 
-    before = {"title": listing.title, "price": str(listing.price), "quantity": listing.quantity,
+    if finish is not None and finish and finish not in FINISHES:
+        return RedirectResponse(f"/shop-listings/{listing_id}/edit?error=Invalid+card+finish", status_code=303)
+    before = {"finish": listing.finish,"title": listing.title, "price": str(listing.price), "quantity": listing.quantity,
              "condition": listing.condition, "description": listing.description}
     listing.title = title
     listing.price = price_value
     listing.quantity = quantity_value
     listing.condition = condition.strip() or None
     listing.description = description.strip() or None
+    save_finish(listing, finish)
     session.commit()
     record_event(session, actor_type="user", actor_id=user, action="shop_listing.edit",
                 resource_type="shop_listing", resource_id=listing_id, outcome="success",
                 correlation_id=str(uuid.uuid4()),
-                details={"before": before, "after": {"title": listing.title, "price": str(listing.price),
+                details={"before": before, "after": {"finish": listing.finish, "title": listing.title, "price": str(listing.price),
                                                       "quantity": listing.quantity, "condition": listing.condition,
                                                       "description": listing.description}})
     return RedirectResponse("/shop-listings", status_code=303)
@@ -775,7 +780,7 @@ _STYLE = """<style>
 .btn.small{padding:6px 12px;font-size:13px}
 .listing-edit-form{display:flex;flex-direction:column;gap:14px;max-width:420px}
 .listing-edit-form .field{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--text-dim)}
-.listing-edit-form .field input, .listing-edit-form .field textarea{padding:9px 11px;border-radius:6px;
+.listing-edit-form .field input, .listing-edit-form .field select, .listing-edit-form .field textarea{padding:9px 11px;border-radius:6px;
   border:1px solid var(--panel-border);font-size:14px;color:var(--text);background:var(--surface-sunken);
   font-family:inherit}
 .listing-edit-actions{display:flex;gap:8px}

@@ -64,6 +64,7 @@ from .shop_admin import router as shop_admin_router
 from .shop_listings_admin import router as shop_listings_router
 from .ebay_publish import router as ebay_publish_router
 from .ebay_photo_batch import router as ebay_photo_batch_router
+from .photo_identification_review import router as photo_identification_review_router
 from .ebay_sales import router as ebay_sales_router
 from .labels import router as labels_router
 from .shop_orders import router as shop_orders_router
@@ -191,6 +192,7 @@ app.include_router(shop_admin_router)
 app.include_router(shop_listings_router)
 app.include_router(ebay_publish_router)
 app.include_router(ebay_photo_batch_router)
+app.include_router(photo_identification_review_router)
 app.include_router(shop_orders_router)
 app.include_router(ebay_sales_router)
 app.include_router(labels_router)

@@ -736,8 +736,10 @@ def promote_approved_card(session: Session, card: CapturedCard, settings) -> Pro
 
     price = Decimal(str(card.approved_price))
     title = catalog_item.name + (f" #{tcg.number}" if tcg.number else "")
+    from .representative_backs import select_back
+    representative = None if card.back_image_path else select_back(tcg.game, card.language or tcg.language, tcg.rarity)
     ebay_photo_paths = [
-        path for path in (card.front_image_path, card.back_image_path) if path
+        path for path in (card.front_image_path, card.back_image_path or representative) if path
     ][:24]
     if active is None:
         printing_label = {

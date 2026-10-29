@@ -108,7 +108,7 @@ def test_bulk_page_offers_fronts_only_and_paired_modes(tmp_path):
     assert "type='radio' name='has_backs' value='yes'>" in body
     assert "Fronts only — one photo per card" in body
     assert "Front + back pairs — two photos per card" in body
-    assert "Keep any shared back photo out of this selection" in body
+    assert "A representative back is added automatically after identification" in body
     assert "Mixed / detect automatically" in body
     assert "Nothing is sent to eBay automatically" in body
     assert "upload-progress-panel" in body

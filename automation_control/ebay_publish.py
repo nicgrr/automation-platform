@@ -39,6 +39,7 @@ from .adapters.ebay_trading_write import EbayTradingListingAdapter
 from .adapters.ebay_write import EbayWriteAdapter
 from .adapters.r2 import R2UploadError, ensure_uploaded, is_configured as r2_is_configured
 from .approvals import decide_approval
+from .listing_finishes import FINISHES, finish_field, finish_label, save_finish
 from .audit import record_event
 from .auth import require_dashboard_user
 from .card_recognition import RecognitionError, suggest_ebay_listing_copy
@@ -443,7 +444,8 @@ def _build_inventory_item_payload(
         "product": {
             "title": title,
             "description": description,
-            "aspects": _card_aspects(catalog_item, tcg_card, card_set, inventory_item),
+            "aspects": {**_card_aspects(catalog_item, tcg_card, card_set, inventory_item),
+                        **({"Finish": [finish_label(listing)]} if finish_label(listing) else {})},
             "imageUrls": image_urls,
         },
         "availability": {"shipToLocationAvailability": {"quantity": listing.quantity}},
@@ -552,7 +554,7 @@ _LISTING_STUDIO_STYLE = """<style>
 .studio-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:16px;margin:16px 0}
 .studio-editor h2,.studio-quality h2,.photo-heading h2{margin-top:0}.studio-editor form{display:grid;gap:14px}
 .studio-field{display:grid;gap:6px;font-size:13px;color:var(--text-dim)}
-.studio-field input,.studio-field textarea{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;
+.studio-field input,.studio-field select,.studio-field textarea{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;
   border:1px solid var(--panel-border);background:var(--surface-sunken);color:var(--text);font:inherit}
 .studio-field textarea{resize:vertical;line-height:1.45}.studio-field span{float:right}.count-good{color:var(--success)}
 .count-warn{color:var(--warning)}.studio-suggestion{margin:-7px 0 0;color:var(--text-dim);font-size:12px}
@@ -1063,6 +1065,7 @@ def ebay_publish_preview(
         + f"<label class='studio-field'>Price (AUD)<input name='price' type='number' min='1' step='0.01' value='{listing.price}' required></label>"
         + f"<label class='studio-field'>Quantity<input name='quantity' type='number' min='1' step='1' value='{listing.quantity}' required></label>"
         + f"<label class='studio-field wide'>Condition<input name='condition' value='{escape(listing.condition or '', quote=True)}' maxlength='120' required></label>"
+        + finish_field(listing)
         + "</div><div class='studio-actions'><button class='btn'>Save listing draft</button>"
         + "<button class='btn ghost' name='action' value='reset'>Use generated copy</button></div></form></section>"
         + f"<aside class='panel studio-quality'><h2>Quality checks</h2>{quality_html}</aside></div>"
@@ -1096,6 +1099,7 @@ def save_listing_studio(
     price: str = Form(""),
     quantity: str = Form(""),
     condition: str = Form(""),
+    finish: str | None = Form(None),
     action: str = Form("save"),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -1120,7 +1124,7 @@ def save_listing_studio(
 
     clean_title = sanitize_title(ebay_title).strip()
     clean_description = ebay_description.strip()
-    error = None
+    error = "Choose a valid card finish." if finish and finish not in FINISHES else None
     if not clean_title:
         error = "eBay title cannot be empty."
     elif len(clean_title) > 80:
@@ -1150,13 +1154,14 @@ def save_listing_studio(
 
     before = {
         "ebay_title": listing.ebay_title, "ebay_description": listing.ebay_description,
-        "price": str(listing.price), "quantity": listing.quantity, "condition": listing.condition,
+        "finish": listing.finish, "price": str(listing.price), "quantity": listing.quantity, "condition": listing.condition,
     }
     listing.ebay_title = clean_title
     listing.ebay_description = clean_description[:5000]
     listing.price = price_value
     listing.quantity = quantity_value
     listing.condition = condition.strip()
+    save_finish(listing, finish)
     session.commit()
     record_event(
         session, actor_type="user", actor_id=user, action="listing_studio.save",
@@ -1164,7 +1169,7 @@ def save_listing_studio(
         correlation_id=str(uuid.uuid4()),
         details={"before": before, "after": {
             "ebay_title": listing.ebay_title, "ebay_description": listing.ebay_description,
-            "price": str(listing.price), "quantity": listing.quantity, "condition": listing.condition,
+            "finish": listing.finish, "price": str(listing.price), "quantity": listing.quantity, "condition": listing.condition,
         }},
     )
     return RedirectResponse(

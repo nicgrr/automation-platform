@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 from PIL import Image
 from sqlalchemy.orm import Session
 
+from .listing_finishes import finish_label, title_inventory
 from .ebay_titles import build_single_card_ebay_title
 from .models import CardSet, CatalogItem, InventoryItem, ShopListing, TcgCard
 
@@ -61,7 +62,7 @@ def generated_ebay_title(
     card_set: CardSet | None,
     inventory: InventoryItem | None,
 ) -> str:
-    return build_single_card_ebay_title(catalog_item, card, card_set, inventory)
+    return build_single_card_ebay_title(catalog_item, card, card_set, title_inventory(listing, inventory))
 
 
 def outgoing_ebay_title(
@@ -90,6 +91,7 @@ def generated_ebay_description(
         variant = inventory.variant.value.replace("_", " ").title()
     elif card.variant:
         variant = card.variant.replace("_", " ").title()
+    variant = finish_label(listing) or variant
     condition = (
         inventory.condition
         if inventory is not None and inventory.condition
@@ -107,7 +109,10 @@ def generated_ebay_description(
         f"Condition: {condition}",
         "",
     ]
-    if has_own_photo:
+    from .representative_backs import is_representative, NOTICE
+    if has_own_photo and any(is_representative(p) for p in listing.ebay_photo_paths or []):
+        lines.append(NOTICE)
+    elif has_own_photo:
         lines.append("You will receive the actual card shown in the photographs. Please review all photos as they form part of the condition description.")
     else:
         lines.append("An actual-card photograph is still required before this listing is ready for eBay.")
@@ -128,9 +133,11 @@ def outgoing_ebay_description(
     has_own_photo: bool,
 ) -> str:
     override = (listing.ebay_description or "").strip()
-    return override or generated_ebay_description(
+    from .representative_backs import with_notice
+    description = override or generated_ebay_description(
         listing, catalog_item, card, card_set, inventory, has_own_photo=has_own_photo,
     )
+    return with_notice(description, listing.ebay_photo_paths)
 
 
 def listing_photo_sources(

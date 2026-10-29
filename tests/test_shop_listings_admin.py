@@ -670,3 +670,25 @@ def test_out_of_stock_is_separate_from_all_and_publish_views(client, session):
     assert "Sold card #1" in body
     assert "Available card #1" not in body
     assert "Back to current listings" in body
+
+
+def test_finish_selector_saves_listing_override_without_changing_rarity(client, session):
+    lid = make_listing(session, 'Fossil')
+    card = session.get(TcgCard, 'i-Fossil')
+    card.rarity = 'Illustration Rare'
+    session.commit()
+    page = client.get(f'/shop-listings/{lid}/edit').text
+    for label in ('Master Ball', 'Poké Ball', 'Reverse Holo', 'Cosmos Holo'):
+        assert label in page
+    response = client.post(f'/shop-listings/{lid}/edit',data={
+        'title':'Fossil #1','price':'9.99','quantity':'1','condition':'Near Mint','finish':'masterball_pattern'},follow_redirects=False)
+    assert response.status_code == 303
+    listing = session.get(ShopListing,lid)
+    assert listing.finish == 'masterball_pattern'
+    assert card.rarity == 'Illustration Rare'
+    assert 'value=\'masterball_pattern\' selected' in client.get(f'/shop-listings/{lid}/edit').text
+    client.post(f'/shop-listings/{lid}/edit', data={
+        'title':'Bad update','price':'9.99','quantity':'1','finish':'invented'},follow_redirects=False)
+    session.refresh(listing)
+    assert listing.title == 'Fossil #1'
+    assert listing.finish == 'masterball_pattern'
