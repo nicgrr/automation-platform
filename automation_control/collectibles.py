@@ -20,7 +20,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -41,6 +41,7 @@ from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card, remove_background
 from .images import serve_image, serve_thumb
 from .models import CaptureBatch, CapturedCollectible, CardCaptureStatus, CardPrice, CardVariant, CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem
+from .navigation import finish_flow, remember_flow_origin
 from .reverse_image_search import ReverseImageSearchError, search_image
 from . import vocabulary
 from .ui import brand_header, page, photo_field, pill
@@ -478,6 +479,7 @@ def _process_collectible_photo(photo_path: Path, settings, session: Session, use
 
 @router.post("/collectibles/capture")
 async def collectible_capture_submit(
+    request: Request,
     photo: UploadFile = File(...),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -491,7 +493,7 @@ async def collectible_capture_submit(
         records = _process_collectible_photo(photo_path, settings, session, user)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to save this capture: {exc}") from exc
-    return RedirectResponse(f"/collectibles/review/{records[0].id}", status_code=303)
+    return remember_flow_origin(request, RedirectResponse(f"/collectibles/review/{records[0].id}", status_code=303))
 
 
 def _run_collectible_capture_batch(batch_id: str, photo_paths: list[Path], settings, user: str) -> None:
@@ -936,6 +938,7 @@ async def collectible_review_reverse_image_search(
 @router.post("/collectibles/review/{capture_id}")
 def collectible_review_submit(
     capture_id: str,
+    request: Request,
     action: str = Form("confirm"),
     brand: str = Form(""), series: str = Form(""), character: str = Form(""),
     variant: str = Form(""), blind_box_series: str = Form(""), is_secret: str = Form(""),
@@ -951,7 +954,7 @@ def collectible_review_submit(
         empties -- never back to a list mid-run."""
         nxt = _next_after(session, capture)
         if nxt is None:
-            return RedirectResponse("/collectibles/review", status_code=303)
+            return finish_flow(request, "/collectibles/review")
         return RedirectResponse(f"/collectibles/review/{nxt.id}", status_code=303)
 
     if action == "skip":

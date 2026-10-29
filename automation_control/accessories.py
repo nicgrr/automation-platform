@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -39,6 +39,7 @@ from .database import SessionLocal, get_session
 from .image_processing import auto_orient, crop_card, remove_background
 from .images import serve_image
 from .models import AccessoryProduct, CaptureBatch, CapturedAccessory, CardCaptureStatus, CardVariant, CatalogItem, CatalogItemType, InventoryItem
+from .navigation import finish_flow, remember_flow_origin
 from .ui import brand_header, page, photo_field
 
 router = APIRouter(tags=["accessories"])
@@ -240,6 +241,7 @@ def _process_accessory_photo(photo_path: Path, settings, session: Session, user:
 
 @router.post("/accessories/capture")
 async def accessory_capture_submit(
+    request: Request,
     photo: UploadFile = File(...),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
@@ -256,7 +258,7 @@ async def accessory_capture_submit(
         # no explanation, and the photo already saved to disk with nothing
         # pointing back at it. A controlled error at least says why.
         raise HTTPException(status_code=500, detail=f"failed to save this capture: {exc}") from exc
-    return RedirectResponse(f"/accessories/review/{records[0].id}", status_code=303)
+    return remember_flow_origin(request, RedirectResponse(f"/accessories/review/{records[0].id}", status_code=303))
 
 
 def _run_accessory_capture_batch(batch_id: str, photo_paths: list[Path], settings, user: str) -> None:
@@ -428,6 +430,7 @@ def accessory_review_form(capture_id: str, user: str = Depends(require_dashboard
 @router.post("/accessories/review/{capture_id}")
 def accessory_review_submit(
     capture_id: str,
+    request: Request,
     action: str = Form("confirm"),
     brand: str = Form(""), product_type: str = Form(""), pack_size: str = Form(""), color: str = Form(""),
     retail_price: str = Form(""), quantity: str = Form("1"),
@@ -440,7 +443,7 @@ def accessory_review_submit(
     def onward() -> RedirectResponse:
         nxt = _next_after(session, capture)
         if nxt is None:
-            return RedirectResponse("/accessories/review", status_code=303)
+            return finish_flow(request, "/accessories/review")
         return RedirectResponse(f"/accessories/review/{nxt.id}", status_code=303)
 
     if action == "skip":

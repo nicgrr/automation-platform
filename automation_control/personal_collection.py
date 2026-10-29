@@ -18,7 +18,7 @@ from decimal import Decimal
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,6 +31,7 @@ from .models import (
     CardPrice, CardSet, CatalogCard, CatalogItem, InventoryItem, InventoryStatus, ShippingRate, ShippingZone,
     ShopListing, ShopListingStatus, TcgCard,
 )
+from .navigation import redirect_back
 from .scan_ingest.games import GAME_LABELS
 from .shop_pricing import default_costs, price_floor
 from .ui import brand_header, page, pill
@@ -349,7 +350,7 @@ def list_item_for_sale(
 
 @router.post("/personal-collection/{item_id}/upload-photo")
 async def upload_photo(
-    item_id: str, photo: UploadFile = File(...),
+    item_id: str, request: Request, photo: UploadFile = File(...),
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     item = session.get(InventoryItem, item_id)
@@ -361,7 +362,7 @@ async def upload_photo(
     record_event(session, actor_type="user", actor_id=user, action="personal_collection.upload_photo",
                 resource_type="inventory_item", resource_id=item_id, outcome="success",
                 correlation_id=item_id, details={})
-    return RedirectResponse("/personal-collection", status_code=303)
+    return redirect_back(request, "/personal-collection")
 
 
 _STYLE = """<style>

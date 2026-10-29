@@ -26,6 +26,7 @@ from .models import (
     CaptureBatch, CapturedCard, CardCaptureStatus, CardVariant,
     CapturePromotion, CapturePromotionStatus,
 )
+from .navigation import finish_flow, remember_flow_origin
 from .ui import brand_header, page, photo_field
 
 router = APIRouter(prefix="/cards", tags=["cards"])
@@ -235,7 +236,7 @@ async def capture_submit(
         raise HTTPException(status_code=500, detail=f"failed to save this capture: {exc}") from exc
 
     if len(records) == 1:
-        return RedirectResponse(f"/cards/review/{records[0].id}", status_code=303)
+        return remember_flow_origin(request, RedirectResponse(f"/cards/review/{records[0].id}", status_code=303))
     return RedirectResponse("/cards/review", status_code=303)
 
 
@@ -284,7 +285,7 @@ async def capture_bulk_submit(
 
     background_tasks.add_task(_run_capture_batch, batch.id, saved_photos, settings, user)
 
-    return RedirectResponse(f"/cards/capture/bulk/status/{batch.id}", status_code=303)
+    return remember_flow_origin(request, RedirectResponse(f"/cards/capture/bulk/status/{batch.id}", status_code=303))
 
 
 @router.get("/capture/bulk/status/{batch_id}", response_class=HTMLResponse)
@@ -354,6 +355,7 @@ def review_form(card_id: str, user: str = Depends(require_dashboard_user), sessi
 @router.post("/review/{card_id}")
 def review_submit(
     card_id: str,
+    request: Request,
     action: str = Form("approve"),
     character: str = Form(""),
     set_name: str = Form(""),
@@ -411,7 +413,7 @@ def review_submit(
     next_id = _next_pending_card_id(session, card_id)
     if next_id:
         return RedirectResponse(f"/cards/review/{next_id}", status_code=303)
-    return RedirectResponse("/cards/review", status_code=303)
+    return finish_flow(request, "/cards/review")
 
 
 @router.get("/image/{card_id}/{side}")

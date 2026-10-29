@@ -18,6 +18,7 @@ from .adapters.pokemontcg import PriceLookupError, PriceNotFound, lookup_price
 from .audit import record_event
 from .auth import require_dashboard_user
 from .classification import classify_pending_cards, load_pipeline_config
+from .navigation import finish_flow
 from .scan_ingest.pricing import POKEMONPRICETRACKER_SOURCE_NAME
 from .database import SessionLocal, get_session
 from .image_processing import crop_card
@@ -1039,7 +1040,7 @@ def price_review_submit(
     next_id = _next_price_review_card_id(session, card_id)
     if next_id:
         return RedirectResponse(f"/cards/pricing/{next_id}", status_code=303)
-    return RedirectResponse("/cards/pricing", status_code=303)
+    return finish_flow(request, "/cards/pricing")
 
 
 @router.post("/{card_id}/recrop")

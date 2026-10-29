@@ -71,3 +71,30 @@ def redirect_back(request: Request, default: str, *, saved: str | None = "Saved"
     if "_return_to" not in request.query_params:
         return RedirectResponse(default, status_code=303)
     return RedirectResponse(_with_saved(return_target(request, default), saved), status_code=303)
+
+
+# An upload starts a multi-step flow (review each capture, maybe price it)
+# whose last step used to land on an empty queue page. The upload remembers
+# the page it was started from; the step that empties the queue returns
+# there. Short-lived, so an abandoned upload can't hijack a much later queue.
+FLOW_COOKIE = "ezbay_flow_origin"
+FLOW_MAX_AGE_SECONDS = 60 * 60
+
+
+def remember_flow_origin(request: Request, response: RedirectResponse) -> RedirectResponse:
+    """Record where this upload was started from, for `finish_flow`."""
+    origin = safe_return_path(request.query_params.get("_return_to"))
+    if origin:
+        response.set_cookie(FLOW_COOKIE, origin, max_age=FLOW_MAX_AGE_SECONDS,
+                            httponly=True, samesite="lax", path="/")
+    return response
+
+
+def finish_flow(request: Request, default: str, *, saved: str = "All reviewed") -> RedirectResponse:
+    """303 back to where the upload started, or `default` with no upload."""
+    origin = safe_return_path(request.cookies.get(FLOW_COOKIE))
+    if origin is None:
+        return RedirectResponse(default, status_code=303)
+    response = RedirectResponse(_with_saved(origin, saved), status_code=303)
+    response.delete_cookie(FLOW_COOKIE, path="/")
+    return response
