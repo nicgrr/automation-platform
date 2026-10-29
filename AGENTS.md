@@ -6,21 +6,61 @@ through `CLAUDE.md`; Codex reads it directly. Keep one copy of the rules here.
 ## Handoff protocol
 
 Several agents take turns on this repo. Nobody remembers another agent's
-session, so the repo is the only shared memory.
+session, so the repo is the only shared memory. Keep it ready for an unexpected
+usage limit or interruption; do not wait for the session to end.
 
 At the start of a session:
 
 1. Read `HANDOFF.md`.
 2. Run `git status` and `git log --oneline -10`, and `git diff main...` on a
    feature branch.
-3. Continue from "Next steps" unless the operator asks for something else.
+3. Read "In progress" and "Next steps", including the operator's constraints.
+   Compare the handoff with the actual working tree and recent commits before
+   resuming. An interrupted step may be partly applied even if the note still
+   says "planned"; do not blindly repeat writes or discard uncommitted work.
 
-Before ending a session or handing over:
+Before each small batch of edits or other state-changing work:
 
-1. Update `HANDOFF.md`: current task, what was done, next steps, gotchas, and
-   who updated it and when (absolute dates).
-2. Commit, even as a WIP commit, with a message that says what changed and why.
-   Do not leave uncommitted work for the next agent to guess at.
+1. Update `HANDOFF.md` first. Record the goal, active agent, branch and base
+   commit, relevant files, planned next action, and operator constraints.
+   Separate completed work from work in progress. Include unresolved decisions,
+   known failures and the exact next step another agent should take.
+2. Record the existing dirty files and who owns them where known. Never
+   overwrite, stage or commit another agent's or the operator's unfinished work
+   just to create a checkpoint. If ownership is unclear, preserve the changes
+   and record the uncertainty.
+3. Save and commit the handoff checkpoint before starting the edit batch,
+   staging only the handoff changes you own. A checkpoint that already describes
+   the same batch need not be repeated. Editing the handoff itself does not
+   require a recursive checkpoint.
+4. Keep each batch small enough to describe and resume as one implementation
+   step. Record intent before any newly authorized external action too; this
+   protocol does not grant permission to change services or external systems.
+
+After each batch, before a lengthy operation, and before ending or handing over:
+
+1. Refresh `HANDOFF.md` with actual results, files changed, remaining work and
+   the next concrete action. Record validation as passed, failed, running or
+   not run, with the relevant command/result or reason. Never report validation
+   as passed unless it actually ran and passed.
+2. Commit your changes together with the handoff, even as a clearly labelled
+   WIP commit if validation or implementation is unfinished. Stage explicit
+   paths or hunks you own. Do not wait for a usage warning to checkpoint.
+3. If a commit cannot be made, save the handoff on disk with the reason and
+   the uncommitted paths. Never reset or stash someone else's work to force a
+   clean tree. On takeover, the next agent must inspect both the note and diff.
+4. Update "Last updated" with the agent and absolute date (and time when useful).
+   Maintain only your own work-history subsection at meaningful checkpoints,
+   tying summaries to commits; keep uncertain historical work unattributed.
+
+Include an explicit `Agent: Codex` or `Agent: Claude Code` trailer in new
+agent-created commits, alongside any existing co-author convention. Do not
+retroactively label uncertain commits or rewrite another agent's history.
+
+This is a shared instruction-based workflow. No timer or hook is installed by
+these files, and an abrupt cutoff may leave the current batch partly applied.
+The saved plan and frequent checkpoints are the recovery path; another agent
+does not start automatically when a usage limit is reached.
 
 Work on one branch per task. Don't rewrite or force-push history another agent
 committed.
@@ -45,8 +85,11 @@ intake, pricing, eBay, NL Vault, Whatnot, direct sales). See `README.md` and
 .venv/bin/pytest
 ```
 
-Run tests before committing. Schema changes go through a new Alembic migration;
-startup refuses an unexpected database revision.
+Run appropriate tests before marking a code change complete. Handoff-only and
+WIP checkpoints may be committed before validation; record what remains unrun
+in `HANDOFF.md`. Follow an explicit operator instruction not to run tests.
+Schema changes go through a new Alembic migration; startup refuses an unexpected
+database revision.
 
 ## Rules
 

@@ -5,23 +5,15 @@ handoff protocol in `AGENTS.md`.
 
 ## Current task
 
-Make handoff checkpoints part of every agent's normal editing workflow on
-branch `lens-results-and-collectible-vocabulary`, so Claude Code can resume
-if Codex reaches a usage limit. The operator wants checkpoints before changes;
-no timed schedule is needed.
+Completed the shared handoff checkpoint protocol on branch
+`lens-results-and-collectible-vocabulary`, so Claude Code can resume from a
+saved plan if Codex reaches a usage limit. The operator wants checkpoints
+before changes; no timed schedule is needed.
 
 ## In progress
 
-- Owner: Codex. Baseline: `7227ba4`; working tree was clean before this note.
-- Planned change: extend the shared `AGENTS.md` protocol with a saved plan
-  before each small edit batch, progress/WIP checkpoints afterward, and
-  recovery instructions for interrupted work. `CLAUDE.md` already includes it.
-- Scope: only `AGENTS.md`, `CLAUDE.md` and `HANDOFF.md`. Preserve the Claude
-  work-history subsection. Do not run tests or start services.
-- Validation: pending documentation diff, commit scope and unchanged-Claude
-  section checks. No application code changes are planned.
-- Resume action: inspect `git status` and the latest diff, then finish the
-  checkpoint instructions in `AGENTS.md` and record completion here.
+None for this documentation task. Codex started from `7227ba4` with a clean
+working tree and committed the plan as `6401344` before editing the protocol.
 
 ## Done
 
@@ -32,19 +24,28 @@ no timed schedule is needed.
   without a Claude trailer by theme, with absolute dates and commit references.
 - Added shared instructions in `AGENTS.md` and its `CLAUDE.md` include alongside
   this handoff. No tests or services were run for this documentation task.
+- Required saved plans before each small edit batch and progress/WIP commits
+  afterward, with validation status, operator constraints and exact resume
+  actions. Both agents read the same protocol through `AGENTS.md`.
+- Added explicit agent trailers for new commits and recovery instructions for
+  partially applied work. Existing uncertain history remains unattributed.
+- Reviewed the documentation diff and commit scope; `git diff --check` passed.
+  Only `AGENTS.md` and `HANDOFF.md` changed in this follow-up. `CLAUDE.md` and
+  the Claude work-history subsection remain unchanged. No tests or services ran.
 
 ## Next steps
 
-- Complete the checkpoint protocol described under "In progress", review the
-  documentation changes and commit them with an explicit `Agent: Codex` trailer.
+- At the next implementation task, save its goal, branch/base commit, scope,
+  constraints and next action in this handoff before starting the edits.
 - Operator to define the remaining lens-results and collectible-vocabulary
   goal; this documentation task does not establish further implementation work.
 
 ## Work history by agent
 
-Each agent keeps its own section. Summaries come from commits carrying that
-agent's `Co-Authored-By` trailer; `git log -i --grep='Co-Authored-By: Claude'`
-lists the commits behind the Claude section.
+Each agent keeps its own section. Tie summaries to reliable authorship, explicit
+`Agent:` or `Co-Authored-By` trailers, or directly recorded work in the current
+session. `git log -i --grep='Co-Authored-By: Claude'` lists the commits behind
+the Claude section. A shared human author identity alone is not attribution.
 
 ### Claude Code (2026-09-08 to 2026-10-29)
 
@@ -93,10 +94,11 @@ the disk was full.
 
 ### Codex
 
-No historical commit can be reliably attributed to Codex. Reviewed all 220
-commits across local refs before this handoff commit: every author and committer
-is Nic, and no commit message, trailer or author/committer identity mentions
-Codex. The 179 commits with a `Co-Authored-By: Claude` trailer are excluded below.
+No commit predating `7227ba4` can be reliably attributed to Codex. Reviewed all
+220 commits across local refs before that handoff commit: every author and
+committer is Nic, and no commit message, trailer or author/committer identity
+mentions Codex. The 179 commits with a `Co-Authored-By: Claude` trailer are
+excluded below.
 
 These themes list all 41 remaining commits as **unattributed**, without claiming
 them as Codex work. Dates are absolute commit author dates, spanning 2026-08-24
@@ -154,6 +156,13 @@ recorded in the 2026-10-01 baseline commit (`6c776bd`).
   number/set-total, printing and rarity labels in variation exports, and
   ignored variation-revision backups (`f6e0b80`, `a5ddd6b`).
 
+Subsequent verified Codex work:
+
+- **Shared instructions and handoff (2026-10-29):** created the shared agent
+  instructions and handoff, including the historical attribution audit
+  (`7227ba4`, performed in this Codex session); saved the plan for checkpoints
+  before edits (`6401344`, carrying `Agent: Codex`).
+
 ## Gotchas
 
 - The NL Vault storefront is a bare uvicorn process, not a systemd unit;
@@ -165,6 +174,10 @@ recorded in the 2026-10-01 baseline commit (`6c776bd`).
 - The Claude photo-recognition/audit bullet is dated Sep 10–13, but its Cat
   Life Series work is commit `3b6d0fb`, dated 2026-09-15. The Claude section is
   preserved unchanged; that theme extends through 2026-09-15.
+- Handoff checkpoints rely on both agents following `AGENTS.md`; no timer or
+  hook is installed. A sudden usage cutoff may leave the current edit batch
+  incomplete. Inspect the diff against the saved plan before resuming; Claude
+  Code still needs to be started or resumed by the operator.
 
 ## Last updated
 
