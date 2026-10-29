@@ -277,29 +277,40 @@ def _bulk_order_line_html(ebay_order_id: str, line_key: str, line_item: dict, qu
     )
 
 
+def _applied_orders(session: Session) -> dict[str, list[EbayImportedOrder]]:
+    rows = session.scalars(
+        select(EbayImportedOrder)
+        .where(EbayImportedOrder.applied_at.isnot(None))
+        .order_by(EbayImportedOrder.observed_at.desc())
+    ).all()
+    by_order: dict[str, list[EbayImportedOrder]] = {}
+    for row in rows:
+        by_order.setdefault(row.ebay_order_id, []).append(row)
+    return by_order
+
+
+def order_is_completed(session: Session, rows: list[EbayImportedOrder]) -> bool:
+    return all(r.dismissed_at is not None for r in rows) and _bulk_is_complete(session, rows)
+
+
+def open_orders(session: Session) -> dict[str, list[EbayImportedOrder]]:
+    """Orders still waiting to be packed, newest first -- the one definition
+    the Pack Assistant, the pick run, label printing and the nav badge share."""
+    return {oid: g for oid, g in _applied_orders(session).items() if not order_is_completed(session, g)}
+
+
 @router.get("/ebay-sales", response_class=HTMLResponse)
 def ebay_sales_page(
     status: str = "action_needed", error: str | None = None,
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ) -> HTMLResponse:
     status = status if status in FILTERS else "action_needed"
-    rows = session.scalars(
-        select(EbayImportedOrder)
-        .where(EbayImportedOrder.applied_at.isnot(None))
-        .order_by(EbayImportedOrder.observed_at.desc())
-    ).all()
-
-    by_order: dict[str, list[EbayImportedOrder]] = {}
-    for row in rows:
-        by_order.setdefault(row.ebay_order_id, []).append(row)
-
-    def _completed(group: list[EbayImportedOrder]) -> bool:
-        return all(r.dismissed_at is not None for r in group) and _bulk_is_complete(session, group)
+    by_order = _applied_orders(session)
 
     if status == "action_needed":
-        shown = {oid: g for oid, g in by_order.items() if not _completed(g)}
+        shown = {oid: g for oid, g in by_order.items() if not order_is_completed(session, g)}
     elif status == "completed":
-        shown = {oid: g for oid, g in by_order.items() if _completed(g)}
+        shown = {oid: g for oid, g in by_order.items() if order_is_completed(session, g)}
     else:
         shown = by_order
 
@@ -315,7 +326,8 @@ def ebay_sales_page(
 
     body = (
         brand_header("eBay sales")
-        + f"<p class='subtitle'>{len(shown)} order(s), {sum(len(g) for g in shown.values())} card(s).</p>"
+        + f"<p class='subtitle'>{len(shown)} order(s), {sum(len(g) for g in shown.values())} card(s). "
+          "<a class='btn small' href='/ebay-sales/pick-run'>Pick run: all open orders by drawer</a></p>"
         + (f"<div class='notice error'>{escape(error)}</div>" if error else "")
         + f"<div class='filter-tabs'>{filter_bar}</div>"
         + orders_html

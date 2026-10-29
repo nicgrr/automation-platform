@@ -68,6 +68,7 @@ from .bundle_singles import router as bundle_singles_router
 from .photo_confirm import router as photo_confirm_router
 from .photo_identification_review import router as photo_identification_review_router
 from .ebay_sales import router as ebay_sales_router
+from .pick_run import router as pick_run_router
 from .labels import router as labels_router
 from .shop_orders import router as shop_orders_router
 from .personal_collection import router as personal_collection_router
@@ -198,6 +199,7 @@ app.include_router(bundle_singles_router)
 app.include_router(photo_confirm_router)
 app.include_router(photo_identification_review_router)
 app.include_router(shop_orders_router)
+app.include_router(pick_run_router)  # before ebay_sales so /ebay-sales/pick-run is never read as an order id
 app.include_router(ebay_sales_router)
 app.include_router(labels_router)
 app.include_router(personal_collection_router)

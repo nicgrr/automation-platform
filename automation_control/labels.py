@@ -3,6 +3,7 @@
 import os
 import subprocess
 import tempfile
+import uuid
 from html import escape
 from io import BytesIO
 
@@ -12,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .models import EbayImportedOrder, ShopOrder
@@ -20,6 +22,9 @@ router = APIRouter(tags=["labels"])
 
 _HOME_COUNTRIES = {"", "au", "aus", "australia"}
 SENDER = "NL Vault 0405209496"
+# Audit action marking an eBay order's address label as printed; the pick
+# run's "Print all labels" skips any order that already has one.
+LABEL_PRINTED_ACTION = "label.print_ebay"
 
 PRINTER_QUEUE = os.environ.get("LABEL_PRINTER_QUEUE", "HotLabel")
 DPI = 203
@@ -273,7 +278,11 @@ def print_ebay_label(
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="order not found")
-    return _send(ebay_label_lines(row.raw_snapshot or {}))
+    response = _send(ebay_label_lines(row.raw_snapshot or {}))
+    record_event(session, actor_type="user", actor_id=user, action=LABEL_PRINTED_ACTION,
+                 resource_type="ebay_order", resource_id=ebay_order_id, outcome="success",
+                 correlation_id=str(uuid.uuid4()), details={"via": "order"})
+    return response
 
 
 @router.post("/labels/shop/{order_id}/print")

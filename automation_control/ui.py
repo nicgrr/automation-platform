@@ -399,7 +399,7 @@ HIDDEN_NAV = [
 # computes their real numbers, just for dashboard.py's Operations widget
 # and /review-centre's own inline breakdown, not a nav badge), but listed
 # here it read as "these have badges too", which they never did.
-NAV_COUNT_HREFS = {"/review-centre"}
+NAV_COUNT_HREFS = {"/review-centre", "/ebay-sales"}
 
 
 def _nav_link(href: str, label: str) -> str:

@@ -90,6 +90,13 @@ def _photo_audit_pending(session: Session, settings) -> int | None:
     return pending
 
 
+def _open_orders(session: Session):
+    # Imported here, not at module level: ebay_sales pulls in the page/UI
+    # layer, and this module is imported by that layer's nav.
+    from .ebay_sales import open_orders
+    return open_orders(session)
+
+
 def queue_counts(session: Session, settings) -> dict[str, int | None]:
     """Keyed by the route each count belongs to, so callers can look a
     count up by href without keeping a second mapping in sync."""
@@ -122,6 +129,8 @@ def queue_counts(session: Session, settings) -> dict[str, int | None]:
             .select_from(ShopListing)
             .where(ShopListing.status == ShopListingStatus.DRAFT)
         ),
+        # eBay orders still to pack -- same definition as the Pack Assistant.
+        "/ebay-sales": len(_open_orders(session)),
     }
     review_routes = (
         "/review", "/foil-review", "/inventory-audit", "/collectibles/review",
