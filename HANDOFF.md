@@ -94,8 +94,13 @@ from).
    130, Psyduck 043) to catalogue + inventory; (c) eBay category mapping for
    pokemon_japan; (d) redesign the bulk photo review page. Trubbish, Deerling,
    Ferroseed, Houndour, Seaking are EXTRA copies (new inventory rows; leave
-   the 2026-10-27 bulk-lot rows alone). Operator is confirming each finish in
-   chat before (a) is applied.
+   the 2026-10-27 bulk-lot rows alone).
+   - (c) DONE: pokemon_japan → eBay category 183454 added to production.
+   - (d) DONE: one-at-a-time confirm flow (`photo_confirm.py`), committed;
+     needs `ezbay.service` restart to go live.
+   - (a)+(b) IN PROGRESS by the operator on their phone via that flow.
+     Chinese Dudunsparce/Mamoswine/Crobat ex already had catalogue entries
+     and active listings (set cn-csv10c); only Psyduck 043/222 is new.
 
 ## Next steps
 
