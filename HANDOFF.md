@@ -137,6 +137,36 @@ from).
    Needs `ezbay.service` restart for the confirm fixes. Note the kept
    listing is AUD 3.99 vs the old 21.95; operator's choice.
 
+7. **Bundle singles (photo batch 7db66a0c, Claude Code session in the
+   `remove-items-sale` worktree, 2026-10-29/30, operator-directed):** working
+   directly in this checkout on the current branch (no branch switch: the live
+   service reads this tree). Already DONE and audited (audit_events actions
+   `ebay.listing.end_bundle_now_singles`, `bundle_cards.*`,
+   `shop_listing.price_above_ebay_median`; DB backups
+   `backups/automation-pre-*-20261029.db`): ended the 4 live bundle listings
+   267785473765/67/68/71 (Trading API); added Celebi x2, Hisuian Zorua,
+   Greninja ex as DRAFT listings with inventory (new catalogue item
+   `tcgp-716205`); linked 10 existing + 10 new inventory rows to the live
+   singles; set 13 CRM prices just above the eBay median (CRM only, NOT pushed
+   to eBay; old prices in the session scratchpad and the audit events).
+   Operator constraints: no eBay push until the operator reviews and presses
+   Revise on eBay per listing; Heracross (listing q2 / inventory q1) and
+   Tornadus (q5 / q4) stay unlinked until the operator gives quantities.
+   - HAZARD found: the batch was retried 2026-10-29 20:58 local, which cleared
+     the metadata stored on its pairs and re-proposed prices. Apply / Apply
+     all on batch 7db66a0c would overwrite the new listing prices. Mitigation
+     this session: set `proposed_price` to NULL on its READY pairs (old values
+     kept in the audit event; a retry would re-propose them).
+   - Pair 27 (Celebi) now has two catalogue matches (`neo4-106` original,
+     `tcgp-716205` 30th Celebration Classic Collection): choose `tcgp-716205`.
+     Pair 16 (Gothitelle) reports no match; its live listing uses `tcgp-647306`.
+   - IN PROGRESS (planned next): reserve storage slots PK-01-001..013 (tray
+     PK-01 is new, named like DB-01/OP-01) for the 13 added inventory rows as
+     unconfirmed placements; the operator confirms "stored" afterwards. Then
+     a read-only "Bundle singles" review page (`bundle_singles.py`) with a
+     top-bar link (small edits to `api.py` and `ui.py`). Not deployed: needs an
+     `ezbay.service` restart, which is the operator's action.
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
@@ -296,4 +326,4 @@ Subsequent verified Codex work:
 
 ## Last updated
 
-Codex, 2026-10-29
+Claude Code, 2026-10-30 (bundle singles checkpoint, item 7)
