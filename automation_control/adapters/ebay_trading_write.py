@@ -148,7 +148,11 @@ class EbayTradingListingAdapter:
         if sum(map(len, picture_urls)) > 3975:
             raise ValueError("combined eBay photo URLs exceed 3975 characters")
         pictures = "".join(f"<PictureURL>{escape(url)}</PictureURL>" for url in picture_urls)
+        # eBay's Trading endpoint rejected this request without the XML
+        # declaration ("soapenv:Body must be terminated"), first seen live
+        # 2026-10-30; revise_copy_and_photos below always sent one.
         body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
             '<ReviseFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
             f'<Item><ItemID>{escape(item_id.strip())}</ItemID>'
             '<PictureDetails><PictureSource>Vendor</PictureSource>'

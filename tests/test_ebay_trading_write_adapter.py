@@ -247,6 +247,7 @@ async def test_photo_only_revision_preserves_other_fields():
         ns = {'e': 'urn:ebay:apis:eBLBaseComponents'}
         item = root.find('e:Item', ns)
         assert {x.tag.split('}')[-1] for x in item} == {'ItemID', 'PictureDetails'}
+        assert request.content.startswith(b'<?xml version="1.0" encoding="utf-8"?>')
         assert item.find('e:ItemID', ns).text == '123'
         assert item.find('e:PictureDetails/e:PictureURL', ns).text == 'https://example.com/front.jpg'
         return httpx.Response(200, text='<ReviseFixedPriceItemResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack></ReviseFixedPriceItemResponse>')
