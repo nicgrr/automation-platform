@@ -180,8 +180,8 @@ from).
      restart (operator action); the restart also brings the earlier navigation
      fix (item 3) live, so run `.venv/bin/alembic upgrade head` first.
    - Validation: tests/test_bundle_singles.py (8) + test_nav.py +
-     test_dashboard.py: 56 passed. Full suite: RUNNING when this was written;
-     see the next update.
+     test_dashboard.py: 56 passed. Full suite (`pytest -q`, 2026-10-30, on
+     the tree at `7095bad`): 2354 passed in 6m10s.
    - Open for the operator: confirm "stored" once the cards are in PK-01;
      Heracross/Tornadus quantities; Celebi pair 27 catalogue choice
      (`tcgp-716205`); Gothitelle pair 16 has no match; revise prices on eBay
