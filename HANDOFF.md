@@ -120,6 +120,18 @@ from).
    the agent's permission rules block installing system services, so the
    operator installs it (commands in the commit message of that change).
 
+6. **Duplicate Crobat ex (2026-10-30, operator-approved):** photo_confirm
+   matched pair 6 to a duplicate local catalogue entry
+   (local-e8908eacae92fc9fc8f2308c, number "130") instead of
+   c1f26d7b… (130/222), so "Extra copy" created stock fbeb7db2… and listing
+   aa7a892a… → eBay 267827676356 at $3.99, alongside the existing eBay
+   267824797612 at $21.95 (listing c7d2c9fb…, stock 67fb27d2…). One physical
+   card. Operator chose to END the $21.95 one and keep the $3.99 one.
+   Plan: end 267824797612; withdraw c7d2c9fb, stock 67fb27d2 → 0 RETURNED;
+   repoint aa7a892a/fbeb7db2/pair to c1f26d7b; delete the duplicate local
+   catalogue entry; fix catalogue_guess to prefer the full printed number.
+   IN PROGRESS — check eBay 267824797612 status before retrying.
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
