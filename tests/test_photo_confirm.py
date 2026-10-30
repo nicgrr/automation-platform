@@ -31,6 +31,10 @@ CONFIRM = "/ebay-listing-bulk-photos/batch/confirm"
 def context(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/confirm.db", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
+    # Production enforces this from a migration; the model doesn't declare it.
+    with engine.begin() as conn:
+        conn.exec_driver_sql('CREATE UNIQUE INDEX uq_inventory_card_finish ON inventory_items '
+                             '(catalog_item_id, variant, condition)')
     with Session(engine) as s:
         s.add(CardSet(id="wht", name="White Flare", game="pokemon"))
         s.add(CardSet(id="cn", name="Chasing Glory Together", game="pokemon"))
@@ -152,3 +156,54 @@ def test_a_second_tap_on_confirm_changes_nothing(context):
 def test_skipping_shows_the_next_card(context):
     _, client = context
     assert "Mamoswine" in client.get(CONFIRM + "?skip=1").text
+
+
+def test_a_number_without_its_set_total_prefers_the_entry_you_hold(context):
+    s, _ = context
+    s.add(CatalogItem(id="dup", name="Mamoswine ex", item_type=CatalogItemType.TCG_CARD))
+    s.flush()
+    s.add(TcgCard(catalog_item_id="dup", game="pokemon", set_id="cn", number="104", language="Chinese", rarity="RR"))
+    s.add(InventoryItem(id="held", catalog_item_id="mamoswine", variant=CardVariant.HOLO,
+                        condition="Near Mint", quantity=1, status=InventoryStatus.AVAILABLE))
+    pair = s.get(ListingPhotoPair, "p2")
+    pair.extracted = {**pair.extracted, "card_number": "104"}
+    s.commit()
+    item, _ = catalogue_guess(s, pair)
+    assert item.id == "mamoswine"
+
+
+def test_two_equally_likely_entries_are_not_guessed(context):
+    s, _ = context
+    s.add(CatalogItem(id="dup", name="Mamoswine ex", item_type=CatalogItemType.TCG_CARD))
+    s.flush()
+    s.add(TcgCard(catalog_item_id="dup", game="pokemon", set_id="cn", number="104", language="Chinese", rarity="RR"))
+    pair = s.get(ListingPhotoPair, "p2")
+    pair.extracted = {**pair.extracted, "card_number": "104"}
+    s.commit()
+    assert catalogue_guess(s, pair) is None
+
+
+def test_an_extra_copy_of_a_finish_already_on_record_adds_to_that_record(context):
+    s, client = context
+    s.add(InventoryItem(id="bulked", catalog_item_id="trubbish", variant=CardVariant.MASTERBALL_PATTERN,
+                        condition="Near Mint", quantity=0, status=InventoryStatus.RESERVED))
+    s.commit()
+    _confirm(client, "p1", catalog="trubbish", finish="masterball_pattern", choice="extra", quantity="1")
+    s.expire_all()
+    stock = s.scalars(select(InventoryItem).where(InventoryItem.catalog_item_id == "trubbish")).all()
+    assert [(i.id, i.quantity, i.status) for i in stock] == [("bulked", 1, InventoryStatus.AVAILABLE)]
+    assert s.get(ListingPhotoPair, "p1").status == ListingPhotoPairStatus.APPLIED
+
+
+def test_correcting_a_finish_onto_an_existing_record_asks_instead_of_crashing(context):
+    s, client = context
+    s.add(InventoryItem(id="rev", catalog_item_id="trubbish", variant=CardVariant.REVERSE_HOLO,
+                        condition="Near Mint", quantity=1, status=InventoryStatus.AVAILABLE))
+    s.add(InventoryItem(id="ball", catalog_item_id="trubbish", variant=CardVariant.POKEBALL_PATTERN,
+                        condition="Near Mint", quantity=1, status=InventoryStatus.AVAILABLE))
+    s.commit()
+    resp = _confirm(client, "p1", catalog="trubbish", finish="pokeball_pattern", choice="stock:rev")
+    assert "error=" in resp.headers["location"]
+    s.expire_all()
+    assert s.get(InventoryItem, "rev").variant == CardVariant.REVERSE_HOLO
+    assert s.get(ListingPhotoPair, "p1").status == ListingPhotoPairStatus.NEEDS_REVIEW

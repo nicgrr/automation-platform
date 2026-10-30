@@ -94,6 +94,12 @@ def catalogue_guess(session: Session, pair: ListingPhotoPair) -> tuple[CatalogIt
     catalogue spells differently ("csv10C" vs "Chasing Glory Together")
     defeat the batch matcher; the printed number plus either name is enough
     to find the card when exactly one entry fits.
+
+    A number read without its set total ("130") also matches "130/222". When
+    several entries fit, the one the operator holds stock or listings for
+    wins: on 2026-10-30 a stray duplicate entry numbered "130" was chosen
+    over the stocked "130/222", and "Extra copy" double-listed one card.
+    Still ambiguous after that means no guess, so the operator searches.
     """
     if pair.proposed_catalog_item_id:
         item = session.get(CatalogItem, pair.proposed_catalog_item_id)
@@ -104,11 +110,16 @@ def catalogue_guess(session: Session, pair: ListingPhotoPair) -> tuple[CatalogIt
     if not number:
         return None
     names = _name_aliases(facts.get("character"))
+    base = number.split("/", 1)[0]
     rows = session.execute(
         select(CatalogItem, TcgCard).join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id)
-        .where(TcgCard.number == number)
+        .where((TcgCard.number == number) | (TcgCard.number == base) | TcgCard.number.like(f"{base}/%"))
     ).all()
-    matches = [(item, card) for item, card in rows if _normalise(item.name) in names]
+    matches = [(item, card) for item, card in rows
+               if _normalise(item.name) in names and (card.number == number or "/" not in number or "/" not in (card.number or ""))]
+    if len(matches) > 1:
+        held = [(item, card) for item, card in matches if any(_holdings(session, item.id))]
+        matches = held or matches
     return matches[0] if len(matches) == 1 else None
 
 
@@ -362,6 +373,12 @@ def confirm_card(
         if any(l.inventory_item_id == inventory.id for l in _holdings(session, catalog)[0]):
             return retry("That stock already has a listing. Choose 'Same card, new photo'.")
         if inventory.variant != variant:
+            clash = session.scalar(select(InventoryItem).where(
+                InventoryItem.catalog_item_id == catalog, InventoryItem.variant == variant,
+                InventoryItem.condition == inventory.condition, InventoryItem.id != inventory.id))
+            if clash is not None:
+                return retry(f"You already have a {_finish_label(finish)} stock record for this card. "
+                             "Pick that one, or choose Extra copy.")
             details["stock_finish_corrected_from"] = inventory.variant.value
             inventory.variant = variant
         listing = _new_draft(item, card, inventory)
@@ -373,12 +390,27 @@ def confirm_card(
             return retry("Enter how many extra copies you have.")
         if not 1 <= count <= 99:
             return retry("Extra copies must be between 1 and 99.")
-        inventory = InventoryItem(
-            catalog_item_id=catalog, variant=variant, condition="Near Mint", quantity=count,
-            status=InventoryStatus.AVAILABLE, scan_image_path=pair.front_image_path,
-            notes=f"Extra copy confirmed from photo batch {batch_id} by {user}.",
-        )
-        session.add(inventory)
+        # Stock is unique per card, finish and condition: an extra copy of a
+        # finish already on record adds to that record.
+        inventory = session.scalar(select(InventoryItem).where(
+            InventoryItem.catalog_item_id == catalog, InventoryItem.variant == variant,
+            InventoryItem.condition == "Near Mint"))
+        if inventory is not None:
+            if any(l.inventory_item_id == inventory.id for l in _holdings(session, catalog)[0]):
+                return retry(f"You already have a {_finish_label(finish)} listing for this card. Choose "
+                             "'Same card, new photo', or change its quantity in Listing Studio.")
+            details["added_to_stock"] = inventory.id
+            inventory.quantity = max(inventory.quantity, 0) + count
+            inventory.status = InventoryStatus.AVAILABLE
+            inventory.notes = "\n".join(v for v in ((inventory.notes or "").strip(),
+                f"+{count} extra copy confirmed from photo batch {batch_id} by {user}.") if v)
+        else:
+            inventory = InventoryItem(
+                catalog_item_id=catalog, variant=variant, condition="Near Mint", quantity=count,
+                status=InventoryStatus.AVAILABLE, scan_image_path=pair.front_image_path,
+                notes=f"Extra copy confirmed from photo batch {batch_id} by {user}.",
+            )
+            session.add(inventory)
         session.flush()
         listing = _new_draft(item, card, inventory)
         session.add(listing)
