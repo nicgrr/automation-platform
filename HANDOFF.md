@@ -102,6 +102,17 @@ from).
      Chinese Dudunsparce/Mamoswine/Crobat ex already had catalogue entries
      and active listings (set cn-csv10c); only Psyduck 043/222 is new.
 
+5. **Shop ↔ eBay photo sync (2026-10-30):** eBay→shop DONE (`--refresh` on
+   scripts/backfill_ebay_listing_photos.py: 265 read, 85 new, 0 missing).
+   Image-hash audit of 254 linked live listings: 228 in sync, 20 with no CRM
+   photo (shop uses eBay's), 6 where eBay has an older single photo:
+   267796015344 Gardevoir, 267805604307 Yanma, 267796015386 Squirtle,
+   267813837184 Loki, 267824797652 Dudunsparce, 267824797679 Shiinotic.
+   Operator approved revising those six (photos + CRM titles) while KEEPING
+   eBay prices: first set CRM price = eBay price for Gardevoir 2.40, Yanma
+   6.23, Squirtle 3.39. IN PROGRESS — check each listing's eBay photo count
+   before retrying.
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
