@@ -214,6 +214,13 @@ from).
      Operator approved the pick run deploy; restart pending their OK on that
      wider scope.
 
+7. **Vegito P-065 (2026-10-31):** duplicate audit of all 264 live listings
+   found no other doubles; Vegito "Gold Stamped" eBay 267796015378 ($12.85,
+   flatbed scan, no visible stamp) vs promo 267821547918 ($4.95). Operator:
+   end 267796015378. IN PROGRESS — check its eBay status before retrying.
+   Open questions to operator: physical counts for Mega Heracross ex me2-4
+   (eBay qty 2, stock 1) and Tornadus svp-210 (eBay qty 5, stock 4).
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
