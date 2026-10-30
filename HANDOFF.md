@@ -187,6 +187,33 @@ from).
      (`tcgp-716205`); Gothitelle pair 16 has no match; revise prices on eBay
      one listing at a time. The overnight eBay import now covers all 32 cards.
 
+8. **Pick run and print-all labels (Claude Code session
+   `ezbay-platform-review`, branch `feat/pick-run` in worktree
+   `.claude/worktrees/pick-run`, 2026-10-29/30, operator-requested):**
+   - DONE (code): `/ebay-sales/pick-run` lists every open eBay order's lines
+     sorted by drawer then slot (`OP-01-009` → drawer OP-01, slot 009), then
+     cards with no slot (Pokémon singles live in the bulk drawers), then
+     sku-less `item:` lines, then bulk lots. Orders lettered A, B, … oldest
+     first. "Print all labels" (`POST /ebay-sales/pick-run/print-labels`)
+     prints each open order's label once, skipping any order with a
+     `label.print_ebay` audit event, and stops with 502 on the first printer
+     error. `print_ebay_label` now records that audit event. "Open orders" is
+     one shared definition (`ebay_sales.open_orders`), also used for a new
+     `/ebay-sales` nav badge (`NAV_COUNT_HREFS` in `ui.py`). No schema change.
+   - Storage, per the operator: 2 rows of 4 three-drawer units; one One Piece
+     (OP-01), one Dragon Ball (DB-01), the rest random bulk (Pokémon singles
+     included), 3 free. 1,406 available rows have no slot.
+   - Rebased onto `04f2342` cleanly. Validation: targeted (pick run, nav,
+     navigation, bundle singles, eBay sales, dashboard, order import, labels)
+     144 passed. Full suite in the worktree (2026-10-30): 2360 passed, 3
+     failed — all in tests/test_representative_backs.py, because the worktree
+     has no `scan_ingest_data/media/.../representative-backs/` images (gitignored
+     data); the same 3 pass in the live checkout. Gotcha for worktree runs.
+   - Deploy: fast-forward this checkout to `feat/pick-run`, tag, restart
+     `ezbay.service`. The restart also brings items 3, 4(d), 6 and 7 live.
+     Operator approved the pick run deploy; restart pending their OK on that
+     wider scope.
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
@@ -346,4 +373,4 @@ Subsequent verified Codex work:
 
 ## Last updated
 
-Claude Code, 2026-10-30 (bundle singles checkpoint, item 7)
+Claude Code, 2026-10-30 15:35 AEDT (pick run, item 8)
