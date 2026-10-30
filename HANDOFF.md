@@ -217,7 +217,9 @@ from).
 7. **Vegito P-065 (2026-10-31):** duplicate audit of all 264 live listings
    found no other doubles; Vegito "Gold Stamped" eBay 267796015378 ($12.85,
    flatbed scan, no visible stamp) vs promo 267821547918 ($4.95). Operator:
-   end 267796015378. IN PROGRESS — check its eBay status before retrying.
+   end 267796015378. DONE: ended on eBay; CRM listing 1800c342… withdrawn.
+   Its stock record 2e2bd483… (tcgp-252816 Gold Stamped, qty 1) is left as
+   is until the operator confirms whether a Gold Stamped copy exists.
    Open questions to operator: physical counts for Mega Heracross ex me2-4
    (eBay qty 2, stock 1) and Tornadus svp-210 (eBay qty 5, stock 4).
 
