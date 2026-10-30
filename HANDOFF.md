@@ -3,6 +3,32 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — collectibles for Vinted (Codex, 2026-10-31)
+
+Active agent: Codex. Branch `collectibles-vinted-preparation`, base `5785953`.
+Operator: all figurines/collectibles are for Vinted ONLY, never publish them to
+ eBay. Graded cards are separate and retain their existing workflow. Prepare
+collectible identities/photos/descriptions and provisional AUD prices ending .99;
+operator still confirms prices. Research Vinted browser options, do not publish.
+
+In progress: audit owned stock + the two recent upload batches, add an enforced
+collectible eBay publication/export exclusion, prepare an accessible Vinted
+review/export area with price suggestions and unresolved identity flags. No
+Vinted login, publication, or CAPTCHA automation in this batch. Preserve stock
+quantities, confirmed prices and all photos; avoid duplicate inventory.
+
+Existing dirty files at takeover (prior Codex session; preserved, not to be
+committed as part of this task without explicit hunk isolation): api.py,
+collectibles.py, ebay_photo_batch.py, ebay_publish.py, navigation_hubs.py,
+photo_identification_review.py, untracked product_photo_review.py and its test.
+They contain deployed mixed-product intake, photo display and graded safeguards.
+
+Next: read publication/export and inventory paths; make minimal channel guard
+and Vinted preparation changes; run focused tests; activate and verify the CRM
+change within the user's ongoing authorization. No external listing writes.
+Parallel agents are researching prices and Vinted rules read-only.
+Validation: not run (planning checkpoint).
+
 ## Current task
 
 Active agent: Claude Code (2026-10-30), branch
@@ -385,3 +411,5 @@ Subsequent verified Codex work:
 ## Last updated
 
 Claude Code, 2026-10-30 15:35 AEDT (pick run, item 8)
+
+Last updated for current task: Codex, 2026-10-31.
