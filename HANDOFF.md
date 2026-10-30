@@ -115,8 +115,10 @@ from).
    (Inventory API updated its inventory item but not the live listing);
    fixed revise_photos' missing XML declaration (`0c4f5dc`). Final audit:
    234/234 in sync, 20 live listings have only eBay photos (shop shows
-   those), 0 out of sync. The eBay→shop refresh is not scheduled; rerun
-   `--refresh` after revising photos on eBay outside the CRM.
+   those), 0 out of sync. Nightly timer written (docs/systemd/
+   ebay-photo-refresh.{service,timer}, ~03:40 Sydney) but NOT installed:
+   the agent's permission rules block installing system services, so the
+   operator installs it (commands in the commit message of that change).
 
 ## Next steps
 
