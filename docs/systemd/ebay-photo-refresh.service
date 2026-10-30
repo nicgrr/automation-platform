@@ -1,0 +1,18 @@
+[Unit]
+Description=EzBay nightly re-read of live eBay listing photos for the NL Vault catalogue
+After=network-online.target ezbay.service
+Wants=network-online.target
+
+[Service]
+# Read-only against eBay: GetItem for every active listing, writing only the
+# local listing cache that the catalogue's photos come from. Picks up photos
+# revised on eBay outside the CRM; see scripts/backfill_ebay_listing_photos.py.
+Type=oneshot
+User=ezbay
+Group=ezbay
+WorkingDirectory=/home/nic/automation-platform
+EnvironmentFile=/home/nic/automation-platform/.env.local
+ExecStart=/home/nic/automation-platform/.venv/bin/python -m scripts.backfill_ebay_listing_photos --refresh
+StandardOutput=append:/home/nic/automation-platform/scan_ingest_data/logs/ebay-photo-refresh.log
+StandardError=append:/home/nic/automation-platform/scan_ingest_data/logs/ebay-photo-refresh.log
+MemoryMax=384M

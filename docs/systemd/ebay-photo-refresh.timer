@@ -1,0 +1,13 @@
+[Unit]
+Description=Re-read live eBay listing photos nightly
+
+[Timer]
+# After the 03:20 eBay price import and well before the morning; a full
+# pass over ~265 listings takes about four minutes.
+OnCalendar=*-*-* 03:40:00 Australia/Sydney
+RandomizedDelaySec=10m
+Persistent=true
+Unit=ebay-photo-refresh.service
+
+[Install]
+WantedBy=timers.target
