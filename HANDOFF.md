@@ -110,8 +110,13 @@ from).
    267813837184 Loki, 267824797652 Dudunsparce, 267824797679 Shiinotic.
    Operator approved revising those six (photos + CRM titles) while KEEPING
    eBay prices: first set CRM price = eBay price for Gardevoir 2.40, Yanma
-   6.23, Squirtle 3.39. IN PROGRESS — check each listing's eBay photo count
-   before retrying.
+   6.23, Squirtle 3.39. DONE: all six revised and read back from eBay
+   (prices unchanged). Loki needed a Trading API photos-only revise
+   (Inventory API updated its inventory item but not the live listing);
+   fixed revise_photos' missing XML declaration (`0c4f5dc`). Final audit:
+   234/234 in sync, 20 live listings have only eBay photos (shop shows
+   those), 0 out of sync. The eBay→shop refresh is not scheduled; rerun
+   `--refresh` after revising photos on eBay outside the CRM.
 
 ## Next steps
 
