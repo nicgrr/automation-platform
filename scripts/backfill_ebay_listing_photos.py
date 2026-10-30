@@ -13,10 +13,13 @@ listing missing that data, via the same GetItem call
 
 Skips a listing that already has image_urls cached, so a re-run only
 fills in whatever's still missing -- safe to run again after a batch of
-new listings goes live.
+new listings goes live. --refresh re-reads every active listing instead,
+picking up photos revised on eBay since they were first cached (the NL
+Vault catalogue shows exactly these cached photos).
 
     .venv/bin/python -m scripts.backfill_ebay_listing_photos --dry-run
     .venv/bin/python -m scripts.backfill_ebay_listing_photos
+    .venv/bin/python -m scripts.backfill_ebay_listing_photos --refresh
 """
 
 import argparse
@@ -44,7 +47,7 @@ async def run(args) -> int:
     if not configured(settings):
         raise SystemExit("eBay is not configured -- see ebay_oauth.configured.")
 
-    backfilled = failed = skipped = 0
+    backfilled = failed = skipped = changed = 0
 
     with SessionLocal() as session:
         cipher, oauth = ebay_services(settings)
@@ -59,12 +62,14 @@ async def run(args) -> int:
             r for r in rows
             if (r.raw_snapshot or {}).get("source") == SOURCE
             and (
-                not (r.raw_snapshot or {}).get("image_urls")
+                args.refresh
+                or not (r.raw_snapshot or {}).get("image_urls")
                 or not str((r.raw_snapshot or {}).get("description") or "").strip()
             )
         ]
 
         print(
+            f"Re-reading all {len(targets)} active cached listing(s).\n" if args.refresh else
             f"{len(targets)} of {len(rows)} active cached listing(s) are missing "
             "photos or a description.\n"
         )
@@ -82,9 +87,14 @@ async def run(args) -> int:
                 skipped += 1
                 continue
 
-            print(f"  {'would backfill' if args.dry_run else 'backfilled'}: {row.ebay_listing_id} "
-                  f"({row.title[:50]}) -- {len(details.picture_urls)} photo(s)"
-                  f"{', has description' if details.description else ', no description'}")
+            photos_changed = list(details.picture_urls or []) != list((row.raw_snapshot or {}).get("image_urls") or [])
+            changed += photos_changed
+            if args.refresh and not photos_changed:
+                print(f"  unchanged: {row.ebay_listing_id} ({row.title[:50]})")
+            else:
+                print(f"  {'would update' if args.dry_run else 'updated'}: {row.ebay_listing_id} "
+                      f"({row.title[:50]}) -- {len(details.picture_urls)} photo(s)"
+                      f"{', has description' if details.description else ', no description'}")
             if args.dry_run:
                 continue
 
@@ -99,7 +109,8 @@ async def run(args) -> int:
             backfilled += 1
             await asyncio.sleep(DELAY_SECONDS)
 
-    print(f"\n{backfilled} backfilled, {failed} failed, {skipped} had nothing to backfill.")
+    print(f"\n{backfilled} backfilled ({changed} with new photos), {failed} failed, "
+          f"{skipped} had nothing to backfill.")
     if args.dry_run:
         print("--dry-run: nothing written.")
     return 0
@@ -108,6 +119,8 @@ async def run(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
+    parser.add_argument("--refresh", action="store_true",
+                        help="re-read every active listing, not just those missing photos")
     args = parser.parse_args(argv)
     try:
         return asyncio.run(run(args))
