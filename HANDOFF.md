@@ -130,7 +130,12 @@ from).
    Plan: end 267824797612; withdraw c7d2c9fb, stock 67fb27d2 → 0 RETURNED;
    repoint aa7a892a/fbeb7db2/pair to c1f26d7b; delete the duplicate local
    catalogue entry; fix catalogue_guess to prefer the full printed number.
-   IN PROGRESS — check eBay 267824797612 status before retrying.
+   DONE: eBay 267824797612 ended (cache shows Ended); CRM cleanup applied via
+   scripts/retire_duplicate_crobat_20261030.py (kept listing on c1f26d7b with
+   original stock 67fb27d2 qty 1; extra stock and duplicate entry deleted).
+   photo_confirm fixed (full-number preference, unique stock handling).
+   Needs `ezbay.service` restart for the confirm fixes. Note the kept
+   listing is AUD 3.99 vs the old 21.95; operator's choice.
 
 ## Next steps
 
