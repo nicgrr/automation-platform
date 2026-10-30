@@ -255,6 +255,7 @@ ADMIN_NAV = [
     ], False),
     ("Review", [
         ("/review-centre", "Review centre"),
+        ("/bundle-singles", "Bundle singles"),
     ], False),
     ("Inventory", [
         ("/inventory", "Inventory"),
@@ -354,6 +355,7 @@ NAV_ACTIVE_PREFIXES = {
         "/review-centre", "/review", "/foil-review", "/inventory-audit",
         "/collectibles/review", "/accessories/review", "/cards/review", "/cards/pricing",
     ),
+    "/bundle-singles": ("/bundle-singles",),
     "/inventory": ("/inventory", "/search", "/sealed-products", "/collectibles", "/accessories"),
     "/personal-collection": ("/personal-collection",),
     "/ebay": ("/ebay", "/ebay-listings", "/ebay-sales", "/ebay-export", "/ebay-listing-cleanup"),
@@ -647,6 +649,7 @@ _TOPBAR_NAV_LINKS = [
     ("/dashboard", "Dashboard"),
     ("/inventory", "Inventory"),
     ("/review-centre", "Review"),
+    ("/bundle-singles", "Bundle singles"),
 ]
 
 

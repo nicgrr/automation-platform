@@ -160,12 +160,32 @@ from).
    - Pair 27 (Celebi) now has two catalogue matches (`neo4-106` original,
      `tcgp-716205` 30th Celebration Classic Collection): choose `tcgp-716205`.
      Pair 16 (Gothitelle) reports no match; its live listing uses `tcgp-647306`.
-   - IN PROGRESS (planned next): reserve storage slots PK-01-001..013 (tray
-     PK-01 is new, named like DB-01/OP-01) for the 13 added inventory rows as
-     unconfirmed placements; the operator confirms "stored" afterwards. Then
-     a read-only "Bundle singles" review page (`bundle_singles.py`) with a
-     top-bar link (small edits to `api.py` and `ui.py`). Not deployed: needs an
-     `ezbay.service` restart, which is the operator's action.
+   - DONE (data): storage slots PK-01-001..013 (tray PK-01 is new, named like
+     DB-01/OP-01) reserved for the 13 added inventory rows as UNCONFIRMED
+     placements on batch 7db66a0c; `batch.storage_tray` set to PK-01. The
+     operator confirms "stored" on the batch page, which copies the slot onto
+     each inventory row. `proposed_price` cleared on 31 pairs. One audit event,
+     `bundle_cards.protect_prices_reserve_storage`, holds the old values. Note:
+     the script's dry-run committed (the audit helper commits the session), so
+     the rerun with --apply stopped on its own "placement exists" check; the
+     resulting state is exactly the intended one.
+   - DONE (code, NOT deployed): read-only "Bundle singles" review page
+     (`automation_control/bundle_singles.py`: list at `/bundle-singles` and a
+     one-card view with Previous/Next at `/bundle-singles/{photo position}`),
+     linked from the drawer's Review group (`ADMIN_NAV`, so the drawer is now
+     13 links and `tests/test_nav.py` asserts 13), the top bar (hidden on
+     phones) and the active-state prefixes in `ui.py`. Router registered in
+     `api.py`. Checked read-only against the live DB: 32 cards, 13 reserved
+     slots, 2 listings flagged "no inventory". Needs an `ezbay.service`
+     restart (operator action); the restart also brings the earlier navigation
+     fix (item 3) live, so run `.venv/bin/alembic upgrade head` first.
+   - Validation: tests/test_bundle_singles.py (8) + test_nav.py +
+     test_dashboard.py: 56 passed. Full suite: RUNNING when this was written;
+     see the next update.
+   - Open for the operator: confirm "stored" once the cards are in PK-01;
+     Heracross/Tornadus quantities; Celebi pair 27 catalogue choice
+     (`tcgp-716205`); Gothitelle pair 16 has no match; revise prices on eBay
+     one listing at a time. The overnight eBay import now covers all 32 cards.
 
 ## Next steps
 
