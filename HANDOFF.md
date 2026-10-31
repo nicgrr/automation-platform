@@ -251,6 +251,18 @@ from).
    Open questions to operator: physical counts for Mega Heracross ex me2-4
    (eBay qty 2, stock 1) and Tornadus svp-210 (eBay qty 5, stock 4).
 
+8. **Vinted semi-automation (started 2026-10-31):** operator decisions:
+   collectibles only (existing eBay block stays); sold detection from
+   Vinted's sale emails; personal account now, maybe Vinted Pro later
+   (keep a `source` field so a Pro API can slot in). No bot posting: Vinted
+   terms forbid automation on personal accounts. Plan: (1) VintedListing
+   table + migration; (2) phone "Post to Vinted" screen: ordered photos
+   via share sheet, copy buttons, category/brand/condition hints, paste the
+   Vinted URL back → listing recorded, stock reserved; (3) storefront links
+   to the exact Vinted item; (4) sale-email parser marks sold + depletes
+   stock (needs IMAP app password on the server — operator). Existing
+   /collectibles/vinted prep page (Codex) has 0 saved drafts; build on it.
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
