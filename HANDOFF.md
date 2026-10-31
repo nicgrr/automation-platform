@@ -24,6 +24,19 @@ notes in the existing Vinted draft records (never confirmed prices or existing
 ShopListing prices), preserving Claude's new Cauliflower stock and its $23.99
 price. Audit Vinted code and run focused regression checks; fix only concrete
 workflow defects necessary for the handoff, with another checkpoint if needed.
+Price batch DONE: 12 provisional prices + 4 holds saved to PlatformConfig.
+Existing prices, quantities and confirmed-price fields untouched. Cauliflower
+suggestion retains its new $23.99 price. Audit snapshot and proposals are under
+`/home/nic/Documents/Codex/2026-10-31/vinted-price-*`.
+
+Next small fix batch: read-only review reproduced acceptance of negative posted
+prices; permissive lookalike Vinted URL domains; and qty2/post2/sell1/remove1
+leaving one returned unit incorrectly SOLD. Fix vinted_listings.py and its focused
+tests (delegated to Codex vinted_research). Show outstanding identity/price holds
+on posting screen. No storefront linking expansion: exact Vinted product links
+and sale-email import remain outstanding. No live data correction needed as
+there are zero tracked Vinted listings.
+
 No external listing actions; no browser/login setup. Price/identity confirmation
 and manual Vinted publication remain operator steps. Tests are running.
 
