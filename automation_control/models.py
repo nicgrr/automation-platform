@@ -1434,6 +1434,48 @@ class WhatnotShowItem(Base):
     whatnot_show: Mapped[WhatnotShow] = relationship()
 
 
+class VintedListingStatus(str, enum.Enum):
+    ACTIVE = "active"
+    SOLD = "sold"
+    REMOVED = "removed"
+
+
+class VintedListing(Base):
+    """One item the operator has posted on Vinted, tied to the stock it uses.
+
+    Vinted has no listing API for personal sellers and its terms forbid
+    automated posting, so the operator posts in the Vinted app from the CRM's
+    prepared draft and pastes the item link back (source "manual"). Recording
+    it reserves one unit of stock exactly as a Whatnot queue does; removing
+    it releases that unit; a sale consumes it and creates a Sale. `source`
+    leaves room for a Vinted Pro integration to write the same rows.
+    """
+
+    __tablename__ = "vinted_listings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="SET NULL"), index=True
+    )
+    catalog_item_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    vinted_item_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    url: Mapped[str] = mapped_column(String(512))
+    title: Mapped[str] = mapped_column(String(256))
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    status: Mapped[VintedListingStatus] = mapped_column(
+        Enum(VintedListingStatus), default=VintedListingStatus.ACTIVE, index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), default="manual")
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    stock_reserved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stock_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sale_id: Mapped[str | None] = mapped_column(ForeignKey("sales.id"))
+    sale_email_id: Mapped[str | None] = mapped_column(String(256), unique=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class ScanSession(Base):
     """One sitting of scanning a single set. Survives being interrupted:
     a session left RUNNING is offered for resume next time that set is

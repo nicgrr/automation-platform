@@ -125,6 +125,8 @@ def review(user: str = Depends(require_dashboard_user), session: Session = Depen
         previous = f"Previous EzBay price: AU${escape(row['previous_price'])}. " if row['previous_price'] else ''
         pairlink = f"<a href='/product-photo-review/{row['pair'].id}?kind=collectible'>Review identity / stock</a>" if row['pair'] else ''
         value = draft.get('confirmed_price') or draft.get('suggested_price') or ''
+        post_link = (f"<p><a class='btn' href='/collectibles/vinted/{key}/post'>Post to Vinted</a></p>"
+                     if row['inventory'] is not None else '')
         cards.append(f"""<article class='panel' id='{key}'>
 <h2>{escape(row['name'])}</h2><p>Vinted only · Qty {row['quantity'] if row['quantity'] is not None else 'unconfirmed'} · {'Recent upload' if row['recent'] else 'Older photo'}</p>
 <div class='vinted-photos'>{photos}</div>
@@ -137,11 +139,13 @@ def review(user: str = Depends(require_dashboard_user), session: Session = Depen
 <label>Description<textarea name='description' rows='5' maxlength='5000'>{escape(draft['description'])}</textarea></label>
 <label>Your Vinted price (AUD, postage extra)<input type='number' name='price' step='0.01' min='0.01' max='99999' value='{escape(str(value),quote=True)}' placeholder='Leave blank to keep unpriced'></label>
 <p class='muted'>Saving confirms your entered price and rounds it up to .99. It does not publish or change existing listing prices.</p>
-<button>Save Vinted draft</button></form><p>{pairlink}</p></article>""")
+<button>Save Vinted draft</button></form><p>{pairlink}</p>
+{post_link}</article>""")
     body = brand_header('Collectibles — Vinted preparation') + (
         f"<div class='panel'><p><strong>{len(rows)} figurines · Vinted only · Nothing published by this page</strong></p>"
         "<p>Graded cards stay in their separate workflow. Suggestions are AUD asking prices for opened figures, postage extra; they are not verified sold values. Review titles, condition, quantities and included accessories before posting.</p>"
-        "<p><a class='btn' href='/collectibles/vinted/download'>Download drafts and photos</a> "
+        "<p><a class='btn' href='/collectibles/vinted/live'>Live on Vinted</a> "
+        "<a class='btn ghost' href='/collectibles/vinted/download'>Download drafts and photos</a> "
         "<a class='btn ghost' href='/collectibles'>Collectibles catalogue</a> "
         "<a class='btn ghost' href='/shop-listings'>Back to Listing Studio</a></p></div>"
         + "<div class='vinted-grid'>"+''.join(cards)+"</div>"

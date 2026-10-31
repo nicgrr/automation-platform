@@ -31,6 +31,7 @@ from .capture import router as cards_router
 from .collectible_link import router as collectible_link_router
 from .contact_messages import router as contact_messages_router
 from .vinted_prep import router as vinted_prep_router
+from .vinted_listings import router as vinted_listings_router
 from .collectibles import router as collectibles_router
 from .collectible_pricing import router as collectible_pricing_router
 from .commerce import router as commerce_router
@@ -179,6 +180,7 @@ app.include_router(business_records_router)
 app.include_router(sealed_economics_router)
 app.include_router(analytics_router)
 app.include_router(vinted_prep_router)
+app.include_router(vinted_listings_router)
 app.include_router(collectibles_router)
 app.include_router(collectible_pricing_router)
 app.include_router(collectible_link_router)
