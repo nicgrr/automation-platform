@@ -45,6 +45,7 @@ from .models import CaptureBatch, CapturedCollectible, CardCaptureStatus, CardPr
 from .navigation import finish_flow, remember_flow_origin
 from .reverse_image_search import ReverseImageSearchError, search_image
 from . import vocabulary
+from .collectible_reference import PICKER_SCRIPT, canonical, remember
 from .ui import brand_header, page, photo_field, pill
 
 router = APIRouter(tags=["collectibles"])
@@ -236,7 +237,7 @@ def collectibles_page(
           f"<a href='/collectibles/identify'>Identify from a link</a></p></div>"
         + filters + grid + form + _COLLECTIBLE_LIST_STYLE + _STYLE
     )
-    return HTMLResponse(page("EzBay — Collectibles", body))
+    return HTMLResponse(page("EzBay — Collectibles", body + PICKER_SCRIPT))
 
 
 def _collectibles_catalogue_page(session: Session, sort_key: str, brand: str, secret_only: str) -> HTMLResponse:
@@ -336,7 +337,7 @@ def _collectibles_catalogue_page(session: Session, sort_key: str, brand: str, se
     )
 
     body = brand_header("Collectibles — full catalogue") + filters + table + _COLLECTIBLE_LIST_STYLE + _STYLE
-    return HTMLResponse(page("EzBay — Collectibles", body))
+    return HTMLResponse(page("EzBay — Collectibles", body + PICKER_SCRIPT))
 
 
 @router.post("/collectibles")
@@ -347,6 +348,8 @@ def create_collectible(
     user: str = Depends(require_dashboard_user), session: Session = Depends(get_session),
 ):
     item_id = str(uuid.uuid4())
+    brand, series, character = canonical(session, brand, series, character)
+    remember(session, brand, series, character, is_secret=bool(is_secret))
     session.add(CatalogItem(id=item_id, item_type=CatalogItemType.COLLECTIBLE, name=name))
     session.add(CollectibleProduct(
         catalog_item_id=item_id, brand=brand or None, series=series or None, character=character or None,
@@ -710,7 +713,7 @@ def collectible_review_form(capture_id: str, filled: str = Query(""), problem: s
         + _REVIEW_STYLE
         + _STYLE
     )
-    return HTMLResponse(page("EzBay — Review capture", body))
+    return HTMLResponse(page("EzBay — Review capture", body + PICKER_SCRIPT))
 
 
 @router.post("/collectibles/review/{capture_id}/from-link")
@@ -971,6 +974,8 @@ def collectible_review_submit(
         record_event(session, actor_type="user", actor_id=user, action="collectible.reject", resource_type="captured_collectible", resource_id=capture_id, outcome="success", correlation_id=str(uuid.uuid4()), details={})
         return onward()
 
+    brand, series, character = canonical(session, brand, series, character)
+    remember(session, brand, series, character, is_secret=bool(is_secret))
     name = character.strip() or brand.strip() or "Unnamed collectible"
     item_id = str(uuid.uuid4())
     session.add(CatalogItem(id=item_id, item_type=CatalogItemType.COLLECTIBLE, name=name))

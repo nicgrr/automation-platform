@@ -13,6 +13,7 @@ from .database import get_session
 from .models import (CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem,
     CardVariant, ShopListing, ShopListingStatus, ListingPhotoPair, ListingPhotoPairStatus, ListingPhotoBatch)
 from .audit import record_event
+from .collectible_reference import PICKER_SCRIPT, canonical, key, remember
 from .ui import brand_header, page
 
 router = APIRouter(tags=['product-photo-review'])
@@ -35,8 +36,8 @@ def review(pair_id: str, kind: str = '', user: str = Depends(require_dashboard_u
     slab = selected_kind == 'graded'
     candidates = session.scalars(select(CatalogItem).where(CatalogItem.item_type == (CatalogItemType.GRADED_CARD if slab else CatalogItemType.COLLECTIBLE)).order_by(CatalogItem.name)).all()
     options = "<option value=''>New item — check existing records first</option>" + ''.join(f"<option value='{escape(c.id)}' {'selected' if c.id==pair.proposed_catalog_item_id else ''}>{escape(c.name)}</option>" for c in candidates)
-    def field(label, key, value='', required=False):
-        return f"<label>{label}<input name='{key}' value='{escape(str(value),quote=True)}' maxlength='128' {'required' if required else ''}></label>"
+    def field(label, key, value='', required=False, extra=''):
+        return f"<label>{label}<input name='{key}' value='{escape(str(value),quote=True)}' maxlength='128' {'required' if required else ''} {extra}></label>"
     photos = ''.join(f"<img src='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/{side}' alt='{side} photo'>" for side in ('front','back') if getattr(pair, side+'_image_path'))
     body = brand_header('Review graded card' if slab else 'Review collectible') + f"<a href='/ebay-listing-bulk-photos/{pair.batch_id}'>Back to upload</a><div class='product-photos'>{photos}</div>"
     body += ("<p>Existing stock keeps its quantity and price. Save the reviewed photos to Listing Studio.</p>"
@@ -44,9 +45,14 @@ def review(pair_id: str, kind: str = '', user: str = Depends(require_dashboard_u
              + (f"<p>Detected grading: {escape(str(facts.get('graded') or 'Not detected'))}</p>" if slab else '')
              + f"<form method='post' action='/product-photo-review/{pair_id}'><input type='hidden' name='kind' value='{selected_kind}'>"
              + f"<label>Existing {'slab' if slab else 'collectible'}<select name='existing'>{options}</select></label>"
-             + field('Card name and number' if slab else 'Character / figure name','name',facts.get('character') or '',True)
-             + field('Card game' if slab else 'Brand','brand',facts.get('brand') or '')
-             + field('Set' if slab else 'Series','series',facts.get('series') or facts.get('set_name') or '')
+             # Brand, then series, then character: the linked search lists
+             # (collectible_reference.py) narrow each box by the one above.
+             + (field('Card name and number','name',facts.get('character') or '',True)
+                + field('Card game','brand',facts.get('brand') or '')
+                + field('Set','series',facts.get('series') or facts.get('set_name') or '') if slab else
+                field('Brand','brand',facts.get('brand') or '',extra="placeholder='Sonny Angel, Pop Mart…'")
+                + field('Series','series',facts.get('series') or facts.get('set_name') or '',extra="placeholder='Start typing to search'")
+                + field('Character / figure name','name',facts.get('character') or '',True,extra="data-character placeholder='Start typing to search'"))
              + field('Language / printing' if slab else 'Variant / colourway','variant',facts.get('variant') or (facts.get('language') if slab else '') or '')
              + ("<input type='hidden' name='condition' value='Graded'>" if slab else "<label>Condition<select name='condition'><option>Used</option><option>New</option></select></label>")
              + (field('Grading company','company',required=True) + field('Grade','grade',required=True) + field('Certificate number','certificate',required=True)
@@ -54,6 +60,7 @@ def review(pair_id: str, kind: str = '', user: str = Depends(require_dashboard_u
                 "<label>Quantity for new stock<input name='quantity' type='number' min='1' max='999' value='1'></label>")
              + "<label><input type='checkbox' name='confirmed' value='yes' required>I checked the identity and condition.</label>"
              "<button class='btn'>Save and open Listing Studio</button></form>"
+             + ('' if slab else PICKER_SCRIPT) +
              "<style>.product-photos{display:flex;flex-wrap:wrap;gap:12px}.product-photos img{width:min(100%,340px);max-height:440px;object-fit:contain}form{display:grid;gap:14px;max-width:700px}label{display:grid;gap:5px}input,select{min-width:0;padding:10px}</style>")
     return HTMLResponse(page('EzBay — Product review', body))
 
@@ -75,6 +82,9 @@ def save(pair_id: str, kind: str = Form(...), name: str = Form(...), existing: s
             raise HTTPException(400,'Confirm company, grade, certificate and actual slab back photo')
         if kind=='collectible':
             company=grade=certificate=''
+            # Use the remembered spelling, so the catalogue doesn't grow
+            # "Vegetable Series" and "Vegetable Series " side by side.
+            brand,series,name=canonical(session,brand,series,name)
         expected = CatalogItemType.GRADED_CARD if kind=='graded' else CatalogItemType.COLLECTIBLE
         inventory = None
         if kind=='graded':
@@ -84,6 +94,10 @@ def save(pair_id: str, kind: str = Form(...), name: str = Form(...), existing: s
             if inventory and (inventory.grade != grade or (existing and inventory.catalog_item_id!=existing)):
                 raise HTTPException(409,'Certificate conflicts with the selected record or grade')
         item=session.get(CatalogItem,existing) if existing else (session.get(CatalogItem,inventory.catalog_item_id) if inventory else None)
+        if item is None and kind=='collectible':
+            # The same brand/series/character already in the catalogue is that item.
+            same=[cp for cp in session.scalars(select(CollectibleProduct)) if (key(cp.brand),key(cp.series),key(cp.character),key(cp.variant))==(key(brand),key(series),key(name),key(variant))]
+            if len(same)==1: item=session.get(CatalogItem,same[0].catalog_item_id)
         if existing and (not item or item.item_type!=expected): raise HTTPException(400,'Choose an existing item of the correct type')
         if kind=='graded' and item and not inventory:
             raise HTTPException(409,'The selected slab does not match this company and certificate')
@@ -115,6 +129,8 @@ def save(pair_id: str, kind: str = Form(...), name: str = Form(...), existing: s
             title=f'{name} {company} {grade}' if kind=='graded' else name
             listing=ShopListing(catalog_item_id=item.id,inventory_item_id=inventory.id,title=title[:256],condition=inventory.condition,quantity=inventory.quantity,price=Decimal('0'),currency='AUD',status=ShopListingStatus.DRAFT)
             session.add(listing);session.flush()
+        if kind=='collectible':
+            remember(session,brand,series,name)
         inventory.scan_image_path=pair.front_image_path
         listing.ebay_photo_paths=[pair.front_image_path]+([pair.back_image_path] if pair.back_image_path else [])
         pair.extracted={**(pair.extracted or {}),'product_review':{'kind':kind,'company':company,'grade':grade,'certificate':certificate,'reviewed_by':user}}

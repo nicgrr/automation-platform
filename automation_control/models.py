@@ -1434,6 +1434,27 @@ class WhatnotShowItem(Base):
     whatnot_show: Mapped[WhatnotShow] = relationship()
 
 
+class CollectibleReference(Base):
+    """One known brand / series / character combination for collectibles,
+    behind the linked search lists on the onboarding forms (see
+    collectible_reference.py). A series with no characters yet has an empty
+    character; *_key columns are the case- and space-insensitive match keys."""
+
+    __tablename__ = "collectible_reference"
+    __table_args__ = (UniqueConstraint("brand_key", "series_key", "character_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    brand: Mapped[str] = mapped_column(String(128))
+    series: Mapped[str] = mapped_column(String(128), default="")
+    character: Mapped[str] = mapped_column(String(128), default="")
+    brand_key: Mapped[str] = mapped_column(String(128), index=True)
+    series_key: Mapped[str] = mapped_column(String(128), default="")
+    character_key: Mapped[str] = mapped_column(String(128), default="")
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(32), default="operator")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class VintedListingStatus(str, enum.Enum):
     ACTIVE = "active"
     SOLD = "sold"

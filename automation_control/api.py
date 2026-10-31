@@ -202,7 +202,9 @@ app.include_router(ebay_photo_batch_router)
 app.include_router(bundle_singles_router)
 app.include_router(photo_confirm_router)
 from .product_photo_review import router as product_photo_review_router
+from .collectible_reference import router as collectible_reference_router
 app.include_router(product_photo_review_router)
+app.include_router(collectible_reference_router)
 app.include_router(photo_identification_review_router)
 app.include_router(shop_orders_router)
 app.include_router(pick_run_router)  # before ebay_sales so /ebay-sales/pick-run is never read as an order id
