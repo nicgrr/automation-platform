@@ -46,14 +46,15 @@ def test_every_column_of_the_master_list_is_parsed():
     """Three parallel columns of differing lengths, under a heading row
     whose last cell is a paragraph aimed at humans."""
     by_category = {}
-    for series in all_series():
+    master = [s for s in all_series() if s.matchable]  # not the official-site additions
+    for series in master:
         by_category.setdefault(series.category, []).append(series.name)
 
     assert len(by_category[REGULAR]) == 10
     assert len(by_category[LIMITED]) == 46
     assert len(by_category[HIPPERS]) == 6
     assert len(by_category[GIFTS]) == 3
-    assert len(all_series()) == 65
+    assert len(master) == 65
 
 
 def test_snack_series_is_present_where_the_old_hardcoded_list_missed_it():
@@ -144,7 +145,9 @@ def test_an_alias_never_becomes_the_stored_name():
     resolves to the canonical one and is not itself offered."""
     assert "Fast Food Series" not in series_names(SONNY_ANGEL)
     assert "Fast Food" not in series_names(SONNY_ANGEL)
-    assert len(series_names(SONNY_ANGEL)) == 65
+    # 65 from the master list plus 25 only on sonnyangel.com (older regular
+    # versions, yearly sets that share a name, a few newer limiteds).
+    assert len(series_names(SONNY_ANGEL)) == 90
 
 
 def test_every_alias_points_at_a_real_series():
@@ -423,3 +426,18 @@ def test_a_lucky_figure_is_flagged_secret_same_as_a_true_secret():
     secret = match("Sonny Angel Cat Life Happy Pink Robby Angel", SONNY_ANGEL)
     assert lucky.is_secret is True
     assert secret.is_secret is True
+
+
+def test_the_official_line_ups_are_offered_for_their_series():
+    from automation_control import vocabulary
+    animal_2 = [e.name for e in vocabulary.entries_for(SONNY_ANGEL)
+                if e.kind == vocabulary.CHARACTER and e.series == "Animal Series 2"]
+    assert animal_2 == ["Mouse", "Lesser Panda", "Hedgehog", "Fawn", "Duck", "Cow", "Chameleon",
+                        "Uribou", "Skunk", "Sheep", "Reindeer", "Pig"]
+    assert "Animal Series 2 (2018 version)" in series_names(SONNY_ANGEL)
+
+
+def test_official_names_never_drive_title_matching():
+    """"Rabbit" is in dozens of series; matching a title to one would be a guess."""
+    from automation_control.vocabulary import match
+    assert match("Sonny Angel Rabbit figure", SONNY_ANGEL) is None or match("Sonny Angel Rabbit figure", SONNY_ANGEL).matchable

@@ -64,6 +64,10 @@ class Entry:
     category: str | None = None
     year: int | None = None
     is_secret: bool = False
+    # False for names that only feed pick lists: the official Sonny Angel
+    # line-ups repeat "Rabbit" and "Duck" across dozens of series, which
+    # would make match() resolve a listing title to an arbitrary one.
+    matchable: bool = True
 
 
 def _normalise(text: str) -> str:
@@ -171,7 +175,37 @@ def _load_sonny_angel() -> list[Entry]:
                 f"{SONNY_ANGEL_FIGURES_PATH.name}: {figure.name!r} names series "
                 f"{figure.series!r}, which is not in the master list")
     entries.extend(figures)
+    entries.extend(_load_sonny_angel_official(entries))
     return entries
+
+
+SONNY_ANGEL_OFFICIAL_PATH = DATA_DIR / "sonny_angel_official.csv"
+
+
+def _load_sonny_angel_official(existing: list[Entry]) -> list[Entry]:
+    """Every series and figure on sonnyangel.com/en/products (fetched
+    2026-10-31): 85 series, 652 figures, including the archived 2018/2019
+    versions of the regular series, whose line-ups differ from today's.
+    Run-together names were split, obvious typos fixed and gallery titles
+    mapped onto the master list's series names; yearly sets that share a
+    name keep their year. Secrets aren't published there, so none are here."""
+    with SONNY_ANGEL_OFFICIAL_PATH.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    series_seen = {_normalise(e.name) for e in existing if e.kind == SERIES}
+    figures_seen = {(_normalise(e.series or ""), _normalise(e.name)) for e in existing if e.kind == CHARACTER}
+    added: list[Entry] = []
+    for row in rows:
+        series, name = row["series"].strip(), row["character"].strip()
+        year = int(row["year"]) if row["year"].strip().isdigit() else None
+        if _normalise(series) not in series_seen:
+            series_seen.add(_normalise(series))
+            added.append(Entry(brand=SONNY_ANGEL, name=series, kind=SERIES, category=row["category"], year=year,
+                               matchable=False))
+        if (_normalise(series), _normalise(name)) not in figures_seen:
+            figures_seen.add((_normalise(series), _normalise(name)))
+            added.append(Entry(brand=SONNY_ANGEL, name=name, kind=CHARACTER, series=series,
+                               category=row["category"], year=year, matchable=False))
+    return added
 
 
 # --- Pop Mart: a normalised figure list ------------------------------------
@@ -300,7 +334,7 @@ def _needles(brand: str | None) -> tuple[tuple[str, Entry], ...]:
     prefix and "Cherry Blossom Hippers" beats "Cherry Blossom Series". An
     alias maps to the canonical Entry, so matching one still yields the
     real name."""
-    entries = entries_for(brand)
+    entries = tuple(e for e in entries_for(brand) if e.matchable)
     by_key = {(e.brand, e.name): e for e in entries}
     pairs = [(_normalise(e.name), e) for e in entries]
     for alias, (alias_brand, canonical) in _ALIASES.items():
