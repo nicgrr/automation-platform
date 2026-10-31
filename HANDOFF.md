@@ -251,7 +251,25 @@ from).
    Open questions to operator: physical counts for Mega Heracross ex me2-4
    (eBay qty 2, stock 1) and Tornadus svp-210 (eBay qty 5, stock 4).
 
-8. **Vinted semi-automation (started 2026-10-31):** operator decisions:
+8. **⚠ COLLISION 2026-10-31 11:20 — Claude PAUSED.** Codex is working on the
+   same Vinted task in this same working tree (branch
+   collectibles-vinted-preparation, plan ac34151). Claude's UNCOMMITTED work,
+   built on Codex's uncommitted vinted_prep.py, so not committable alone:
+   - new: automation_control/vinted_listings.py (post-to-Vinted screen,
+     paste-link → VintedListing + atomic stock reservation, live list,
+     sold → Sale on 'Vinted' marketplace, remove → stock back),
+     migrations/versions/20261031_01_vinted_listings.py, tests/test_vinted_listings.py
+     (16 passing).
+   - hunks in shared files: models.py (VintedListingStatus + VintedListing,
+     before `class ScanSession`), api.py (import + include_router for
+     vinted_listings_router after vinted_prep_router), vinted_prep.py
+     (`post_link` button per card + 'Live on Vinted' header link),
+     tests/test_release_info.py (head 20261031_01).
+   - tests/test_collectible_ebay_policy.py (Codex's) has 1 failure in its
+     current WIP state; not caused by the hunks above.
+   Operator to decide who continues. Gmail has no Vinted emails yet, so the
+   sale-email reader waits for a real sample.
+   Original plan: **Vinted semi-automation (started 2026-10-31):** operator decisions:
    collectibles only (existing eBay block stays); sold detection from
    Vinted's sale emails; personal account now, maybe Vinted Pro later
    (keep a `source` field so a Pro API can slot in). No bot posting: Vinted
