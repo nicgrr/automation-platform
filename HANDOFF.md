@@ -251,7 +251,13 @@ from).
    Open questions to operator: physical counts for Mega Heracross ex me2-4
    (eBay qty 2, stock 1) and Tornadus svp-210 (eBay qty 5, stock 4).
 
-8. **⚠ COLLISION 2026-10-31 11:20 — Claude PAUSED.** Codex is working on the
+8. **Claude took over 2026-10-31 ~11:30: Codex is out of usage.** Next:
+   run full suite, fix Codex's failing collectible eBay-policy test, commit
+   Codex's uncommitted work (prior-session product photo intake + this
+   session's eBay block + vinted_prep) as Codex, then Claude's Vinted
+   listings work, then the operator's last request to Codex: review the
+   16 figurine prices (flag Kappa possible secret variant).
+   Earlier note: **⚠ COLLISION 2026-10-31 11:20 — Claude PAUSED.** Codex is working on the
    same Vinted task in this same working tree (branch
    collectibles-vinted-preparation, plan ac34151). Claude's UNCOMMITTED work,
    built on Codex's uncommitted vinted_prep.py, so not committable alone:
