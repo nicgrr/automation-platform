@@ -27,6 +27,7 @@ from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_oauth import OAuthError, ebay_services, valid_user_access_token
 from automation_control.ebay_titles import build_single_card_ebay_title
+from automation_control.selling_channels import ebay_channel_block_reason
 from automation_control.models import (
     CardSet, CatalogItem, EbayListingLink, EbayListingLinkStatus, InventoryItem,
     ShopListing, TcgCard,
@@ -48,6 +49,9 @@ async def _run(*, apply: bool, ebay_listing_ids: set[str]) -> int:
             listing = session.get(ShopListing, link.shop_listing_id)
             if listing is None:
                 print(f"skip {link.ebay_listing_id}: local ShopListing is missing")
+                continue
+            if channel_error := ebay_channel_block_reason(session, listing):
+                print(f"skip {link.ebay_listing_id}: {channel_error}")
                 continue
             item = session.get(CatalogItem, listing.catalog_item_id)
             card = session.get(TcgCard, listing.catalog_item_id)

@@ -290,10 +290,25 @@ def _prepare_pair(pair_id: str, settings) -> None:
                     f"{len(extracted)} cards were detected; each pair must show one card."
                 )
                 pair.extracted = {"cards": [card.model_dump() for card in extracted]}
+                if not extracted:
+                    from .card_recognition import extract_collectible_details
+                    try:
+                        figures = extract_collectible_details(Path(pair.front_image_path), api_key=settings.anthropic_api_key)
+                        if len(figures) == 1:
+                            pair.extracted = {**figures[0].model_dump(), "item_kind": "collectible"}
+                            pair.issue = "Collectible detected: use Review collectible / graded card to check existing stock and confirm."
+                    except Exception:
+                        pair.issue = "Identity needs review. Use Review collectible / graded card for non-card items."
                 return
 
             found = extracted[0]
             pair.extracted = found.model_dump()
+            from .product_photo_review import is_graded
+            if is_graded(pair.extracted):
+                pair.status = ListingPhotoPairStatus.NEEDS_REVIEW
+                pair.matched_shop_listing_id = None
+                pair.issue = "Graded card: review the slab label and certificate using Review collectible / graded card."
+                return
             capture = CapturedCard(
                 front_image_path=pair.front_image_path,
                 back_image_path=pair.back_image_path,
@@ -503,6 +518,9 @@ def _quantity_issue(quantity: int) -> str | None:
 
 
 def _apply_pair(session: Session, pair: ListingPhotoPair, quantity: int | None = None) -> str | None:
+    from .product_photo_review import is_graded
+    if is_graded(pair.extracted):
+        return "Graded cards require slab and certificate review; raw-card updates are disabled."
     if pair.status != ListingPhotoPairStatus.READY:
         return "This pair is not ready to apply."
     listing = session.get(ShopListing, pair.matched_shop_listing_id)
@@ -575,8 +593,8 @@ def bulk_photo_page(
     ) or "<li>No previous batches.</li>"
     error_html = f"<div class='callout bad'>{escape(error)}</div>" if error else ""
     body = (
-        brand_header("Photograph & store cards")
-        + "<p class='subtitle'>Choose fronts only or front + back pairs below. "
+        brand_header("Add stock — photos")
+        + "<p class='subtitle'>Cards, graded cards and collectibles can share this upload. Use actual front + back pairs for slabs and collectibles. Choose fronts only or front + back pairs below. "
         "EzBay identifies each card, checks its exact listing price, reserves a permanent tray slot and prepares CRM drafts. Nothing is sent to eBay automatically.</p>"
         + error_html
         + f"<section class='panel'><form method='post' action='/ebay-listing-bulk-photos' enctype='multipart/form-data' id='batch-form' data-max-photos='{MAX_BATCH_PHOTOS}'>"
@@ -784,6 +802,7 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
     extracted = pair.extracted or {}
     name = extracted.get("character") or "Unidentified card"
     number = extracted.get("card_number") or "?"
+    item_heading = f"Item {pair.position}: {escape(name)}" if extracted.get("item_kind")=="collectible" else f"Card {pair.position}: {escape(name)} #{escape(number)}"
     listing = session.get(ShopListing, pair.matched_shop_listing_id) if pair.matched_shop_listing_id else None
     placement = _placement_for_pair(session, pair.id)
     location = session.get(StorageLocation, placement.storage_location_id) if placement else None
@@ -817,6 +836,10 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
             ("Language", extracted.get("language")),
             ("Finish observed", extracted.get("foil_observation")),
         ]
+        if extracted.get('item_kind') == 'collectible':
+            facts = [("Character / figure", extracted.get('character')), ("Brand", extracted.get('brand')),
+                     ("Series", extracted.get('series')), ("Variant / colourway", extracted.get('variant')),
+                     ("Identification confidence", extracted.get('identity_confidence'))]
         rows = "".join(
             f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>"
             for label, value in facts if value
@@ -860,7 +883,12 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
             f"<div class='callout ok'>eBay {escape(live_ebay_id or '')} was updated.</div>"
             f"<a class='btn small ghost' href='/shop-listings/{listing.id}/ebay-preview'>Open Listing Studio</a>"
         )
-    action += f"<p><a class='btn small ghost' href='/photo-review/{pair.id}'>Identify / match catalogue</a></p>"
+    from .product_photo_review import is_graded
+    if extracted.get('item_kind') == 'collectible' or is_graded(extracted):
+        label = 'Review collectible details' if extracted.get('item_kind') == 'collectible' else 'Review graded card details'
+        action += f"<p><a class='btn' href='/product-photo-review/{pair.id}'>{label}</a></p>"
+    else:
+        action += f"<p><a class='btn small ghost' href='/photo-review/{pair.id}'>Identify / match catalogue</a> <a class='btn small ghost' href='/product-photo-review/{pair.id}'>Review collectible / graded card</a></p>"
     back = (
         f"<a href='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/back' target='_blank'>"
         f"<img loading='lazy' decoding='async' src='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/back?thumb=1' alt='Back'></a>"
@@ -871,7 +899,7 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
         f"<a href='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/front' target='_blank'>"
         f"<img loading='lazy' decoding='async' src='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/front?thumb=1' alt='Front'></a>{back}</div>"
         f"<div class='pair-copy'><div>{pill(pair.status.value.upper(), 'ok' if pair.status in (ListingPhotoPairStatus.READY, ListingPhotoPairStatus.APPLIED, ListingPhotoPairStatus.PUBLISHED) else 'warn')}</div>"
-        f"<h2>Card {pair.position}: {escape(name)} #{escape(number)}</h2>{storage_line}"
+        f"<h2>{item_heading}</h2>{storage_line}"
         f"{listing_line}{proposed}{review_facts}{issue}{action}</div></div>"
     )
     if pair.status == ListingPhotoPairStatus.PUBLISHED:

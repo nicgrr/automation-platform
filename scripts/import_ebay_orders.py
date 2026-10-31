@@ -43,6 +43,7 @@ from automation_control.models import (
     BulkLot, EbayBulkPickManifest, EbayCredential, EbayImportedOrder, EbayListingLink, EbayListingLinkStatus, ShopListing,
 )
 from automation_control.stock import decrement_listing_quantity
+from automation_control.selling_channels import ebay_channel_block_reason
 
 # How far back to look on the very first run (no last_order_sync_at yet).
 # Generous on purpose -- missing an old order is worse than one extra,
@@ -78,6 +79,11 @@ async def _reconcile(session, adapter) -> tuple[int, int]:
     for link in links:
         listing = session.get(ShopListing, link.shop_listing_id)
         if listing is None or link.last_pushed_quantity == listing.quantity:
+            continue
+        if listing.quantity > 0 and (channel_error := ebay_channel_block_reason(session, listing)):
+            link.last_error = channel_error
+            link.last_synced_at = datetime.now(UTC)
+            failed += 1
             continue
         try:
             if listing.quantity == 0:

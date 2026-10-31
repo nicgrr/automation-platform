@@ -75,22 +75,18 @@ def _count(session: Session, model, *criteria) -> int:
 def scan_and_add(user: str = Depends(require_dashboard_user),
                  session: Session = Depends(get_session)) -> HTMLResponse:
     return _render(
-        "Scan & add",
-        "Cards use one bulk-first intake workflow: upload several phone photos or scan a nine-card sheet, then review every result before pricing.",
+        "Add stock",
+        "Upload photos, review the identity and existing stock, then continue to Listing Studio.",
         [
-            _section("Cards — bulk only", "Use phone photos for mixed cards or the flatbed scanner for a full sheet.", [
-                _card("/cards/capture/bulk", "Upload card photos", "Upload One Piece, Pokémon or other card photos together for background identification."),
-                _card("/feed", "Scan feed", "Live sheets, detected crops, readiness and recent results."),
-                _card("/scan-ingest", "Scanner status & logs", "Service health, active sessions, processed sheets and raw logs."),
+            _section("Photo upload", "One entry point for cards, graded slabs and collectibles. Keep each item's front and back together.", [
+                _card("/ebay-listing-bulk-photos", "Upload photos", "Add new items or update existing photos. Slabs require their company, grade and certificate; collectibles can reuse existing stock."),
+                _card("/shop-listings", "Listing Studio", "Continue with saved drafts, quantities and price review."),
             ]),
-            _section("Other item intake", "Collectibles and supplies retain their existing photo workflows.", [
-                _card("/collectibles/capture", "Collectible", "Photograph a figure or other collectible."),
-                _card("/accessories/capture", "Supply item", "Photograph sleeves, binders or another card-supply product."),
-            ]),
-            _section("Other bulk and link intake", "Add several non-card photos together or identify a product page.", [
-                _card("/collectibles/capture/bulk", "Bulk collectibles", "Upload multiple collectible photos."),
-                _card("/accessories/capture/bulk", "Bulk supplies", "Upload multiple supply-product photos."),
-                _card("/collectibles/identify", "Identify from a link", "Read collectible details from a product or listing URL."),
+            _section("Specialist tools", "Use these only for scanner sheets, supplies or a product link.", [
+                _card("/feed", "Scan feed", "Review flatbed scanner sheets."),
+                _card("/accessories/capture/bulk", "Upload supplies", "Sleeves, binders and card supplies."),
+                _card("/collectibles/identify", "Identify from a link", "Find collectible details from a product URL."),
+                _card("/review-centre", "Earlier uploads", "Resume items captured through the older tools."),
             ]),
         ],
     )

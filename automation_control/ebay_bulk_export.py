@@ -77,6 +77,7 @@ from .models import (
     TcgCard,
 )
 from .pricing_safety import assess_listing_price
+from .selling_channels import ebay_channel_block_reason
 from .listing_quality import australian_active_listings_url, australian_sold_listings_url
 from .ui import brand_header, page
 
@@ -826,6 +827,16 @@ async def ebay_export_build(request: Request,
     selected_listings = session.scalars(
         select(ShopListing).where(ShopListing.id.in_(selected))
     ).all()
+    channel_blocked = [
+        listing for listing in selected_listings
+        if ebay_channel_block_reason(session, listing)
+    ]
+    if channel_blocked:
+        reason = "Collectibles are reserved for Vinted and cannot be exported to eBay."
+        _record(session, user, correlation_id, "failed", {
+            "stage": "selling_channel", "skus": [listing.id for listing in channel_blocked],
+        })
+        return RedirectResponse(f"/ebay-export?error={quote(reason)}", status_code=303)
     unsafe = [
         (listing, assessment)
         for listing in selected_listings

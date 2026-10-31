@@ -80,6 +80,7 @@ from automation_control.classification import load_pipeline_config
 from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.ebay_titles import build_single_card_ebay_title
+from automation_control.selling_channels import ebay_channel_block_reason
 from automation_control.models import (
     BulkLot, CardSet, CatalogCard, CatalogItem, InventoryItem, ShopListing, ShopListingStatus, TcgCard,
 )
@@ -421,6 +422,9 @@ def build_single_rows(session, *, status: ShopListingStatus, letter_policy: str,
 
     rows, skipped = [], []
     for listing in listings:
+        if channel_error := ebay_channel_block_reason(session, listing):
+            skipped.append(f"{listing.title} ({listing.id}) -- {channel_error}")
+            continue
         tcg = session.get(TcgCard, listing.catalog_item_id)
         if tcg is None:
             skipped.append(f"{listing.title} ({listing.id}) -- not a TCG card (no TcgCard row; "
@@ -571,6 +575,9 @@ def build_variation_rows(session, *, status: ShopListingStatus, letter_policy: s
 
     rows, skipped = [], []
     for listing in listings:
+        if channel_error := ebay_channel_block_reason(session, listing):
+            skipped.append(f"{listing.title} ({listing.id}) -- {channel_error}")
+            continue
         tcg = session.get(TcgCard, listing.catalog_item_id)
         if not _is_pokemon_row(tcg):
             continue  # see _is_pokemon_row -- this export hardcodes Franchise=Pokémon

@@ -45,6 +45,9 @@ def review(pair_id: str, q: str = '', number: str = '', language: str = '', cata
            user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     pair = _pair(session, pair_id)
     facts = pair.extracted or {}
+    from .product_photo_review import is_graded
+    if facts.get('item_kind') == 'collectible' or is_graded(facts):
+        return RedirectResponse(f'/product-photo-review/{pair.id}', 303)
     query = q.strip() or str(facts.get('character') or '')
     statement = select(CatalogItem, TcgCard).join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id)
     if query:
@@ -133,6 +136,11 @@ def save_review(pair_id: str, catalog: str = Form(...), mode: str = Form(...), l
                 user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     with _REVIEW_LOCK:
         pair=_pair(session,pair_id)
+        from .product_photo_review import is_graded
+        if (pair.extracted or {}).get('item_kind') == 'collectible':
+            raise HTTPException(409,'Use the collectible review form for this item.')
+        if is_graded(pair.extracted):
+            raise HTTPException(409,"Use Review collectible / graded card to confirm the slab certificate; do not merge it with raw stock.")
         if confirmed!='yes' or mode not in ('update','new') or (finish and finish not in FINISHES):raise HTTPException(400,'Confirm a valid printing and finish')
         item=session.get(CatalogItem,catalog);card=session.get(TcgCard,catalog)
         if not item or not card:raise HTTPException(404,'Catalogue card not found')

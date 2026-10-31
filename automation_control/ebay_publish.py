@@ -87,6 +87,7 @@ from .models import (
 
 from .navigation import redirect_back
 from .pricing_safety import assess_listing_price
+from .selling_channels import ebay_channel_block_reason
 from .ui import brand_header, page, pill
 
 register_heif_opener()
@@ -207,8 +208,13 @@ def publication_preflight(
     session: Session, listing: ShopListing, settings, *, price_override: Decimal | None = None,
     allow_active_revision: bool = False, allow_pricing_safety_override: bool = False,
 ) -> PublishPreflight:
+    if channel_error := ebay_channel_block_reason(session, listing):
+        return PublishPreflight((channel_error,), (), None, (), False)
     errors: list[str] = []
     warnings: list[str] = []
+    stock = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
+    if stock and stock.grading_company:
+        errors.append("Graded slab saved for review. This publisher does not yet support eBay graded-card condition fields; publish through eBay after checking the grade and certificate.")
 
     if listing.status not in (ShopListingStatus.ACTIVE, ShopListingStatus.DRAFT):
         errors.append("Only an active or draft listing can be published.")

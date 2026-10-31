@@ -13,6 +13,7 @@ is a real future need but out of scope here.
 """
 
 import json
+import hashlib
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -169,7 +170,7 @@ def collectibles_page(
     tiles = []
     for inv, item, cp in rows:
         art = (
-            f"<img src='/collectibles/thumb/{escape(inv.id)}' alt='' loading='lazy' decoding='async'>"
+            f"<img src='/collectibles/thumb/{escape(inv.id)}?v={_collectible_photo_version(inv.scan_image_path)}' alt='' loading='lazy' decoding='async'>"
             if inv.scan_image_path else f"<span class='set-fallback'>{escape(item.name)}</span>"
         )
         meta_bits = [b for b in (cp.brand, cp.series) if b]
@@ -229,6 +230,7 @@ def collectibles_page(
     pending_count = len(session.scalars(select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)).all())
     body = (
         brand_header("Collectibles")
+        + "<div class='panel'><strong>Figurines are Vinted only.</strong> <a class='btn' href='/collectibles/vinted'>Review Vinted prices and drafts</a></div>"
         + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
           f"<a href='/collectibles/review'>Review queue ({pending_count})</a> &nbsp; "
           f"<a href='/collectibles/identify'>Identify from a link</a></p></div>"
@@ -1004,6 +1006,16 @@ def collectible_capture_image(capture_id: str, user: str = Depends(require_dashb
     )
 
 
+def _collectible_photo_version(raw_path: str) -> str:
+    path = Path(raw_path)
+    try:
+        stat = path.stat()
+        identity = f"{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+    except OSError:
+        identity = raw_path
+    return hashlib.sha256(identity.encode()).hexdigest()[:16]
+
+
 THUMB_WIDTH = 220
 
 
@@ -1018,7 +1030,7 @@ def collectible_thumb(item_id: str, user: str = Depends(require_dashboard_user),
     source = Path(item.scan_image_path)
     if not source.exists():
         raise HTTPException(status_code=404, detail="image file missing")
-    return serve_thumb(source, f"collectible-{item_id}-{THUMB_WIDTH}.jpg", THUMB_WIDTH)
+    return serve_thumb(source, f"collectible-{item_id}-{_collectible_photo_version(item.scan_image_path)}-{THUMB_WIDTH}.jpg", THUMB_WIDTH)
 
 
 _COLLECTIBLE_LIST_STYLE = """<style>

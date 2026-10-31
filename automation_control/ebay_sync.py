@@ -26,7 +26,8 @@ from .adapters.ebay_write import EbayWriteAdapter
 from .config import get_settings
 from .database import SessionLocal
 from .ebay_oauth import OAuthError, configured, ebay_services, valid_user_access_token
-from .models import EbayListingLink, EbayListingLinkStatus
+from .models import EbayListingLink, EbayListingLinkStatus, ShopListing
+from .selling_channels import ebay_channel_block_reason
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,14 @@ async def sync_ebay_after_sale(shop_listing_id: str, new_quantity: int) -> None:
         )
         if link is None:
             return  # not listed on eBay -- nothing to do, not an error
+
+        listing = session.get(ShopListing, shop_listing_id)
+        if new_quantity > 0 and listing is not None:
+            if channel_error := ebay_channel_block_reason(session, listing):
+                link.last_error = channel_error
+                link.last_synced_at = datetime.now(UTC)
+                session.commit()
+                return
 
         try:
             cipher, oauth = ebay_services(settings)
