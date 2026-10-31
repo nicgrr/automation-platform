@@ -28,6 +28,14 @@ def _get(session, pair_id):
     if pair is None: raise HTTPException(404, 'Photo pair not found')
     return pair
 
+def _saved_destination(session, listing):
+    item = session.get(CatalogItem, listing.catalog_item_id)
+    if item and item.item_type == CatalogItemType.COLLECTIBLE:
+        anchor = f'#i-{listing.inventory_item_id}' if listing.inventory_item_id else ''
+        return '/collectibles/vinted' + anchor
+    return f'/shop-listings/{listing.id}/ebay-preview'
+
+
 @router.get('/product-photo-review/{pair_id}', response_class=HTMLResponse)
 def review(pair_id: str, kind: str = '', user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     pair = _get(session, pair_id)
@@ -40,7 +48,7 @@ def review(pair_id: str, kind: str = '', user: str = Depends(require_dashboard_u
         return f"<label>{label}<input name='{key}' value='{escape(str(value),quote=True)}' maxlength='128' {'required' if required else ''} {extra}></label>"
     photos = ''.join(f"<img src='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/{side}' alt='{side} photo'>" for side in ('front','back') if getattr(pair, side+'_image_path'))
     body = brand_header('Review graded card' if slab else 'Review collectible') + f"<a href='/ebay-listing-bulk-photos/{pair.batch_id}'>Back to upload</a><div class='product-photos'>{photos}</div>"
-    body += ("<p>Existing stock keeps its quantity and price. Save the reviewed photos to Listing Studio.</p>"
+    body += (f"<p>Existing stock keeps its quantity and price. Save the reviewed photos to {'Listing Studio' if slab else 'Vinted preparation'}.</p>"
              f"<p>Review as: <a href='/product-photo-review/{pair_id}?kind=collectible'>Collectible</a> · <a href='/product-photo-review/{pair_id}?kind=graded'>Graded card</a></p>"
              + (f"<p>Detected grading: {escape(str(facts.get('graded') or 'Not detected'))}</p>" if slab else '')
              + f"<form method='post' action='/product-photo-review/{pair_id}'><input type='hidden' name='kind' value='{selected_kind}'>"
@@ -59,7 +67,7 @@ def review(pair_id: str, kind: str = '', user: str = Depends(require_dashboard_u
                 + "<input type='hidden' name='quantity' value='1'><p>One slab per certificate. Use its actual front and back photos.</p>" if slab else
                 "<label>Quantity for new stock<input name='quantity' type='number' min='1' max='999' value='1'></label>")
              + "<label><input type='checkbox' name='confirmed' value='yes' required>I checked the identity and condition.</label>"
-             "<button class='btn'>Save and open Listing Studio</button></form>"
+             + f"<button class='btn'>Save and open {'Listing Studio' if slab else 'Vinted preparation'}</button></form>"
              + ('' if slab else PICKER_SCRIPT) +
              "<style>.product-photos{display:flex;flex-wrap:wrap;gap:12px}.product-photos img{width:min(100%,340px);max-height:440px;object-fit:contain}form{display:grid;gap:14px;max-width:700px}label{display:grid;gap:5px}input,select{min-width:0;padding:10px}</style>")
     return HTMLResponse(page('EzBay — Product review', body))
@@ -72,7 +80,7 @@ def save(pair_id: str, kind: str = Form(...), name: str = Form(...), existing: s
     with _LOCK:
         pair = _get(session,pair_id)
         if pair.status in (ListingPhotoPairStatus.APPLIED,ListingPhotoPairStatus.PUBLISHED) and pair.matched_shop_listing_id:
-            return RedirectResponse(f'/shop-listings/{pair.matched_shop_listing_id}/ebay-preview',303)
+            return RedirectResponse(_saved_destination(session, session.get(ShopListing, pair.matched_shop_listing_id)),303)
         if confirmed != 'yes' or kind not in ('graded','collectible') or not name.strip() or not 1 <= quantity <= 999:
             raise HTTPException(400,'Confirm the identity and quantity')
         if any(len(v)>128 for v in (name,brand,series,variant)) or condition not in ('Used','New','Graded'):
@@ -140,4 +148,4 @@ def save(pair_id: str, kind: str = Form(...), name: str = Form(...), existing: s
         if batch:_refresh_batch_counts(session,batch)
         session.commit()
         record_event(session,actor_type='user',actor_id=user,action='product_photo.confirm',resource_type='listing_photo_pair',resource_id=pair.id,outcome='success',correlation_id=str(uuid.uuid4()),details={'listing_id':listing.id,'kind':kind})
-        return RedirectResponse(f'/shop-listings/{listing.id}/ebay-preview',303)
+        return RedirectResponse(_saved_destination(session, listing),303)

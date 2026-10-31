@@ -90,7 +90,9 @@ def _status(row, draft):
     issues = []
     if draft.get('hold_reason'):
         issues.append(draft['hold_reason'])
-    if row['facts'].get('identity_confidence') in ('low','medium') and not draft.get('identity_confirmed'):
+    reviewed = row['facts'].get('product_review') or {}
+    identity_checked = draft.get('identity_confirmed') or (reviewed.get('kind') == 'collectible' and reviewed.get('reviewed_by'))
+    if row['facts'].get('identity_confidence') in ('low','medium') and not identity_checked:
         issues.append('Confirm the exact identity / edition.')
     if row['quantity'] is None:
         issues.append('Confirm quantity.')

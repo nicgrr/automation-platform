@@ -41,6 +41,20 @@ policy. Route collectible saves/repeats to Vinted prep, keep slab destination,
 and recognize explicit product_review confirmation when showing low-confidence
 scan warnings (root owns product_photo_review.py, vinted_prep.py and new tests).
 
+Fix batch complete: finite/positive monetary validation; known Vinted item
+hosts; atomic removal so stale requests cannot restore sold stock; correct
+multiple-unit reserved status; review notes on posting screen; collectible
+intake returns to Vinted while graded cards retain Studio. New regression tests
+cover concurrent stale removal, two-copy lifecycle, invalid numbers/domains,
+review notes and intake destinations. Validation: 71 passed in 12.57s for
+`test_vinted_listings`, `test_collectible_ebay_policy`, `test_product_photo_review`,
+`test_collectible_reference`, `test_vinted_intake`; diff check passed.
+Live read-only checks before fix deployment: all 21 photo URLs HTTP200; 16 rows,
+12 suggestions/4 holds/0 confirmed, 0 tracked Vinted listings. Review report:
+`/home/nic/Documents/Codex/2026-10-31/Vinted-review.md`.
+Next action: restart ezbay.service (same current DB revision, no migration),
+verify live collectible destination + Vinted review notes. No storefront restart.
+
 No external listing actions; no browser/login setup. Price/identity confirmation
 and manual Vinted publication remain operator steps. Tests are running.
 

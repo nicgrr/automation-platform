@@ -43,11 +43,18 @@ from .models import (
     VintedListingStatus,
 )
 from .ui import brand_header, page
-from .vinted_prep import _draft, _get_row
+from .vinted_prep import _draft, _get_row, _status
 
 router = APIRouter(prefix="/collectibles/vinted", tags=["vinted-listings"])
 
 _ITEM_PATH = re.compile(r"^/items/(\d{4,20})(?:[-/]|$)")
+_VINTED_DOMAINS = {
+    "vinted.com", "vinted.com.au", "vinted.au", "vinted.co.uk", "vinted.fr",
+    "vinted.de", "vinted.it", "vinted.es", "vinted.pt", "vinted.nl", "vinted.be",
+    "vinted.at", "vinted.ie", "vinted.lu", "vinted.pl", "vinted.cz", "vinted.sk",
+    "vinted.lt", "vinted.lv", "vinted.ee", "vinted.dk", "vinted.se", "vinted.fi",
+    "vinted.hr", "vinted.hu", "vinted.ro", "vinted.gr", "vinted.si", "vinted.ca",
+}
 
 
 def parse_vinted_url(raw: str) -> tuple[str, str] | None:
@@ -60,14 +67,34 @@ def parse_vinted_url(raw: str) -> tuple[str, str] | None:
     match = re.search(r"https?://\S+", raw)
     if not match:
         return None
-    parts = urlsplit(match.group(0))
+    try:
+        parts = urlsplit(match.group(0))
+        port = parts.port
+    except ValueError:
+        return None
     host = (parts.hostname or "").lower()
-    if not re.fullmatch(r"(?:[a-z0-9-]+\.)*vinted\.[a-z.]{2,10}", host):
+    domain = host.removeprefix("www.")
+    if (domain not in _VINTED_DOMAINS or parts.username is not None
+            or parts.password is not None or port not in (None, 80, 443)):
         return None
     found = _ITEM_PATH.match(parts.path)
     if not found:
         return None
     return found.group(1), f"https://{host}/items/{found.group(1)}"
+
+
+def _money(raw: str | Decimal, label: str, *, allow_zero: bool = False) -> Decimal:
+    """Validate before reserving stock or writing a sale, including direct callers."""
+    try:
+        amount = Decimal(raw)
+        valid = (amount.is_finite() and amount >= 0 if allow_zero else
+                 amount.is_finite() and amount > 0)
+        if not valid or amount > Decimal("99999999.99") or amount != amount.quantize(Decimal("0.01")):
+            raise ValueError
+    except (InvalidOperation, ValueError, TypeError):
+        sign = "nonnegative" if allow_zero else "positive"
+        raise HTTPException(status_code=400, detail=f"Enter a valid {sign} {label} in AUD (up to two decimal places).") from None
+    return amount
 
 
 def _marketplace(session: Session) -> Marketplace:
@@ -117,6 +144,7 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
         blockers.append("No unlisted stock left for this item.")
     if not draft.get("confirmed_price"):
         blockers.append("Confirm a price on the Vinted preparation page first.")
+    review_notes = [note for note in _status(row, draft) if note != "Price needs your confirmation."]
 
     photos = "".join(
         f"<img src='/collectibles/vinted/{escape(key)}/photo/{i}' alt='Photo {i + 1}' data-photo='{i}'>"
@@ -140,6 +168,10 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
         + f"<h2 class='item-name'>{escape(row['name'])}</h2>"
         + (f"<div class='callout bad'>{escape(error)}</div>" if error else "")
         + "".join(f"<div class='callout warn'>{escape(b)}</div>" for b in blockers)
+        + ("<div class='callout warn'><b>Review before publishing:</b><ul>"
+           + "".join(f"<li>{escape(note)}</li>" for note in review_notes)
+           + "</ul><p>If you already posted the item, record its link below so stock stays accurate. "
+           "Recording the link does not clear these review notes.</p></div>" if review_notes else "")
         + already
         + "<ol class='steps'>"
         + "<li><h3>Save the photos</h3>"
@@ -197,9 +229,9 @@ def mark_posted(key: str, url: str = Form(...), price: str = Form(""),
     if row["inventory"] is None:
         return back("Link this photo to stock before posting.")
     try:
-        amount = Decimal(price or draft.get("confirmed_price") or "")
-    except InvalidOperation:
-        return back("Confirm a price on the Vinted preparation page first.")
+        amount = _money(price or draft.get("confirmed_price") or "", "listing price")
+    except HTTPException as exc:
+        return back(exc.detail)
     item_id, clean_url = parsed
     inventory_id = row["inventory"].id
     reserved = session.execute(
@@ -276,12 +308,8 @@ def mark_sold(listing_id: str, price: str = Form(...), fees: str = Form("0"),
     listing = _active(session, listing_id)
     if listing.status != VintedListingStatus.ACTIVE:
         return RedirectResponse("/collectibles/vinted/live", status_code=303)
-    try:
-        amount, fee = Decimal(price), Decimal(fees or "0")
-    except InvalidOperation:
-        raise HTTPException(status_code=400, detail="enter the sale price and any fee in AUD") from None
-    if amount <= 0 or fee < 0:
-        raise HTTPException(status_code=400, detail="enter the sale price and any fee in AUD")
+    amount = _money(price, "sale price")
+    fee = _money(fees or "0", "fee", allow_zero=True)
     record_vinted_sale(session, listing, amount, fee, actor=user)
     return RedirectResponse(f"/collectibles/vinted/live?_saved={quote('Sale recorded')}", status_code=303)
 
@@ -289,6 +317,8 @@ def mark_sold(listing_id: str, price: str = Form(...), fees: str = Form("0"),
 def record_vinted_sale(session: Session, listing: VintedListing, amount: Decimal, fee: Decimal, *,
                        actor: str, email_id: str | None = None) -> Sale:
     """Consume the reserved unit and record the Sale (shared with the sale-email reader)."""
+    amount = _money(amount, "sale price")
+    fee = _money(fee, "fee", allow_zero=True)
     claimed = session.execute(
         update(VintedListing).where(VintedListing.id == listing.id,
                                     VintedListing.status == VintedListingStatus.ACTIVE)
@@ -297,9 +327,13 @@ def record_vinted_sale(session: Session, listing: VintedListing, amount: Decimal
         session.rollback()
         raise HTTPException(status_code=409, detail="this Vinted listing is no longer active")
     session.refresh(listing)
-    inventory = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
+    inventory = session.scalar(select(InventoryItem).where(InventoryItem.id == listing.inventory_item_id)
+                               .with_for_update().execution_options(populate_existing=True)) if listing.inventory_item_id else None
     if inventory is not None and inventory.quantity == 0:
-        inventory.status = InventoryStatus.SOLD
+        another_reserved = session.scalar(select(VintedListing.id).where(
+            VintedListing.inventory_item_id == inventory.id,
+            VintedListing.status == VintedListingStatus.ACTIVE).limit(1))
+        inventory.status = InventoryStatus.RESERVED if another_reserved else InventoryStatus.SOLD
     sale = Sale(id=str(uuid.uuid4()), marketplace_id=_marketplace(session).id, source="vinted",
                 gross_amount=amount, fees_amount=fee,
                 notes=f"Vinted item {listing.vinted_item_id}" + (f"; from sale email {email_id}" if email_id else ""))
@@ -321,14 +355,23 @@ def record_vinted_sale(session: Session, listing: VintedListing, amount: Decimal
 def mark_removed(listing_id: str, user: str = Depends(require_dashboard_user),
                  session: Session = Depends(get_session)):
     listing = _active(session, listing_id)
-    if listing.status != VintedListingStatus.ACTIVE:
+    claimed = session.execute(
+        update(VintedListing).where(VintedListing.id == listing.id,
+                                    VintedListing.status == VintedListingStatus.ACTIVE)
+        .values(status=VintedListingStatus.REMOVED).execution_options(synchronize_session=False))
+    if claimed.rowcount != 1:
+        session.rollback()
         return RedirectResponse("/collectibles/vinted/live", status_code=303)
-    listing.status = VintedListingStatus.REMOVED
-    inventory = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
-    if inventory is not None and listing.stock_reserved_at and not listing.stock_released_at:
-        inventory.quantity += 1
-        if inventory.status == InventoryStatus.RESERVED:
-            inventory.status = InventoryStatus.AVAILABLE
+    session.refresh(listing)
+    if listing.inventory_item_id and listing.stock_reserved_at and not listing.stock_released_at:
+        released = session.execute(update(InventoryItem).where(InventoryItem.id == listing.inventory_item_id)
+                                   .values(quantity=InventoryItem.quantity + 1)
+                                   .execution_options(synchronize_session=False))
+        inventory = session.get(InventoryItem, listing.inventory_item_id)
+        if released.rowcount and inventory is not None:
+            session.refresh(inventory)
+            if inventory.status in (InventoryStatus.RESERVED, InventoryStatus.SOLD):
+                inventory.status = InventoryStatus.AVAILABLE
         listing.stock_released_at = datetime.now(UTC)
     session.commit()
     record_event(session, actor_type="user", actor_id=user, action="vinted.listing.removed",
