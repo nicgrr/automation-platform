@@ -3,31 +3,30 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
-## Current task — collectibles for Vinted (Codex, 2026-10-31)
+## Current task — review Claude's Vinted work (Codex, 2026-10-31)
 
-Active agent: Codex. Branch `collectibles-vinted-preparation`, base `5785953`.
-Operator: all figurines/collectibles are for Vinted ONLY, never publish them to
- eBay. Graded cards are separate and retain their existing workflow. Prepare
-collectible identities/photos/descriptions and provisional AUD prices ending .99;
-operator still confirms prices. Research Vinted browser options, do not publish.
+Active agent: Codex; branch `collectibles-vinted-preparation`, base `2dccc6b`.
+Operator asks to review Claude's completed work, review figurine prices, and
+identify the remaining steps to Vinted. Collectibles only, never eBay; graded
+cards remain separate. No publication or confirmed-price changes authorized.
 
-In progress: audit owned stock + the two recent upload batches, add an enforced
-collectible eBay publication/export exclusion, prepare an accessible Vinted
-review/export area with price suggestions and unresolved identity flags. No
-Vinted login, publication, or CAPTCHA automation in this batch. Preserve stock
-quantities, confirmed prices and all photos; avoid duplicate inventory.
+Verified live, overriding older deployment notes below: DB revision
+`20261031_02`; Vinted tables exist; prep/live/post screens return HTTP 200.
+Working tree clean. Claude committed the prior Codex work and completed manual
+Vinted posting, stock tracking and collectible reference lists. Sixteen figures
+are visible: 11 stock-linked, 5 staged (Boar, Labubu, Owl, two gamer figures).
+All referenced photos exist. Zero Vinted draft prices, zero tracked Vinted
+listings, zero eBay links/exports/cached SKU matches for these collectibles.
+Four figures still use older photos: Kappa, Lily Bell, Skunk, Polar Bear.
 
-Existing dirty files at takeover (prior Codex session; preserved, not to be
-committed as part of this task without explicit hunk isolation): api.py,
-collectibles.py, ebay_photo_batch.py, ebay_publish.py, navigation_hubs.py,
-photo_identification_review.py, untracked product_photo_review.py and its test.
-They contain deployed mixed-product intake, photo display and graded safeguards.
+This edit batch: save researched provisional AUD asking prices and source/hold
+notes in the existing Vinted draft records (never confirmed prices or existing
+ShopListing prices), preserving Claude's new Cauliflower stock and its $23.99
+price. Audit Vinted code and run focused regression checks; fix only concrete
+workflow defects necessary for the handoff, with another checkpoint if needed.
+No external listing actions; no browser/login setup. Price/identity confirmation
+and manual Vinted publication remain operator steps. Tests are running.
 
-Next: read publication/export and inventory paths; make minimal channel guard
-and Vinted preparation changes; run focused tests; activate and verify the CRM
-change within the user's ongoing authorization. No external listing writes.
-Parallel agents are researching prices and Vinted rules read-only.
-Validation: not run (planning checkpoint).
 
 ## Current task
 
@@ -463,3 +462,5 @@ Subsequent verified Codex work:
 Claude Code, 2026-10-30 15:35 AEDT (pick run, item 8)
 
 Last updated for current task: Codex, 2026-10-31.
+
+Last updated for Vinted audit: Codex, 2026-10-31.
