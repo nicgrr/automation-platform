@@ -288,6 +288,18 @@ from).
    stock (needs IMAP app password on the server — operator). Existing
    /collectibles/vinted prep page (Codex) has 0 saved drafts; build on it.
 
+9. **Collectible onboarding lists (2026-10-31):** DONE `a7d9c81`. Linked
+   Brand → Series → Character search lists on all three collectible forms,
+   backed by collectible_reference (seeded from the catalogue) merged with
+   vocabulary.py; every save remembers its combination. NOT LIVE until
+   `alembic upgrade head` (20261031_01 + 20261031_02) and restart.
+   Character lists exist only for Cat Life, Flower, Summer Vacation and
+   Pop Mart; web sources disagree on Sonny Angel Animal series versions,
+   so none were seeded. Possible catalogue misfiles to confirm with the
+   operator: Skunk under Animal Series 4 (sources say Series 2); Sheep,
+   Duck, Polar Bear under unnumbered "Animal Series" vs "Animal Series 1".
+   Operator prices collectibles themselves for now.
+
 ## Next steps
 
 - CRM navigation fix. Problem: ~213 POST handlers redirect to fixed pages;
