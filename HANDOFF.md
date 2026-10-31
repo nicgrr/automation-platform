@@ -52,8 +52,13 @@ review notes and intake destinations. Validation: 71 passed in 12.57s for
 Live read-only checks before fix deployment: all 21 photo URLs HTTP200; 16 rows,
 12 suggestions/4 holds/0 confirmed, 0 tracked Vinted listings. Review report:
 `/home/nic/Documents/Codex/2026-10-31/Vinted-review.md`.
-Next action: restart ezbay.service (same current DB revision, no migration),
-verify live collectible destination + Vinted review notes. No storefront restart.
+Deployed `5e6cc7a`: ezbay.service restarted successfully; live prep, empty
+Vinted tracking, Kappa hold on posting, collectible destination and graded Studio
+all HTTP200 with expected content. No migration or storefront restart needed.
+Working tree clean after commit. Next operator steps: confirm prices and exact
+identities, onboard five staged figures, post manually and paste Vinted links.
+Storefront exact item links and automatic sale-email import remain future work;
+manual sold/removed tracking is available. Nothing posted externally.
 
 No external listing actions; no browser/login setup. Price/identity confirmation
 and manual Vinted publication remain operator steps. Tests are running.
