@@ -35,7 +35,11 @@ leaving one returned unit incorrectly SOLD. Fix vinted_listings.py and its focus
 tests (delegated to Codex vinted_research). Show outstanding identity/price holds
 on posting screen. No storefront linking expansion: exact Vinted product links
 and sale-email import remain outstanding. No live data correction needed as
-there are zero tracked Vinted listings.
+there are zero tracked Vinted listings. Also fix the audited intake handoff:
+collectible confirmation currently returns to the eBay Studio despite Vinted-only
+policy. Route collectible saves/repeats to Vinted prep, keep slab destination,
+and recognize explicit product_review confirmation when showing low-confidence
+scan warnings (root owns product_photo_review.py, vinted_prep.py and new tests).
 
 No external listing actions; no browser/login setup. Price/identity confirmation
 and manual Vinted publication remain operator steps. Tests are running.
