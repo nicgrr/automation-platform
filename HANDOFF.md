@@ -293,11 +293,12 @@ from).
    backed by collectible_reference (seeded from the catalogue) merged with
    vocabulary.py; every save remembers its combination. NOT LIVE until
    `alembic upgrade head` (20261031_01 + 20261031_02) and restart.
-   Character lists exist only for Cat Life, Flower, Summer Vacation and
-   Pop Mart; web sources disagree on Sonny Angel Animal series versions,
-   so none were seeded. Possible catalogue misfiles to confirm with the
-   operator: Skunk under Animal Series 4 (sources say Series 2); Sheep,
-   Duck, Polar Bear under unnumbered "Animal Series" vs "Animal Series 1".
+   Official Sonny Angel line-ups added from sonnyangel.com (85 series, 652
+   figures, incl. 2018/2019 versions; pick lists only, not Lens matching).
+   Catalogue entries to confirm with the operator: Skunk under Animal
+   Series 4 (right only if it's the 2018 version; now Series 2); Sheep and
+   Duck under unnumbered "Animal Series" (officially Series 2); Polar Bear
+   (officially "White Bear": Series 1, or Series 2 in 2018).
    Operator prices collectibles themselves for now.
 
 ## Next steps
