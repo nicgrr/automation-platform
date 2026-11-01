@@ -29,9 +29,15 @@ form fields preserve existing values. Staged draft data survives stock linkage.
 Validation: 63 focused tests passed (vinted_identity, vinted_intake,
 vinted_listings, product_photo_review, collectible_reference); git diff --check
 passed. Read-only agent review found blank-form handling issue, now fixed and
-tested. Next: deploy ezbay.service; mobile browser verify prefill, linked picker,
-scoped title button, no sideways overflow and live post-screen identity.
-No production data changes or external marketplace actions.
+tested. Deployed `a6ec47c` by restarting ezbay.service. Live Chromium mobile
+check (390x844) passed: 16 forms, 48 unique linked reference lists with populated
+options, Milk Biscuit brand/series/name prefills, title button changes only its
+own form, reload restores unsaved preview, no sideways overflow or JS errors,
+and all three identity fields present in the posting helper. Screenshot:
+`/home/nic/Documents/Codex/2026-11-01/vinted-identity-mobile.png`.
+No production data changes or external marketplace actions. User can refresh
+`/collectibles/vinted` and use Save details without changing prices. Unknown
+brand/series entries remain flagged for identification. Task complete.
 
 ## Current task — review Claude's Vinted work (Codex, 2026-10-31)
 
@@ -530,3 +536,5 @@ Claude Code, 2026-10-30 15:35 AEDT (pick run, item 8)
 Last updated for current task: Codex, 2026-10-31.
 
 Last updated for Vinted audit: Codex, 2026-10-31.
+
+Last updated for Vinted identity fields: Codex, 2026-11-01.
