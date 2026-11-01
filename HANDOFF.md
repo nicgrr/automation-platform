@@ -17,7 +17,7 @@ Pending questions (unanswered): replace Vinted or keep both? Recommended replace
 What figurine parcel postage policy / packed dimensions and weight / buyer pays?
 Do not interpret elapsed time as answers. No Vinted status API exists here.
 
-Implementation COMPLETE; tests passed; deployment/mobile verification next:
+Vinted save/copy/photo workflow DEPLOYED as `6569d2c`; eBay automation still pending:
 - `vinted_copy.py` generates title/description from brand/series/character and
   explicit condition, included contents and notes. Copy-all includes confirmed
   AUD price only; never provisional research or inventory quantity as a lot.
@@ -34,14 +34,14 @@ Implementation COMPLETE; tests passed; deployment/mobile verification next:
   test_vinted_copy_screen, test_vinted_intake, test_vinted_listings,
   test_product_photo_review, test_collectible_reference, test_collectible_ebay_policy.
   `git diff --check` passed. The interrupted agent's changes were reviewed and
-  completed by root. Real browser mobile verification remains next.
+  completed by root. Live browser mobile verification also passed (below).
 - Custom mode now survives reload/price confirmation and omitted-mode requests.
   Legacy freeform condition/accessory facts are kept custom unless explicitly
   regenerated; current 16 production drafts were read-only checked and all use
   the known generic template, so all default to new generated-copy behavior.
 - Original photo downloads are tested byte-for-byte; share-all requires every
-  image to load and keeps image MIME/extensions. Clipboard and mobile UI still
-  need the live browser check. Staged items link directly to stock review.
+  image to load and keeps image MIME/extensions. Clipboard/mobile verification
+  passed. Staged items link directly to stock review.
 - Catalogue/policy/export UI now describes Vinted-first, 14-day conditional
   fallback. Actual eBay gates remain intact; no category/postage bypass.
 
@@ -64,16 +64,31 @@ Actual eBay blockers / next implementation dependency:
 - last read-only DB audit: 0 tracked Vinted listings, 11 stock-linked figures
   with qty1 AVAILABLE; 16 prep rows including five staged. No live clocks exist.
 
-Next action: restart ezbay.service under ongoing deployment authorization, then
-run `/tmp/verify_vinted_copy_mobile.py` with the browser-automation venv and sourced
-.env.local. This script only GETs production, toggles unsaved controls, tests
-clipboard buttons and downloads; it does not POST or alter stock/prices/drafts.
-Record mobile results and deployed commit here. No marketplace writes, stock
-mutations, production test drafts or price confirmations occurred.
+Deployment and live verification COMPLETE:
+- Restarted `ezbay.service` successfully on `6569d2c`; CRM remains 127.0.0.1:8080.
+- Mobile Chromium 390x844: 16 forms, all current drafts default to generated
+  wording; hidden+checkbox FormData selects the correct custom/generated mode.
+  No horizontal overflow or JavaScript errors. Title, description and Copy all
+  details buttons copied the matching fields; provisional price was excluded.
+- Original Milk Biscuit photo downloaded successfully as Milk-Biscuit-1.jpg;
+  photos ZIP succeeded, images loaded, live page returned200. Screenshots reviewed:
+  `/home/nic/Documents/Codex/2026-11-02/vinted-save-mobile.png` and
+  `/home/nic/Documents/Codex/2026-11-02/vinted-copy-mobile.png`.
+- Browser script `/tmp/verify_vinted_copy_mobile.py` only used GETs, unsaved form
+  toggles, clipboard tests and downloads. Zero production POSTs; no marketplace
+  writes, stock mutations, draft rewrites or price confirmations performed.
+- Operator can use https://homeserver.tailefaa51.ts.net/collectibles/vinted.
+  Choose identity, review contents, Save details or confirm price -> copy screen.
+  After manually posting, paste Vinted link and actual posting date to start the
+  14-day clock at /collectibles/vinted/live. Saving a draft alone does not start it.
+
+Outstanding for Claude / next session:
 Automatic eBay publication remains UNIMPLEMENTED pending the earlier choices,
 figurine category/aspect/payload and parcel configuration, and a factual unsold
-check. A due-date display is not auto-publication. Claude's next eBay work must
-respect these constraints and recheck live data before any transfer.
+check. A due-date display is not auto-publication. Next eBay work must respect
+these constraints, reuse canonical stock/listing/SKU, verify no duplicate sales,
+and recheck live data before any transfer. No pending operator answers were
+received as of this handoff. Vinted copy workflow itself is complete and usable.
 
 ## Current task — Vinted brand, series and name fields (Codex, 2026-11-01)
 
