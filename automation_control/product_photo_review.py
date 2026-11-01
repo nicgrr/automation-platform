@@ -42,6 +42,10 @@ def review(pair_id: str, kind: str = '', user: str = Depends(require_dashboard_u
     facts = pair.extracted or {}
     selected_kind = kind if kind in ('collectible','graded') else ('graded' if is_graded(facts) else 'collectible')
     slab = selected_kind == 'graded'
+    if not slab:
+        from .vinted_prep import saved_identity_for_pair
+        identity = saved_identity_for_pair(session, pair)
+        facts = {**facts, **{('character' if k == 'name' else k): v for k, v in identity.items()}}
     candidates = session.scalars(select(CatalogItem).where(CatalogItem.item_type == (CatalogItemType.GRADED_CARD if slab else CatalogItemType.COLLECTIBLE)).order_by(CatalogItem.name)).all()
     options = "<option value=''>New item — check existing records first</option>" + ''.join(f"<option value='{escape(c.id)}' {'selected' if c.id==pair.proposed_catalog_item_id else ''}>{escape(c.name)}</option>" for c in candidates)
     def field(label, key, value='', required=False, extra=''):

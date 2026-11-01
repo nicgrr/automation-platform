@@ -149,8 +149,11 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
     photos = "".join(
         f"<img src='/collectibles/vinted/{escape(key)}/photo/{i}' alt='Photo {i + 1}' data-photo='{i}'>"
         for i in range(len(row["paths"])))
-    brand = row["brand"] or ""
+    brand = draft["brand"] or ""
     lines = [
+        _copy("Brand", brand, "v-brand"),
+        _copy("Series / Set", draft["series"], "v-series"),
+        _copy("Figure name", draft["name"], "v-name"),
         _copy("Title", draft["title"], "v-title"),
         _copy("Description", draft["description"], "v-desc", multiline=True),
         _copy("Price (AUD)", str(draft.get("confirmed_price") or ""), "v-price"),
@@ -165,7 +168,7 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
         f"rel='noopener'>{escape(l.title)}</a> · ${l.price}</p>" for l in live)
     body = (
         brand_header("Post to Vinted")
-        + f"<h2 class='item-name'>{escape(row['name'])}</h2>"
+        + f"<h2 class='item-name'>{escape(draft['name'])}</h2>"
         + (f"<div class='callout bad'>{escape(error)}</div>" if error else "")
         + "".join(f"<div class='callout warn'>{escape(b)}</div>" for b in blockers)
         + ("<div class='callout warn'><b>Review before publishing:</b><ul>"

@@ -20,7 +20,18 @@ Files: vinted_prep.py, vinted_listings.py, product_photo_review.py (prefill only
 needed), focused identity tests. Next: implement, test saving/reloading and staged
 handoff, verify mobile page, deploy ezbay.service within ongoing authorization.
 No schema change. Read-only agent checking reference widgets and draft fallback.
-Validation: not yet run for this batch.
+Implementation complete: explicit Brand, Series / Set and Figure name fields
+with linked reference suggestions on each Vinted form; safe details-only save,
+explicit price confirmation, optional title-generation button. Identity follows
+posting copy fields, ZIP export and intake prefill; stock/catalogue/prices remain
+unchanged by details-only saves. Unknown fields can be cleared; missing legacy
+form fields preserve existing values. Staged draft data survives stock linkage.
+Validation: 63 focused tests passed (vinted_identity, vinted_intake,
+vinted_listings, product_photo_review, collectible_reference); git diff --check
+passed. Read-only agent review found blank-form handling issue, now fixed and
+tested. Next: deploy ezbay.service; mobile browser verify prefill, linked picker,
+scoped title button, no sideways overflow and live post-screen identity.
+No production data changes or external marketplace actions.
 
 ## Current task — review Claude's Vinted work (Codex, 2026-10-31)
 
