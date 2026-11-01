@@ -17,7 +17,7 @@ Pending questions (unanswered): replace Vinted or keep both? Recommended replace
 What figurine parcel postage policy / packed dimensions and weight / buyer pays?
 Do not interpret elapsed time as answers. No Vinted status API exists here.
 
-Implemented, NOT YET DEPLOYED OR FULLY VERIFIED:
+Implementation COMPLETE; tests passed; deployment/mobile verification next:
 - `vinted_copy.py` generates title/description from brand/series/character and
   explicit condition, included contents and notes. Copy-all includes confirmed
   AUD price only; never provisional research or inventory quantity as a lot.
@@ -30,14 +30,26 @@ Implemented, NOT YET DEPLOYED OR FULLY VERIFIED:
   measurement hint, actual posting-date field and 14-day due date/countdown in
   Sydney time. Backdated day uses end-of-day conservatively. Due state is only a
   REVIEW prompt, NOT automatic eBay publication.
-- Tests: identity/generation `28 passed`; combined tests and mobile browser
-  verification not yet run. New copy-screen tests exist but their author hit a
-  usage limit before reporting results; root must review/run them.
+- Final validation: `120 passed` across test_vinted_identity, test_vinted_copy,
+  test_vinted_copy_screen, test_vinted_intake, test_vinted_listings,
+  test_product_photo_review, test_collectible_reference, test_collectible_ebay_policy.
+  `git diff --check` passed. The interrupted agent's changes were reviewed and
+  completed by root. Real browser mobile verification remains next.
+- Custom mode now survives reload/price confirmation and omitted-mode requests.
+  Legacy freeform condition/accessory facts are kept custom unless explicitly
+  regenerated; current 16 production drafts were read-only checked and all use
+  the known generic template, so all default to new generated-copy behavior.
+- Original photo downloads are tested byte-for-byte; share-all requires every
+  image to load and keeps image MIME/extensions. Clipboard and mobile UI still
+  need the live browser check. Staged items link directly to stock review.
+- Catalogue/policy/export UI now describes Vinted-first, 14-day conditional
+  fallback. Actual eBay gates remain intact; no category/postage bypass.
 
-Dirty paths are owned by this task: root vinted_prep.py/test_vinted_identity.py;
+All implementation paths below are owned by this task and committed with this update: root vinted_prep.py/test_vinted_identity.py;
 helper agent vinted_copy.py/test_vinted_copy.py completed; audit agent changed
 vinted_listings.py/test_vinted_copy_screen.py then stopped. Root takes ownership
-of finishing these changes. No unrelated dirty files observed.
+of finishing these changes. No unrelated dirty files observed. UI wording changes additionally touch collectibles.py,
+selling_channels.py and ebay_bulk_export.py.
 
 Actual eBay blockers / next implementation dependency:
 - `selling_channels.py` still blocks collectibles; do NOT blanket remove it.
@@ -52,13 +64,16 @@ Actual eBay blockers / next implementation dependency:
 - last read-only DB audit: 0 tracked Vinted listings, 11 stock-linked figures
   with qty1 AVAILABLE; 16 prep rows including five staged. No live clocks exist.
 
-Next batch: finish/review tests and mobile workflow, fix concrete issues, update
-outdated Vinted-only UI text to explain conditional fallback without weakening
-publication gates. Commit implementation + handoff, restart ezbay.service under
-ongoing authorization, verify read-only live pages/photos. No marketplace writes,
-stock mutations, production test drafts or price confirmations in this batch.
-Then record deployed commit, validation and precise remaining eBay dependencies
-here so Claude cannot mistake a due-date display for working auto-publication.
+Next action: restart ezbay.service under ongoing deployment authorization, then
+run `/tmp/verify_vinted_copy_mobile.py` with the browser-automation venv and sourced
+.env.local. This script only GETs production, toggles unsaved controls, tests
+clipboard buttons and downloads; it does not POST or alter stock/prices/drafts.
+Record mobile results and deployed commit here. No marketplace writes, stock
+mutations, production test drafts or price confirmations occurred.
+Automatic eBay publication remains UNIMPLEMENTED pending the earlier choices,
+figurine category/aspect/payload and parcel configuration, and a factual unsold
+check. A due-date display is not auto-publication. Claude's next eBay work must
+respect these constraints and recheck live data before any transfer.
 
 ## Current task — Vinted brand, series and name fields (Codex, 2026-11-01)
 
@@ -595,3 +610,5 @@ Last updated for current task: Codex, 2026-10-31.
 Last updated for Vinted audit: Codex, 2026-10-31.
 
 Last updated for Vinted identity fields: Codex, 2026-11-01.
+
+Last updated for Vinted copy workflow and conditional eBay fallback: Codex, 2026-11-02.

@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ from .images import serve_image
 from .models import (CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem,
                      ListingPhotoPair, PlatformConfig, ShopListing)
 from .ui import brand_header, page
+from .vinted_copy import generate_copy
 
 router = APIRouter(prefix='/collectibles/vinted', tags=['vinted-preparation'])
 PREFIX = 'vinted_draft:'
@@ -84,8 +85,21 @@ def _draft(session, row):
     value = dict(saved.value or {}) if saved else {}
     for field in ('brand', 'series', 'name'):
         value.setdefault(field, clean(row[field]))
-    value.setdefault('title', ' '.join(value[field] for field in ('brand', 'series', 'name') if value[field]))
-    value.setdefault('description', f"{row['name']}. Opened/used collectible. Includes the figure shown in the photos. Figure only; box and collector card are not included unless separately confirmed. Please review the photos for condition.")
+    value.setdefault('condition', 'Opened / used')
+    value.setdefault('included', 'Figure only; no box or collector card included.')
+    value.setdefault('condition_notes', '')
+    generated = generate_copy(value['brand'], value['series'], value['name'],
+                              condition=value['condition'], included=value['included'],
+                              notes=value['condition_notes'])
+    legacy_description = (f"{row['name']}. Opened/used collectible. Includes the figure shown in the photos. "
+                          "Figure only; box and collector card are not included unless separately confirmed. "
+                          "Please review the photos for condition.")
+    # Earlier versions stored condition/accessory details only in freeform copy.
+    # Keep those drafts custom until the owner explicitly chooses regeneration.
+    value.setdefault('copy_mode', 'custom' if value.get('description') and
+                     value['description'] not in (legacy_description, generated['description']) else 'generate')
+    for field, text in generated.items():
+        value.setdefault(field, text)
     return value
 
 
@@ -149,10 +163,9 @@ def review(user: str = Depends(require_dashboard_user), session: Session = Depen
         previous = f"Previous EzBay price: AU${escape(row['previous_price'])}. " if row['previous_price'] else ''
         pairlink = f"<a href='/product-photo-review/{row['pair'].id}?kind=collectible'>Review identity / stock</a>" if row['pair'] else ''
         value = draft.get('confirmed_price') or draft.get('suggested_price') or ''
-        post_link = (f"<p><a class='btn' href='/collectibles/vinted/{key}/post'>Post to Vinted</a></p>"
-                     if row['inventory'] is not None else '')
+        post_link = f"<p><a class='btn' href='/collectibles/vinted/{key}/post'>Copy listing &amp; photos</a></p>"
         cards.append(f"""<article class='panel' id='{key}'>
-<h2>{escape(draft['name'])}</h2><p>Vinted only · Qty {row['quantity'] if row['quantity'] is not None else 'unconfirmed'} · {'Recent upload' if row['recent'] else 'Older photo'}</p>
+<h2>{escape(draft['name'])}</h2><p>Vinted first · Qty {row['quantity'] if row['quantity'] is not None else 'unconfirmed'} · {'Recent upload' if row['recent'] else 'Older photo'}</p>
 <div class='vinted-photos'>{photos}</div>
 <form method='post' action='/collectibles/vinted/{key}/save' class='vinted-draft-form'>
 <fieldset class='vinted-identity'><legend>Item details</legend>
@@ -165,43 +178,64 @@ def review(user: str = Depends(require_dashboard_user), session: Session = Depen
 <p class='muted'>{previous}Saved Vinted price: {('AU$'+escape(draft['confirmed_price'])) if draft.get('confirmed_price') else 'not confirmed'}.</p>
 <p class='vinted-status'>{escape(' '.join(issues)) if issues else 'Draft details saved — review in Vinted before publishing.'}</p>
 <details><summary>Price references</summary><ul>{sources}</ul><a href='{escape(sold,quote=True)}' target='_blank' rel='noopener'>Sold listings · Australia (research only)</a></details>
-<label>Listing title<input name='title' maxlength='256' required value='{escape(draft['title'],quote=True)}'></label>
-<button type='button' class='btn ghost' data-identity-title>Use brand, series and name for title</button>
+<label>Condition<input name='condition' maxlength='256' required value='{escape(draft['condition'],quote=True)}'></label>
+<label>Included in the sale<input name='included' maxlength='1000' required value='{escape(draft['included'],quote=True)}'></label>
+<label>Condition notes / other details<textarea name='condition_notes' rows='3' maxlength='2000' placeholder='Add any marks, damage or other details the buyer should know.'>{escape(draft['condition_notes'])}</textarea></label>
+<input type='hidden' name='copy_mode' value='custom'>
+<label class='copy-option'><input type='checkbox' name='copy_mode' value='generate' {'checked' if draft.get('copy_mode','generate') == 'generate' else ''}>Write the title and description from these details when saving</label>
+<details {'open' if draft['copy_mode']=='custom' else ''}><summary>Listing wording — untick above to keep your own edits</summary>
+<p class='muted'>Before rewriting custom wording, carry any condition and accessory details into the fields above.</p>
+<label>Listing title<input name='title' maxlength='256' value='{escape(draft['title'],quote=True)}'></label>
 <label>Description<textarea name='description' rows='5' maxlength='5000'>{escape(draft['description'])}</textarea></label>
+</details>
 <label>Your Vinted price (AUD, postage extra)<input type='number' name='price' step='0.01' min='0.01' max='99999' value='{escape(str(value),quote=True)}' placeholder='Leave blank to keep unpriced'></label>
-<p class='muted'>Save details keeps your price unchanged. Confirm price uses the entered amount, rounded up to .99.</p>
+<p class='muted'>Save opens your copy-and-paste listing and photos. Save details keeps your price unchanged. Confirm price uses the entered amount, rounded up to .99.</p>
 <div class='vinted-save-actions'><button name='intent' value='details'>Save details</button><button name='intent' value='price'>Save draft &amp; confirm price</button></div></form><p>{pairlink}</p>
 {post_link}</article>""")
     body = brand_header('Collectibles — Vinted preparation') + (
-        f"<div class='panel'><p><strong>{len(rows)} figurines · Vinted only · Nothing published by this page</strong></p>"
+        f"<div class='panel'><p><strong>{len(rows)} figurines · Vinted first · Nothing published by this page</strong></p>"
         "<p>Graded cards stay in their separate workflow. Suggestions are AUD asking prices for opened figures, postage extra; they are not verified sold values. Review titles, condition, quantities and included accessories before posting.</p>"
         "<p><a class='btn' href='/collectibles/vinted/live'>Live on Vinted</a> "
         "<a class='btn ghost' href='/collectibles/vinted/download'>Download drafts and photos</a> "
         "<a class='btn ghost' href='/collectibles'>Collectibles catalogue</a> "
         "<a class='btn ghost' href='/shop-listings'>Back to Listing Studio</a></p></div>"
         + "<div class='vinted-grid'>"+''.join(cards)+"</div>"
-        + PICKER_SCRIPT + _IDENTITY_SCRIPT
-        + "<style>.vinted-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}.vinted-grid article{min-width:0}.vinted-photos{display:flex;gap:8px;overflow:auto}.vinted-photos img{height:230px;max-width:200px;object-fit:contain}.vinted-grid form,.vinted-grid label{display:grid;gap:8px}.vinted-grid form{gap:16px;margin-top:18px}.vinted-grid input,.vinted-grid textarea{width:100%;min-width:0;box-sizing:border-box;padding:10px}.vinted-status{color:#9b501b}.vinted-identity{display:grid;gap:12px;border:1px solid #ddd;border-radius:10px;min-width:0;padding:14px;margin:12px 0}.vinted-identity legend{font-weight:700}.vinted-save-actions{display:flex;flex-wrap:wrap;gap:8px}</style>"
+        + PICKER_SCRIPT
+        + "<style>.vinted-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}.vinted-grid article{min-width:0}.vinted-photos{display:flex;gap:8px;overflow:auto}.vinted-photos img{height:230px;max-width:200px;object-fit:contain}.vinted-grid form,.vinted-grid label{display:grid;gap:8px}.vinted-grid form{gap:16px;margin-top:18px}.vinted-grid input,.vinted-grid textarea{width:100%;min-width:0;box-sizing:border-box;padding:10px}.vinted-grid label.copy-option{display:flex;align-items:start}.vinted-grid .copy-option input{width:auto;margin-top:4px}.vinted-status{color:#9b501b}.vinted-identity{display:grid;gap:12px;border:1px solid #ddd;border-radius:10px;min-width:0;padding:14px;margin:12px 0}.vinted-identity legend{font-weight:700}.vinted-save-actions{display:flex;flex-wrap:wrap;gap:8px}</style>"
     )
     return HTMLResponse(page('EzBay — Vinted preparation',body))
 
 
 @router.post('/{key}/save')
-async def save(key: str, request: Request, title: str = Form(...), description: str = Form(''), price: str = Form(''),
+async def save(key: str, request: Request, title: str = Form(''), description: str = Form(''), price: str = Form(''),
          brand: str | None = Form(None), series: str | None = Form(None), name: str | None = Form(None),
-         intent: str = Form('details'),
+         condition: str | None = Form(None), included: str | None = Form(None), condition_notes: str | None = Form(None),
+         copy_mode: str | None = Form(None), intent: str = Form('details'),
          user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     row = _get_row(session,key)
-    if not title.strip() or len(title)>256 or len(description)>5000:
-        raise HTTPException(400,'Check the title and description lengths.')
     if intent not in ('details', 'price'):
         raise HTTPException(400,'Choose Save details or Confirm price.')
     draft = _draft(session,row)
     form = await request.form()
+    copy_mode = copy_mode if 'copy_mode' in form else draft['copy_mode']
     fields = {field: clean((value or '') if field in form else draft[field])
               for field, value in (('brand',brand), ('series',series), ('name',name))}
     if not fields['name'] or any(len(value)>128 for value in fields.values()):
         raise HTTPException(400,'Enter a figure name and keep each item detail within 128 characters.')
+    contents = {field: ((value or '').strip() if field in form else draft[field])
+                for field, value in (('condition', condition), ('included', included), ('condition_notes', condition_notes))}
+    if (not contents['condition'] or not contents['included'] or len(contents['condition'])>256
+            or len(contents['included'])>1000 or len(contents['condition_notes'])>2000):
+        raise HTTPException(400, 'Enter the condition and included contents; keep notes within 2,000 characters.')
+    if copy_mode == 'generate':
+        copy = generate_copy(**fields, condition=contents['condition'], included=contents['included'],
+                             notes=contents['condition_notes'])
+    elif copy_mode == 'custom' and title.strip() and len(title)<=256 and len(description)<=5000:
+        copy = {'title': title.strip(), 'description': description.strip()}
+    else:
+        raise HTTPException(400, 'Choose generated wording, or enter a title up to 256 and description up to 5,000 characters.')
+    if draft.get('title') != copy['title'] or draft.get('description') != copy['description']:
+        draft['previous_copy'] = {field: draft.get(field, '') for field in ('title', 'description')}
     if intent == 'price':
         try:
             amount = str(round_up_99(price)) if price.strip() else None
@@ -209,7 +243,9 @@ async def save(key: str, request: Request, title: str = Form(...), description: 
             raise HTTPException(400,'Enter a valid positive AUD price, or leave blank.')
         draft.update(confirmed_price=amount,reviewed_by=user,reviewed_at=datetime.now(UTC).isoformat())
     draft.update(fields)
-    draft.update(title=title.strip(),description=description.strip(),currency='AUD',channel='vinted',
+    draft.update(contents)
+    draft.update(copy)
+    draft.update(copy_mode=copy_mode,currency='AUD',channel='vinted',
                  details_updated_by=user,details_updated_at=datetime.now(UTC).isoformat())
     config = session.get(PlatformConfig,PREFIX+key)
     if config is None:
@@ -218,7 +254,7 @@ async def save(key: str, request: Request, title: str = Form(...), description: 
     record_event(session,actor_type='user',actor_id=user,action='vinted.draft.save',
                  resource_type='collectible',resource_id=key,outcome='success',
                  correlation_id=str(uuid.uuid4()),details={'price':draft.get('confirmed_price'),'save_intent':intent,'identity':fields,'published':False})
-    return RedirectResponse('/collectibles/vinted#'+key,status_code=303)
+    return RedirectResponse('/collectibles/vinted/'+key+'/post',status_code=303)
 
 
 @router.get('/{key}/photo/{index}')
@@ -229,11 +265,23 @@ def photo(key: str,index: int,user: str = Depends(require_dashboard_user),sessio
     return serve_image(row['paths'][index], max_age=0)
 
 
+@router.get('/{key}/photo/{index}/download')
+def photo_download(key: str,index: int,user: str = Depends(require_dashboard_user),session: Session = Depends(get_session)):
+    row = _get_row(session,key)
+    if index<0 or index>=len(row['paths']):
+        raise HTTPException(404,'Photo not found')
+    path = Path(row['paths'][index])
+    if not path.is_file():
+        raise HTTPException(404,'Photo not found')
+    name = re.sub(r'[^a-zA-Z0-9_-]+','-',_draft(session,row)['name']).strip('-') or 'figure'
+    return FileResponse(path, filename=f'{name}-{index+1}{path.suffix}', headers={'Cache-Control':'no-store'})
+
+
 @router.get('/download')
 def download(user: str = Depends(require_dashboard_user),session: Session = Depends(get_session)):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer,'w',zipfile.ZIP_DEFLATED) as z:
-        z.writestr('READ-ME.txt','Vinted preparation only. Nothing published. Prices are AUD, postage extra. Suggested prices are unconfirmed asking prices, not sold valuations. Read REVIEW NOTES in each draft. Use original photos of the actual item. Graded cards are excluded. Do not list these figurines on eBay.\n')
+        z.writestr('READ-ME.txt','Vinted preparation only. Nothing published. Prices are AUD, postage extra. Suggested prices are unconfirmed asking prices, not sold valuations. Read REVIEW NOTES in each draft. Use original photos of the actual item. Graded cards are excluded. Vinted first; after 14 days unsold, review for eBay. Record the Vinted link to start tracking.\n')
         for row in rows_for_review(session):
             draft = _draft(session,row)
             folder = re.sub(r'[^a-zA-Z0-9_-]+','-',draft['name']).strip('-')+'-'+row['key'][-8:]
@@ -257,15 +305,3 @@ def download(user: str = Depends(require_dashboard_user),session: Session = Depe
                     z.writestr(folder+f'/MISSING-PHOTO-{i+1}.txt','Photo missing; resolve before listing.')
     return Response(buffer.getvalue(),media_type='application/zip',headers={
         'Content-Disposition':'attachment; filename="vinted-collectibles-drafts.zip"','Cache-Control':'no-store'})
-
-
-_IDENTITY_SCRIPT = r"""<script>
-document.addEventListener('click', function(event) {
-  var button = event.target.closest('[data-identity-title]');
-  if (!button) return;
-  var form = button.closest('form');
-  form.querySelector('input[name=title]').value = ['brand', 'series', 'name'].map(function(key) {
-    return form.querySelector('input[name="' + key + '"]').value.trim().replace(/\s+/g, ' ');
-  }).filter(Boolean).join(' ').slice(0, 256);
-});
-</script>"""

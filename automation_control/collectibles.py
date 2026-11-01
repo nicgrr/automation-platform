@@ -231,7 +231,7 @@ def collectibles_page(
     pending_count = len(session.scalars(select(CapturedCollectible).where(CapturedCollectible.status == CardCaptureStatus.PENDING_REVIEW)).all())
     body = (
         brand_header("Collectibles")
-        + "<div class='panel'><strong>Figurines are Vinted only.</strong> <a class='btn' href='/collectibles/vinted'>Review Vinted prices and drafts</a></div>"
+        + "<div class='panel'><strong>Figurines start on Vinted.</strong> After 14 days unsold, review for eBay. <a class='btn' href='/collectibles/vinted'>Review Vinted prices and drafts</a></div>"
         + f"<div class='panel'><h2>Photo capture (AI-assisted)</h2><p><a class='btn' href='/collectibles/capture'>Capture from a photo</a> &nbsp; "
           f"<a href='/collectibles/review'>Review queue ({pending_count})</a> &nbsp; "
           f"<a href='/collectibles/identify'>Identify from a link</a></p></div>"

@@ -6,7 +6,8 @@ from .models import CatalogItem, CatalogItemType, InventoryItem, ShopListing
 
 
 COLLECTIBLE_EBAY_BLOCK_REASON = (
-    "Collectibles are reserved for Vinted. eBay publication, revisions and exports are disabled."
+    "Collectibles are reserved for Vinted initially. After 14 days unsold, review for eBay. "
+    "eBay transfer and figurine parcel postage are not configured yet; publication, revisions and exports remain disabled."
 )
 
 

@@ -832,7 +832,7 @@ async def ebay_export_build(request: Request,
         if ebay_channel_block_reason(session, listing)
     ]
     if channel_blocked:
-        reason = "Collectibles are reserved for Vinted and cannot be exported to eBay."
+        reason = ebay_channel_block_reason(session, channel_blocked[0])
         _record(session, user, correlation_id, "failed", {
             "stage": "selling_channel", "skus": [listing.id for listing in channel_blocked],
         })

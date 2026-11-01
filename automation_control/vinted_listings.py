@@ -17,11 +17,12 @@ import io
 import re
 import uuid
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 from urllib.parse import quote, urlsplit
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -43,6 +44,7 @@ from .models import (
     VintedListingStatus,
 )
 from .ui import brand_header, page
+from .vinted_copy import all_details
 from .vinted_prep import _draft, _get_row, _status
 
 router = APIRouter(prefix="/collectibles/vinted", tags=["vinted-listings"])
@@ -55,6 +57,42 @@ _VINTED_DOMAINS = {
     "vinted.lt", "vinted.lv", "vinted.ee", "vinted.dk", "vinted.se", "vinted.fi",
     "vinted.hr", "vinted.hu", "vinted.ro", "vinted.gr", "vinted.si", "vinted.ca",
 }
+_SYDNEY = ZoneInfo("Australia/Sydney")
+
+
+def _now_utc() -> datetime:
+    return datetime.now(UTC)
+
+
+def _utc(value: datetime) -> datetime:
+    """SQLite returns naive timestamps even for timezone=True columns."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _posting_time(raw_date: str, now: datetime) -> datetime:
+    """Use the end of a historical Sydney date, avoiding an early 14-day review."""
+    now = _utc(now)
+    if not raw_date.strip():
+        return now
+    today = now.astimezone(_SYDNEY).date()
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_date.strip()):
+            raise ValueError
+        posted_date = date.fromisoformat(raw_date.strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Enter the date you posted on Vinted as YYYY-MM-DD.") from None
+    if posted_date > today:
+        raise HTTPException(status_code=400, detail="The Vinted posting date cannot be in the future.")
+    if posted_date == today:
+        return now
+    return datetime.combine(posted_date, time.max, tzinfo=_SYDNEY).astimezone(UTC)
+
+
+def _review_timing(posted_at: datetime, now: datetime) -> tuple[datetime, int, bool]:
+    due = _utc(posted_at) + timedelta(days=14)
+    remaining = (due - _utc(now)).total_seconds()
+    days = max(0, int(-(-remaining // 86400)))
+    return due.astimezone(_SYDNEY), days, remaining <= 0
 
 
 def parse_vinted_url(raw: str) -> tuple[str, str] | None:
@@ -119,11 +157,12 @@ _NO_STOCK_LEFT = RedirectResponse(
     f"/collectibles/vinted/live?_saved={quote('Already live: no unlisted stock left')}", status_code=303)
 
 
-def _copy(label: str, value: str, field_id: str, multiline: bool = False) -> str:
+def _copy(label: str, value: str, field_id: str, multiline: bool = False,
+          button_label: str = "Copy") -> str:
     body = (f"<textarea id='{field_id}' readonly rows='6'>{escape(value)}</textarea>" if multiline else
             f"<input id='{field_id}' readonly value='{escape(value, quote=True)}'>")
     return (f"<div class='copy-row'><label for='{field_id}'>{escape(label)}</label>{body}"
-            f"<button type='button' class='btn small' data-copy='{field_id}'>Copy</button></div>")
+            f"<button type='button' class='btn small' data-copy='{field_id}'>{escape(button_label)}</button></div>")
 
 
 @router.get("/{key}/post", response_class=HTMLResponse)
@@ -147,7 +186,10 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
     review_notes = [note for note in _status(row, draft) if note != "Price needs your confirmation."]
 
     photos = "".join(
-        f"<img src='/collectibles/vinted/{escape(key)}/photo/{i}' alt='Photo {i + 1}' data-photo='{i}'>"
+        f"<figure><a href='/collectibles/vinted/{escape(key)}/photo/{i}' target='_blank' rel='noopener'>"
+        f"<img src='/collectibles/vinted/{escape(key)}/photo/{i}' alt='Photo {i + 1}' data-photo='{i}'></a>"
+        f"<figcaption><a href='/collectibles/vinted/{escape(key)}/photo/{i}' target='_blank' rel='noopener'>Open photo {i + 1}</a> · "
+        f"<a href='/collectibles/vinted/{escape(key)}/photo/{i}/download' download>Download original</a></figcaption></figure>"
         for i in range(len(row["paths"])))
     brand = draft["brand"] or ""
     lines = [
@@ -157,12 +199,14 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
         _copy("Title", draft["title"], "v-title"),
         _copy("Description", draft["description"], "v-desc", multiline=True),
         _copy("Price (AUD)", str(draft.get("confirmed_price") or ""), "v-price"),
+        _copy("All details", all_details(draft), "v-all", multiline=True, button_label="Copy all details"),
     ]
     hints = ("<ul class='hints'>"
              + (f"<li><b>Brand:</b> {escape(brand)}</li>" if brand else "")
              + "<li><b>Category:</b> pick the closest figures/collectibles category in the drop-down</li>"
              + "<li><b>Condition:</b> match the description (opened/used figures are not \"New with tags\")</li>"
-             + "<li><b>Parcel size:</b> small for a single figure</li></ul>")
+             + "<li><b>Parcel size:</b> measure and weigh the packed parcel, then select the matching size in Vinted.</li></ul>")
+    today = _now_utc().astimezone(_SYDNEY).date()
     already = "".join(
         f"<p class='callout'>Already live on Vinted: <a href='{escape(l.url, quote=True)}' target='_blank' "
         f"rel='noopener'>{escape(l.title)}</a> · ${l.price}</p>" for l in live)
@@ -171,6 +215,8 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
         + f"<h2 class='item-name'>{escape(draft['name'])}</h2>"
         + (f"<div class='callout bad'>{escape(error)}</div>" if error else "")
         + "".join(f"<div class='callout warn'>{escape(b)}</div>" for b in blockers)
+        + (f"<p><a class='btn ghost' href='/product-photo-review/{escape(row['pair'].id)}?kind=collectible'>Review identity and stock</a></p>"
+           if inventory is None and row['pair'] else "")
         + ("<div class='callout warn'><b>Review before publishing:</b><ul>"
            + "".join(f"<li>{escape(note)}</li>" for note in review_notes)
            + "</ul><p>If you already posted the item, record its link below so stock stays accurate. "
@@ -190,10 +236,12 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
         + "<p>In the app, open your new listing, tap <b>Share</b>, then <b>Copy link</b>.</p>"
         + f"<form method='post' action='/collectibles/vinted/{escape(key)}/posted' class='posted'>"
         + "<input name='url' inputmode='url' required placeholder='https://www.vinted.com.au/items/…'>"
+        + f"<label>Date posted on Vinted (Sydney)<input name='posted_date' type='date' value='{today.isoformat()}' max='{today.isoformat()}'></label>"
+        + "<small>The 14-day eBay review starts from this posting date. Check unsold status before moving it to eBay; this does not publish automatically.</small>"
         + f"<input type='hidden' name='price' value='{escape(str(draft.get('confirmed_price') or ''), quote=True)}'>"
         + "<button class='btn' " + ("disabled" if blockers else "") + ">Mark as live on Vinted</button></form>"
         + "<small>This reserves one unit of stock so it can't sell anywhere else.</small></li></ol>"
-        + "<p><a class='btn ghost' href='/collectibles/vinted'>Back to Vinted preparation</a> "
+        + f"<p><a class='btn ghost' href='/collectibles/vinted#{escape(key)}'>Edit this draft</a> "
         + "<a class='btn ghost' href='/collectibles/vinted/live'>Live on Vinted</a></p>"
         + _SCRIPT + _STYLE
     )
@@ -216,7 +264,7 @@ def photos_zip(key: str, user: str = Depends(require_dashboard_user), session: S
 
 
 @router.post("/{key}/posted")
-def mark_posted(key: str, url: str = Form(...), price: str = Form(""),
+def mark_posted(key: str, url: str = Form(...), price: str = Form(""), posted_date: str = Form(""),
                 user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     row = _row_or_none(session, key)
     if row is None:
@@ -233,6 +281,8 @@ def mark_posted(key: str, url: str = Form(...), price: str = Form(""),
         return back("Link this photo to stock before posting.")
     try:
         amount = _money(price or draft.get("confirmed_price") or "", "listing price")
+        now = _now_utc()
+        actual_posted_at = _posting_time(posted_date, now)
     except HTTPException as exc:
         return back(exc.detail)
     item_id, clean_url = parsed
@@ -251,11 +301,10 @@ def mark_posted(key: str, url: str = Form(...), price: str = Form(""),
     session.refresh(inventory)
     if inventory.quantity == 0:
         inventory.status = InventoryStatus.RESERVED
-    now = datetime.now(UTC)
     listing = VintedListing(
         inventory_item_id=inventory_id, catalog_item_id=inventory.catalog_item_id, vinted_item_id=item_id,
         url=clean_url, title=draft["title"][:256], price=amount, currency="AUD", source="manual",
-        posted_at=now, stock_reserved_at=now,
+        posted_at=actual_posted_at, stock_reserved_at=now,
     )
     session.add(listing)
     try:
@@ -266,7 +315,8 @@ def mark_posted(key: str, url: str = Form(...), price: str = Form(""),
     record_event(session, actor_type="user", actor_id=user, action="vinted.listing.posted",
                  resource_type="vinted_listing", resource_id=listing.id, outcome="success",
                  correlation_id=str(uuid.uuid4()),
-                 details={"vinted_item_id": item_id, "inventory_item_id": inventory_id, "price": str(amount)})
+                 details={"vinted_item_id": item_id, "inventory_item_id": inventory_id, "price": str(amount),
+                          "posted_at": actual_posted_at.isoformat()})
     return RedirectResponse(f"/collectibles/vinted/live?_saved={quote('Live on Vinted')}", status_code=303)
 
 
@@ -275,10 +325,17 @@ def live_page(user: str = Depends(require_dashboard_user), session: Session = De
     rows = session.scalars(select(VintedListing).order_by(
         VintedListing.status, VintedListing.posted_at.desc())).all()
     cards = []
+    now = _now_utc()
     for l in rows:
         name = session.get(CatalogItem, l.catalog_item_id).name if l.catalog_item_id else l.title
         actions = ""
+        review = ""
         if l.status == VintedListingStatus.ACTIVE:
+            due, days, is_due = _review_timing(l.posted_at, now)
+            review_label = ("eBay review due — check that this item is still unsold on Vinted."
+                            if is_due else f"eBay review in {days} {'day' if days == 1 else 'days'}.")
+            review = (f"<p class='vinted-review {'due' if is_due else 'pending'}'><strong>{escape(review_label)}</strong> "
+                      f"Due {due:%d %b %Y, %H:%M %Z}. This does not publish automatically.</p>")
             actions = (
                 f"<form method='post' action='/collectibles/vinted/listing/{l.id}/sold' class='inline'>"
                 f"<label>Sold for (AUD)<input name='price' type='number' step='0.01' min='0.01' value='{l.price}'></label>"
@@ -289,11 +346,11 @@ def live_page(user: str = Depends(require_dashboard_user), session: Session = De
         cards.append(
             f"<article class='panel vinted-live {l.status.value}'><h3>{escape(name)}</h3>"
             f"<p><a href='{escape(l.url, quote=True)}' target='_blank' rel='noopener'>{escape(l.title)}</a></p>"
-            f"<p class='muted'>{l.status.value.title()} · ${l.price} · posted {l.posted_at:%d %b}"
-            + (f" · sold {l.sold_at:%d %b}" if l.sold_at else "") + f"</p>{actions}</article>")
+            f"<p class='muted'>{l.status.value.title()} · ${l.price} · posted {_utc(l.posted_at).astimezone(_SYDNEY):%d %b %Y}"
+            + (f" · sold {_utc(l.sold_at).astimezone(_SYDNEY):%d %b %Y}" if l.sold_at else "") + f"</p>{review}{actions}</article>")
     body = (brand_header("Live on Vinted")
             + "<p><a class='btn ghost' href='/collectibles/vinted'>Vinted preparation</a></p>"
-            + ("".join(cards) or "<p>Nothing posted yet. Use <b>Post to Vinted</b> on the preparation page.</p>")
+            + ("".join(cards) or "<p>Nothing posted yet. Save a draft or choose <b>Copy listing &amp; photos</b> on the preparation page.</p>")
             + _STYLE)
     return HTMLResponse(page("EzBay — Live on Vinted", body))
 
@@ -388,21 +445,29 @@ _SCRIPT = r"""<script>
   document.addEventListener('click', function(e){
     var b = e.target.closest('[data-copy]'); if (!b) return;
     var el = document.getElementById(b.getAttribute('data-copy'));
-    function done(){ b.textContent = 'Copied'; setTimeout(function(){ b.textContent = 'Copy'; }, 1500); }
+    var label = b.textContent;
+    function done(){ b.textContent = 'Copied'; setTimeout(function(){ b.textContent = label; }, 1500); }
     if (navigator.clipboard) navigator.clipboard.writeText(el.value).then(done, function(){ el.select(); document.execCommand('copy'); done(); });
     else { el.select(); document.execCommand('copy'); done(); }
   });
   // Fetch the photos up front: iOS only opens the share sheet straight
   // from a tap, so there's no time to download them after it.
   var files = [];
-  Promise.all(Array.prototype.map.call(document.querySelectorAll('img[data-photo]'), function(img, i){
-    return fetch(img.src, {credentials: 'same-origin'}).then(function(r){ return r.blob(); })
-      .then(function(b){ files[i] = new File([b], 'vinted-' + (i + 1) + '.jpg', {type: b.type || 'image/jpeg'}); });
+  var images = document.querySelectorAll('img[data-photo]');
+  Promise.all(Array.prototype.map.call(images, function(img, i){
+    return fetch(img.src, {credentials: 'same-origin'}).then(function(r){
+      if (!r.ok) throw new Error('Photo unavailable');
+      return r.blob();
+    }).then(function(b){
+      if (!b.type.startsWith('image/')) throw new Error('Photo unavailable');
+      var ext = {'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif'}[b.type] || '.jpg';
+      files[i] = new File([b], 'vinted-' + (i + 1) + ext, {type: b.type});
+    });
   })).catch(function(){});
   var btn = document.getElementById('share-photos');
   if (btn) btn.addEventListener('click', function(){
     var ready = files.filter(Boolean);
-    if (navigator.canShare && ready.length && navigator.canShare({files: ready})) {
+    if (navigator.canShare && ready.length && ready.length === images.length && navigator.canShare({files: ready})) {
       navigator.share({files: ready}).catch(function(){});
     } else {
       document.getElementById('share-help').textContent = 'Press and hold each photo above and choose Save to Photos.';
@@ -415,10 +480,11 @@ _STYLE = """<style>
 .item-name{margin:4px 0 12px}
 .steps{display:grid;gap:22px;padding-left:20px}.steps h3{margin:0 0 8px}
 .photo-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px}.photos{display:flex;gap:8px;overflow-x:auto;margin-bottom:10px}.photos img{height:200px;border-radius:10px;object-fit:contain;background:var(--surface-sunken)}
-.copy-row{display:grid;grid-template-columns:1fr auto;gap:6px 8px;align-items:end;margin:10px 0}
+.photos figure{margin:0;flex:0 0 auto}.photos figcaption{font-size:12px;margin-top:6px}.vinted-review.due{border-left:3px solid var(--warning);padding-left:12px}
+.copy-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 8px;align-items:end;margin:10px 0}
 .copy-row label{grid-column:1/-1;font-weight:600}.copy-row input,.copy-row textarea{width:100%;min-width:0;box-sizing:border-box;padding:10px}
 .hints{margin:8px 0;padding-left:18px;display:grid;gap:4px}
-.posted{display:grid;gap:10px}.posted input{padding:12px;font-size:16px}
+.posted{display:grid;gap:10px;min-width:0}.posted input{padding:12px;font-size:16px;box-sizing:border-box;min-width:0;width:100%}
 .vinted-live.sold,.vinted-live.removed{opacity:.6}.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-top:8px}
 .inline label{display:grid;gap:4px}.inline input{width:110px;padding:8px}
 </style>"""
