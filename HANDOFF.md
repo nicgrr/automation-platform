@@ -3,30 +3,62 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
-## Current task — save to Vinted copy pack and 14-day eBay fallback (Codex, 2026-11-01)
+## Current task — save to Vinted copy pack and 14-day eBay fallback (Codex, 2026-11-02)
 
-Branch `vinted-save-and-ebay-fallback`, base `295c900`, clean working tree.
+Last updated: Codex, 2026-11-02 (Australia/Sydney). Operator explicitly requested
+this handoff update so Claude can see the changes and continue if needed.
+Branch `vinted-save-and-ebay-fallback`, base `295c900`; plan commit `d7bd292`.
+
 Operator: after choosing a character and saving, regenerate title/description,
-make them ready to copy into Vinted, provide copy-all details and photo download
-or photo reference; if unsold for 2 weeks, list on eBay. This supersedes the
-previous absolute Vinted-only restriction, but only after the 14-day condition.
-Pending clarification: should eBay replace Vinted or coexist? Recommended
-replacement; no listing transfers or external publication until safe scope and
-unsold/withdrawn status are established. No Vinted status API currently exists.
+open a copy-ready Vinted screen, copy all details, download/reference original
+photos; if unsold for 2 weeks, list on eBay. This SUPERSEDES the older absolute
+Vinted-only rule below, but only after 14 days unsold. Graded cards stay separate.
+Pending questions (unanswered): replace Vinted or keep both? Recommended replace.
+What figurine parcel postage policy / packed dimensions and weight / buyer pays?
+Do not interpret elapsed time as answers. No Vinted status API exists here.
 
-First batch: deterministic copy generation on save; preserve condition/accessory
-facts and manual notes; redirect to posting screen for all saved drafts, including
-staged items; copy-all and individual photos; 14-day due display from posted_at,
-with unsold/removal requirements explicit. Audit eBay support separately: current
-publisher only supports raw TCG cards and its letter shipping must not be reused
-for figures. Do not remove all collectible gates or misclassify figures as cards.
+Implemented, NOT YET DEPLOYED OR FULLY VERIFIED:
+- `vinted_copy.py` generates title/description from brand/series/character and
+  explicit condition, included contents and notes. Copy-all includes confirmed
+  AUD price only; never provisional research or inventory quantity as a lot.
+- `vinted_prep.py` defaults Save to generation, allows custom wording when
+  unticked, preserves previous wording in draft metadata, redirects to the copy
+  screen including staged items. Condition/accessory/notes fields, original
+  per-photo downloads, Vinted-first text. No stock/catalogue/price changes on
+  Save details; price confirmation remains an explicit separate button.
+- `vinted_listings.py` has copy-all, per-photo download/open links, packed-parcel
+  measurement hint, actual posting-date field and 14-day due date/countdown in
+  Sydney time. Backdated day uses end-of-day conservatively. Due state is only a
+  REVIEW prompt, NOT automatic eBay publication.
+- Tests: identity/generation `28 passed`; combined tests and mobile browser
+  verification not yet run. New copy-screen tests exist but their author hit a
+  usage limit before reporting results; root must review/run them.
 
-Files initially: vinted_prep.py, vinted_listings.py and focused tests. Subsequent
-fallback policy/publication changes need their own checkpoint after audit.
-No live listings to transfer at last audit; recheck before data actions. No
-marketplace messages or writes, stock mutations or price confirmations in this
-implementation step. Test, commit and deploy the completed local workflow.
-Validation: pending. Agent ebay_fallback_audit is read-only.
+Dirty paths are owned by this task: root vinted_prep.py/test_vinted_identity.py;
+helper agent vinted_copy.py/test_vinted_copy.py completed; audit agent changed
+vinted_listings.py/test_vinted_copy_screen.py then stopped. Root takes ownership
+of finishing these changes. No unrelated dirty files observed.
+
+Actual eBay blockers / next implementation dependency:
+- `selling_channels.py` still blocks collectibles; do NOT blanket remove it.
+- direct publisher and CSV export only support raw TCG cards, card condition
+  descriptors, and category183454. No figurine category/aspects/payload branch.
+- no figurine parcel policy configured; do NOT reuse card-letter postage.
+- preflight checks ShopListing quantity but not canonical available/reserved
+  stock. Must add stock/identity/duplicate guards before enabling figures.
+- no safe manual eBay URL-linking endpoint: cached listing refresh omits SKU;
+  CSV result import kind=imported is excluded by storefront kind=single logic.
+  Order ingestion relies on SKU=ShopListing.id or linked SKU, not item ID.
+- last read-only DB audit: 0 tracked Vinted listings, 11 stock-linked figures
+  with qty1 AVAILABLE; 16 prep rows including five staged. No live clocks exist.
+
+Next batch: finish/review tests and mobile workflow, fix concrete issues, update
+outdated Vinted-only UI text to explain conditional fallback without weakening
+publication gates. Commit implementation + handoff, restart ezbay.service under
+ongoing authorization, verify read-only live pages/photos. No marketplace writes,
+stock mutations, production test drafts or price confirmations in this batch.
+Then record deployed commit, validation and precise remaining eBay dependencies
+here so Claude cannot mistake a due-date display for working auto-publication.
 
 ## Current task — Vinted brand, series and name fields (Codex, 2026-11-01)
 
