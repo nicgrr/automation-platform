@@ -3,6 +3,31 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — save to Vinted copy pack and 14-day eBay fallback (Codex, 2026-11-01)
+
+Branch `vinted-save-and-ebay-fallback`, base `295c900`, clean working tree.
+Operator: after choosing a character and saving, regenerate title/description,
+make them ready to copy into Vinted, provide copy-all details and photo download
+or photo reference; if unsold for 2 weeks, list on eBay. This supersedes the
+previous absolute Vinted-only restriction, but only after the 14-day condition.
+Pending clarification: should eBay replace Vinted or coexist? Recommended
+replacement; no listing transfers or external publication until safe scope and
+unsold/withdrawn status are established. No Vinted status API currently exists.
+
+First batch: deterministic copy generation on save; preserve condition/accessory
+facts and manual notes; redirect to posting screen for all saved drafts, including
+staged items; copy-all and individual photos; 14-day due display from posted_at,
+with unsold/removal requirements explicit. Audit eBay support separately: current
+publisher only supports raw TCG cards and its letter shipping must not be reused
+for figures. Do not remove all collectible gates or misclassify figures as cards.
+
+Files initially: vinted_prep.py, vinted_listings.py and focused tests. Subsequent
+fallback policy/publication changes need their own checkpoint after audit.
+No live listings to transfer at last audit; recheck before data actions. No
+marketplace messages or writes, stock mutations or price confirmations in this
+implementation step. Test, commit and deploy the completed local workflow.
+Validation: pending. Agent ebay_fallback_audit is read-only.
+
 ## Current task — Vinted brand, series and name fields (Codex, 2026-11-01)
 
 Branch `vinted-identity-fields`, base `61d8eef`, clean working tree at start.
