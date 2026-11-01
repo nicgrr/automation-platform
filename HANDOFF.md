@@ -3,6 +3,25 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — Vinted brand, series and name fields (Codex, 2026-11-01)
+
+Branch `vinted-identity-fields`, base `61d8eef`, clean working tree at start.
+Operator reports that Vinted preparation lacks Brand, Set/Series and Name.
+Plan: expose editable fields populated from existing catalogue/intake metadata;
+reuse linked collectible reference suggestions; persist these in Vinted drafts
+and carry them into the posting helper and download. Keep unknown identity facts
+blank/flagged. Preserve physical stock, existing catalogue, photos and prices.
+Provide a details-only save so editing identity does not accidentally confirm a
+prefilled price. Keep custom title/description text; offer title generation from
+identity explicitly. Staged draft identity must remain available during intake
+and after linking stock. No eBay or Vinted external writes or new stock here.
+
+Files: vinted_prep.py, vinted_listings.py, product_photo_review.py (prefill only if
+needed), focused identity tests. Next: implement, test saving/reloading and staged
+handoff, verify mobile page, deploy ezbay.service within ongoing authorization.
+No schema change. Read-only agent checking reference widgets and draft fallback.
+Validation: not yet run for this batch.
+
 ## Current task — review Claude's Vinted work (Codex, 2026-10-31)
 
 Active agent: Codex; branch `collectibles-vinted-preparation`, base `2dccc6b`.
