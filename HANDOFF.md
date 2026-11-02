@@ -21,15 +21,21 @@ Validation: full `.venv/bin/pytest` passed (see commit). Graded payloads are tes
 against a mocked adapter only; never sent to eBay, sandbox or production.
 NOT deployed: `ezbay` not restarted, so /graded-cards is not live.
 
-Not done, in order; each needs the operator:
-1. Operator answers: final prices (Codex proposed $34.99 Shroom & Salsa, $19.99
-   Jiren, $24.99 Venusaur) and packed slab weight/dimensions.
-2. Operator approves deploy (restart `ezbay`), then snapshot the DB and create the
-   three drafts. `prepare_graded_draft` has no caller yet and is untested; the
-   script must be written. Production has 0 graded items, 0 graded stock.
-3. Verify and store `graded_parcel_policy` (no row yet; Codex's candidate is
-   266481104017). Without it preflight blocks every slab.
-4. Publishing stays an explicit operator action.
+Operator answers 2026-11-03: Codex's proposed prices approved, operator reviews
+afterwards. "Same packaging and weight as single cards". Restart `ezbay` and create
+the three drafts approved. Publishing NOT approved: drafts only, no eBay writes.
+
+Decision: no numeric weight or dimensions exist for single cards anywhere, only the
+postage policy, so slabs use the same default policy and send no package data. This
+replaces Codex's tracked-parcel gate and its parcel form. Slabs post untracked.
+Photos and certificates re-verified by Claude against all six slab images.
+
+In progress, in order: (1) remove tracked-parcel gate, test prepare_graded_draft,
+add scripts/prepare_graded_drafts.py; (2) dry run on a DB copy; (3) snapshot to
+backups/, apply, confirm prices; (4) restart `ezbay`, verify /graded-cards.
+If interrupted: check production for graded items before rerunning; the script is
+idempotent by grader + certificate. Also in `~/trading-bot` and `~/server`: fixing
+the briefing timestamp crash and the hub's false EZBay warning.
 
 Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
 the replace-or-keep, parcel policy and measurement answers recorded below.
