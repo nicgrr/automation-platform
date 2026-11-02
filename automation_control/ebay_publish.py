@@ -11,6 +11,7 @@ second offer on the next click.
 import asyncio
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -155,11 +156,14 @@ def _resolve_category(
 ) -> str | None:
     """Resolve a game-specific mapping first, then the explicit type fallback."""
     game = tcg_card.game if tcg_card else None
+    # A slab lists in the same eBay category as the raw card; the graded fields
+    # are condition descriptors within it, not a separate category.
+    item_type = CatalogItemType.TCG_CARD if catalog_item.item_type == CatalogItemType.GRADED_CARD else catalog_item.item_type
     for candidate_game in (game, None):
         row = session.scalar(
             select(EbayCategoryMapping).where(
                 EbayCategoryMapping.marketplace_id == marketplace_id,
-                EbayCategoryMapping.catalog_item_type == catalog_item.item_type.value,
+                EbayCategoryMapping.catalog_item_type == item_type.value,
                 EbayCategoryMapping.game == candidate_game,
             )
         )
@@ -212,10 +216,6 @@ def publication_preflight(
         return PublishPreflight((channel_error,), (), None, (), False)
     errors: list[str] = []
     warnings: list[str] = []
-    stock = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
-    if stock and stock.grading_company:
-        errors.append("Graded slab saved for review. This publisher does not yet support eBay graded-card condition fields; publish through eBay after checking the grade and certificate.")
-
     if listing.status not in (ShopListingStatus.ACTIVE, ShopListingStatus.DRAFT):
         errors.append("Only an active or draft listing can be published.")
     if listing.quantity < 1:
@@ -279,6 +279,12 @@ def publication_preflight(
     image_will_upload = False
     quality = None
     inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
+    is_graded = bool(catalog_item and catalog_item.item_type == CatalogItemType.GRADED_CARD)
+    if is_graded:
+        from .graded_cards import graded_preflight
+        errors.extend(graded_preflight(session, listing, settings, effective_price))
+    elif inventory_item and inventory_item.grading_company:
+        errors.append("Graded stock must use its own graded-card catalogue record before publishing.")
 
     if listing.inventory_item_id:
         duplicate = session.scalar(
@@ -296,8 +302,8 @@ def publication_preflight(
     if catalog_item is None:
         errors.append("The catalogue item is missing.")
     else:
-        if catalog_item.item_type != CatalogItemType.TCG_CARD:
-            errors.append("Direct publishing currently supports ungraded single TCG cards only; use CSV fallback.")
+        if catalog_item.item_type not in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD):
+            errors.append("Direct publishing currently supports single TCG cards and reviewed graded cards only.")
         if tcg_card is None:
             errors.append("TCG card details are missing.")
         else:
@@ -324,7 +330,7 @@ def publication_preflight(
         photos = listing_photo_sources(session, listing, catalog_item)
         own_photos = [photo for photo in photos if photo.is_own_photo]
         if not own_photos:
-            errors.append("Add a photograph of the actual card; reference/catalogue art cannot be published for this ungraded item.")
+            errors.append("Add a photograph of the actual card; reference/catalogue art cannot be published for this item.")
         else:
             local_photos = [photo for photo in own_photos if not photo.is_remote]
             insecure = [photo.label for photo in own_photos if photo.is_remote and not photo.value.startswith("https://")]
@@ -360,10 +366,8 @@ def publication_preflight(
                     continue  # already covered above by a more specific preflight message
                 errors.append(f"{failed.label}: {failed.detail}")
 
-    if inventory_item and inventory_item.grading_company:
-        errors.append("Graded-card condition descriptors are not implemented; use CSV fallback.")
     condition = listing.condition or (inventory_item.condition if inventory_item else "")
-    if tcg_card is not None and _ungraded_condition_descriptor(condition) is None:
+    if tcg_card is not None and not is_graded and _ungraded_condition_descriptor(condition) is None:
         errors.append(
             "Direct publishing supports Near Mint, Lightly Played, Moderately Played, "
             "or Heavily Played ungraded card conditions."
@@ -374,6 +378,8 @@ def publication_preflight(
         if link.status == EbayListingLinkStatus.ACTIVE:
             if not allow_active_revision:
                 errors.append("This listing is already active on eBay.")
+            elif is_graded and not link.ebay_offer_id:
+                errors.append("This graded listing uses the legacy eBay API. Its graded fields cannot be safely revised here yet; edit the existing listing on eBay.")
         elif link.status == EbayListingLinkStatus.ENDING:
             errors.append("This listing is currently being ended on eBay.")
         elif link.status == EbayListingLinkStatus.PUBLISHING:
@@ -392,6 +398,8 @@ def publication_preflight(
             errors.append(
                 "This item is already live through Bulk Upload. Direct publish is blocked to prevent a duplicate listing."
             )
+        elif latest_export and latest_export.status == EbayExportItemStatus.CONFIRMED and is_graded:
+            errors.append("This graded listing uses the legacy eBay API. Its graded fields cannot be safely revised here yet; edit the existing listing on eBay.")
         elif latest_export and latest_export.status == EbayExportItemStatus.PENDING:
             errors.append(
                 "This item is awaiting a Bulk Upload result. Import or cancel that batch before direct publishing."
@@ -426,6 +434,18 @@ def _card_aspects(
     return aspects
 
 
+def _graded_publish_fields(session: Session, listing: ShopListing, catalog_item: CatalogItem, settings) -> tuple[dict | None, str | None]:
+    """Measured parcel and tracked policy for a slab; (None, None) for raw cards.
+
+    Call before recording an approval or link: both raise ValueError when the
+    review is incomplete, and that must not leave a link stuck in PUBLISHING.
+    """
+    if catalog_item.item_type != CatalogItemType.GRADED_CARD:
+        return None, None
+    from .graded_cards import graded_package, graded_policy
+    return graded_package(session, listing), graded_policy(session, settings)
+
+
 def _build_inventory_item_payload(
     listing: ShopListing,
     catalog_item: CatalogItem,
@@ -435,23 +455,44 @@ def _build_inventory_item_payload(
     image_urls: list[str],
     title: str,
     description: str,
+    *,
+    package_weight_and_size: dict | None = None,
 ) -> dict:
-    condition = listing.condition or (inventory_item.condition if inventory_item else None)
-    condition_descriptor = _ungraded_condition_descriptor(condition)
-    if condition_descriptor is None:
-        raise ValueError(f"unsupported ungraded card condition: {condition or 'missing'}")
-    return {
+    is_graded = catalog_item.item_type == CatalogItemType.GRADED_CARD
+    aspects = _card_aspects(catalog_item, tcg_card, card_set, inventory_item)
+    if is_graded:
+        from .graded_cards import graded_condition
+        if inventory_item is None:
+            raise ValueError("graded inventory is required")
+        if not package_weight_and_size:
+            raise ValueError("measured graded-card parcel is required")
+        condition_fields = graded_condition(inventory_item)
+        aspects["Professional Grader"] = [inventory_item.grading_company]
+        # The condition descriptors carry eBay's authoritative numeric grade;
+        # the full label wording remains in the title and description.
+        grade_match = re.search(r"\b(10|[1-9](?:\.5)?)\b", inventory_item.grade or "")
+        if grade_match:
+            aspects["Grade"] = [grade_match.group(1)]
+        aspects["Certification Number"] = [inventory_item.certification_number]
+    else:
+        condition = listing.condition or (inventory_item.condition if inventory_item else None)
+        condition_descriptor = _ungraded_condition_descriptor(condition)
+        if condition_descriptor is None:
+            raise ValueError(f"unsupported ungraded card condition: {condition or 'missing'}")
         # Category 183454 uses numeric condition 4000 for ungraded cards;
         # Inventory API represents it as USED_VERY_GOOD and requires the
         # structured 40001 card-condition descriptor as well.
-        "condition": "USED_VERY_GOOD",
-        "conditionDescriptors": [
-            {"name": "40001", "values": [condition_descriptor]},
-        ],
+        condition_fields = {
+            "condition": "USED_VERY_GOOD",
+            "conditionDescriptors": [{"name": "40001", "values": [condition_descriptor]}],
+        }
+    return {
+        **condition_fields,
+        **({"packageWeightAndSize": package_weight_and_size} if is_graded else {}),
         "product": {
             "title": title,
             "description": description,
-            "aspects": {**_card_aspects(catalog_item, tcg_card, card_set, inventory_item),
+            "aspects": {**aspects,
                         **({"Finish": [finish_label(listing)]} if finish_label(listing) else {})},
             "imageUrls": image_urls,
         },
@@ -462,6 +503,7 @@ def _build_inventory_item_payload(
 def _build_offer_payload(
     listing: ShopListing, sku: str, category_id: str, settings, *, description: str,
     price_override: Decimal | None = None,
+    fulfillment_policy_id: str | None = None,
 ) -> dict:
     effective_price = price_override if price_override is not None else listing.price
     return {
@@ -479,7 +521,7 @@ def _build_offer_payload(
         "categoryId": category_id,
         "listingDescription": description,
         "listingPolicies": {
-            "fulfillmentPolicyId": settings.ebay_fulfillment_policy_id,
+            "fulfillmentPolicyId": fulfillment_policy_id or settings.ebay_fulfillment_policy_id,
             "paymentPolicyId": settings.ebay_payment_policy_id,
             "returnPolicyId": settings.ebay_return_policy_id,
         },
@@ -1490,12 +1532,14 @@ async def revise_listing_on_ebay(
         )
         inventory_payload = offer_payload = None
         if direct_revision and link:
+            package, fulfillment_policy_id = _graded_publish_fields(session, listing, catalog_item, settings)
             inventory_payload = _build_inventory_item_payload(
                 listing, catalog_item, tcg_card, card_set, inventory_item,
-                image_urls, title, description,
+                image_urls, title, description, package_weight_and_size=package,
             )
             offer_payload = _build_offer_payload(
                 listing, link.sku, check.category_id, settings, description=description,
+                fulfillment_policy_id=fulfillment_policy_id,
             )
 
         approval = Approval(
@@ -1683,6 +1727,7 @@ async def _publish_to_ebay_locked(
     outgoing_description = outgoing_ebay_description(
         listing, catalog_item, tcg_card, card_set, inventory_item, has_own_photo=True,
     )
+    package, fulfillment_policy_id = _graded_publish_fields(session, listing, catalog_item, settings)
 
     approval = Approval(
         requested_at=datetime.now(UTC),
@@ -1715,11 +1760,12 @@ async def _publish_to_ebay_locked(
 
     inventory_payload = _build_inventory_item_payload(
         listing, catalog_item, tcg_card, card_set, inventory_item,
-        image_urls, outgoing_title, outgoing_description,
+        image_urls, outgoing_title, outgoing_description, package_weight_and_size=package,
     )
     offer_payload = _build_offer_payload(
         listing, link.sku, check.category_id, settings,
         description=outgoing_description, price_override=price_override,
+        fulfillment_policy_id=fulfillment_policy_id,
     )
     adapter = None
     try:

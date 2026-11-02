@@ -142,6 +142,7 @@ def ebay_hub(user: str = Depends(require_dashboard_user),
         [
             _section("Listing workflow", "EzBay never publishes automatically; these screens keep preparation and live state distinct.", [
                 _card("/shop-listings?status=draft", "Sellable drafts", "Review each listing, then publish it directly to eBay or include it in a bulk-upload file.", status=f"{drafts} total"),
+                _card("/graded-cards", "Graded cards", "Review slab prices, certificates, actual photos and tracked parcel details."),
                 _card("/ebay-listing-cleanup", "Listing cleanup", "Review the titles, descriptions, photos and CRM links for everything currently active on eBay."),
                 _card("/ebay-listings", "Live listings", "Refresh and inspect the listings eBay reports as live.", status=f"{live} mirrored"),
                 _card("/ebay-export", "Bulk upload", "Build CSV files, import eBay results and prevent duplicate exports.", status=f"{batches} exports"),

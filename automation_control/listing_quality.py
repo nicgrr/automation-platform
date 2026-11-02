@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 
 from .listing_finishes import finish_label, title_inventory
 from .ebay_titles import build_single_card_ebay_title
-from .models import CardSet, CatalogItem, InventoryItem, ShopListing, TcgCard
+from .models import CardSet, CatalogItem, CatalogItemType, InventoryItem, ShopListing, TcgCard
+from scripts.convert_to_ebay_template import sanitize_title
 
 
 MAX_EBAY_PHOTOS = 24
@@ -62,6 +63,18 @@ def generated_ebay_title(
     card_set: CardSet | None,
     inventory: InventoryItem | None,
 ) -> str:
+    if catalog_item.item_type == CatalogItemType.GRADED_CARD and inventory is not None:
+        # Reserve the exact label wording first: Pristine 10 and Gem Mint 10
+        # describe different grades even when eBay's numeric value is 10.
+        grading = sanitize_title(" ".join(filter(None, (
+            inventory.grading_company, inventory.grade,
+        )))).strip()
+        if grading:
+            card_title = build_single_card_ebay_title(
+                catalog_item, card, card_set, title_inventory(listing, inventory),
+                max_length=max(1, MAX_TITLE_LENGTH - len(grading) - 1),
+            )
+            return f"{grading} {card_title}"
     return build_single_card_ebay_title(catalog_item, card, card_set, title_inventory(listing, inventory))
 
 
@@ -109,9 +122,18 @@ def generated_ebay_description(
         f"Condition: {condition}",
         "",
     ]
+    if catalog_item.item_type == CatalogItemType.GRADED_CARD and inventory is not None:
+        lines.extend([
+            f"Grading company: {inventory.grading_company or 'Not recorded'}",
+            f"Grade on label: {inventory.grade or 'Not recorded'}",
+            f"Certification number: {inventory.certification_number or 'Not recorded'}",
+            "",
+        ])
     from .representative_backs import is_representative, NOTICE
     if has_own_photo and any(is_representative(p) for p in listing.ebay_photo_paths or []):
         lines.append(NOTICE)
+    elif has_own_photo and catalog_item.item_type == CatalogItemType.GRADED_CARD:
+        lines.append("You will receive the actual graded card and holder shown in the front and back photographs. Please review the slab, label and holder condition in all photos.")
     elif has_own_photo:
         lines.append("You will receive the actual card shown in the photographs. Please review all photos as they form part of the condition description.")
     else:

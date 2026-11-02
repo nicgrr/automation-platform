@@ -204,6 +204,8 @@ app.include_router(photo_confirm_router)
 from .product_photo_review import router as product_photo_review_router
 from .collectible_reference import router as collectible_reference_router
 app.include_router(product_photo_review_router)
+from .graded_cards import router as graded_cards_router
+app.include_router(graded_cards_router)
 app.include_router(collectible_reference_router)
 app.include_router(photo_identification_review_router)
 app.include_router(shop_orders_router)

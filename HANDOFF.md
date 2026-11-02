@@ -3,28 +3,40 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
-## Current task — finish graded publisher wiring (Claude Code, 2026-11-03)
+## Current task — graded publisher wiring (Claude Code, 2026-11-03)
 
-Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Operator asked Claude to
-review Codex's work and potentially continue it. Taking over the interrupted
-graded-cards task below on branch `graded-cards-ebay`, base `88980cb`. Codex's
-last session stopped 2026-11-02 12:00 with no final reply, leaving WIP in
-api.py, ebay_publish.py, listing_quality.py, navigation_hubs.py and new
-graded_cards.py. Claude now owns those paths for this task and will commit them.
+Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Branch `graded-cards-ebay`.
+Took over Codex's interrupted WIP (its session stopped 2026-11-02 12:00 with no
+final reply) and committed it with the fixes below.
 
-Gap found: `_build_inventory_item_payload` and `_build_offer_payload` accept the
-graded parcel/policy arguments, but neither call site passes them, and there are
-no graded tests. Next batch: wire both publish and revision paths, add
-tests/test_graded_cards.py, run tests, commit.
+Done in this batch:
+- Wired measured parcel and tracked policy into both publish and revision paths
+  via `_graded_publish_fields`, resolved before any approval or link is recorded.
+- Fixed: slabs found no eBay category (production has only `tcg_card` mappings,
+  lookup used `graded_card`); they now use the card mapping, no data change.
+- Fixed: missing `import re` in ebay_publish.py crashed slab payload building.
+- Added tests/test_graded_cards.py.
 
-Operator constraints still apply: no eBay writes, no publishing, no production DB
-writes, no `ezbay` restart. The three drafts do not exist yet. Prices (Codex
-proposed $34.99 Shroom & Salsa, $19.99 Jiren, $24.99 Venusaur), packed parcel
-measurements and tracked-policy verification are all pending from the operator.
+Validation: full `.venv/bin/pytest` passed (see commit). Graded payloads are tested
+against a mocked adapter only; never sent to eBay, sandbox or production.
+NOT deployed: `ezbay` not restarted, so /graded-cards is not live.
 
-Separate host work, same session (`~/server`, not this repo): nginx disabled, hub
-rebuilt and started, collector restarted. Uncommitted hub edits there are left in
-place; `~/server` already had unrelated dirty work.
+Not done, in order; each needs the operator:
+1. Operator answers: final prices (Codex proposed $34.99 Shroom & Salsa, $19.99
+   Jiren, $24.99 Venusaur) and packed slab weight/dimensions.
+2. Operator approves deploy (restart `ezbay`), then snapshot the DB and create the
+   three drafts. `prepare_graded_draft` has no caller yet and is untested; the
+   script must be written. Production has 0 graded items, 0 graded stock.
+3. Verify and store `graded_parcel_policy` (no row yet; Codex's candidate is
+   266481104017). Without it preflight blocks every slab.
+4. Publishing stays an explicit operator action.
+
+Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
+the replace-or-keep, parcel policy and measurement answers recorded below.
+
+Separate host work (`~/server`, not this repo): nginx disabled, hub rebuilt and
+started, collector restarted with bind retry. Those edits are uncommitted there,
+alongside dirty work that predates this session.
 
 ## Current task — three graded cards for eBay (Codex, 2026-11-02)
 
