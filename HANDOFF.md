@@ -3,6 +3,29 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — finish graded publisher wiring (Claude Code, 2026-11-03)
+
+Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Operator asked Claude to
+review Codex's work and potentially continue it. Taking over the interrupted
+graded-cards task below on branch `graded-cards-ebay`, base `88980cb`. Codex's
+last session stopped 2026-11-02 12:00 with no final reply, leaving WIP in
+api.py, ebay_publish.py, listing_quality.py, navigation_hubs.py and new
+graded_cards.py. Claude now owns those paths for this task and will commit them.
+
+Gap found: `_build_inventory_item_payload` and `_build_offer_payload` accept the
+graded parcel/policy arguments, but neither call site passes them, and there are
+no graded tests. Next batch: wire both publish and revision paths, add
+tests/test_graded_cards.py, run tests, commit.
+
+Operator constraints still apply: no eBay writes, no publishing, no production DB
+writes, no `ezbay` restart. The three drafts do not exist yet. Prices (Codex
+proposed $34.99 Shroom & Salsa, $19.99 Jiren, $24.99 Venusaur), packed parcel
+measurements and tracked-policy verification are all pending from the operator.
+
+Separate host work, same session (`~/server`, not this repo): nginx disabled, hub
+rebuilt and started, collector restarted. Uncommitted hub edits there are left in
+place; `~/server` already had unrelated dirty work.
+
 ## Current task — three graded cards for eBay (Codex, 2026-11-02)
 
 Branch planned `graded-cards-ebay`, base `0d7c775`; clean tree at task start.
