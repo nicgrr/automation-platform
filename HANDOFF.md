@@ -45,10 +45,10 @@ audit event, recorded for both listings. Manual audit run: all checks clean, exi
 tests/test_audit_inventory_vs_listings.py passed; full suite not rerun for this.
 
 Commits outside this repo, 2026-11-03: `~/server` branch `feat/hub-control-centre`
-has Claude's monitor and hub fixes; older dirty work there is untouched. NOT
-committed: `~/trading-bot/bot/briefing.py` timestamp fix (live in the working tree on
-`master`). That repo's `.git` is owned by `tradingbot` and root, so `nic` cannot
-write to it, and running git as `tradingbot` via sudo was denied. Operator decides.
+has Claude's monitor and hub fixes; older dirty work there is untouched.
+`~/trading-bot` timestamp fix committed by the operator as `5d6d09d` on branch
+`briefing-timestamps`, not merged to `master`; that branch is checked out. `.git`
+there is now all `tradingbot`-owned: use `sudo -u tradingbot git`, never plain sudo.
 
 Operator published Venusaur V 2026-11-03 at $24.99 (eBay 267831286735). They raised
 Shroom & Salsa to $39.99 and Jiren to $24.99 in Listing Studio, which tripped the
