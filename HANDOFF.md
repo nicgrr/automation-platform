@@ -41,8 +41,15 @@ handling2days, needs measured package. No external policy mutation/publication.
 
 Agents graded_publish_audit and graded_research hit usage limits after read-only
 reports; root continues implementation/research. No dirty code at checkpoint.
-Next: finish current price evidence, implement/test preparation, checkpoint data
-writes, deploy and verify user review links. Final price/parcel decisions pending.
+Continuation 2026-11-02: clean tree at e61efdd verified. Root owns new
+`graded_cards.py`, review UI, intake metadata/data preparation and registration.
+Publisher batch2 is now queued concurrently: helper may edit only ebay_publish.py,
+listing_quality.py and graded publisher tests. Implement scoped graded support,
+keeping the reviewed-price/parcel gates below; no DB or external writes.
+Root coordinates all HANDOFF checkpoints/commits (helpers must not commit).
+Research helper remains read-only. Next: implement/test preparation and publisher,
+then checkpoint/snapshot the three draft creations and deployment. User prices
+and packed measurements still pending; never publish these unconfirmed drafts.
 
 ## Current task — save to Vinted copy pack and 14-day eBay fallback (Codex, 2026-11-02)
 
