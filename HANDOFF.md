@@ -44,6 +44,12 @@ changed. Audit and repair script now honour a `listing.remaining_stock_confirmed
 audit event, recorded for both listings. Manual audit run: all checks clean, exit 0.
 tests/test_audit_inventory_vs_listings.py passed; full suite not rerun for this.
 
+Commits outside this repo, 2026-11-03: `~/server` branch `feat/hub-control-centre`
+has Claude's monitor and hub fixes; older dirty work there is untouched. NOT
+committed: `~/trading-bot/bot/briefing.py` timestamp fix (live in the working tree on
+`master`). That repo's `.git` is owned by `tradingbot` and root, so `nic` cannot
+write to it, and running git as `tradingbot` via sudo was denied. Operator decides.
+
 Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
 the replace-or-keep, parcel policy and measurement answers recorded below.
 
