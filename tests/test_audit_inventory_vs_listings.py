@@ -123,6 +123,46 @@ def test_cancelled_order_whose_stock_was_explicitly_restored_is_not_a_finding(se
     assert check_sold_but_available(session) == []
 
 
+def _sell_one_of_two_copies(session, order_id="PARTIAL-1"):
+    inv = make_inventory(session, status=InventoryStatus.AVAILABLE, quantity=1)
+    listing = make_listing(session, inventory_item_id=inv.id, title="Second copy")
+    return listing, _add_applied_order(session, listing, order_id)
+
+
+def _add_applied_order(session, listing, order_id):
+    applied_at = datetime.now(UTC)
+    session.add(EbayImportedOrder(
+        ebay_order_id=order_id, sku=listing.id, quantity=1, marketplace_id="EBAY_AU",
+        observed_at=applied_at, applied_at=applied_at, shop_listing_id=listing.id, raw_snapshot={},
+    ))
+    session.commit()
+    return applied_at
+
+
+def _confirm_remaining_stock(session, listing):
+    session.add(AuditEvent(
+        actor_type="user", actor_id="tester", action="listing.remaining_stock_confirmed",
+        resource_type="shop_listing", resource_id=listing.id,
+        outcome="success", correlation_id=str(uuid.uuid4()), details={},
+    ))
+    session.commit()
+
+
+def test_a_confirmed_remaining_copy_is_not_a_finding(session):
+    listing, _ = _sell_one_of_two_copies(session)
+    assert len(check_sold_but_available(session)) == 1
+    _confirm_remaining_stock(session, listing)
+    assert check_sold_but_available(session) == []
+
+
+def test_a_sale_after_the_confirmation_is_still_a_finding(session):
+    listing, _ = _sell_one_of_two_copies(session)
+    _confirm_remaining_stock(session, listing)
+    _add_applied_order(session, listing, "PARTIAL-2")
+    findings = check_sold_but_available(session)
+    assert len(findings) == 1 and "PARTIAL-2" in findings[0]
+
+
 def test_catches_an_active_listing_whose_inventory_already_sold(session):
     inv = make_inventory(session, status=InventoryStatus.SOLD, quantity=0)
     listing = make_listing(session, inventory_item_id=inv.id, status=ShopListingStatus.ACTIVE,

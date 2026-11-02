@@ -51,6 +51,9 @@ from automation_control.models import (
 )
 
 
+STOCK_CONFIRMED_ACTIONS = ("listing.cancelled_order_stock_restored", "listing.remaining_stock_confirmed")
+
+
 def check_sold_but_available(session) -> list[str]:
     rows = session.execute(
         select(EbayImportedOrder, ShopListing)
@@ -63,10 +66,11 @@ def check_sold_but_available(session) -> list[str]:
         # restoring and relisting the same stock.  Keep the imported order as
         # immutable history, but do not report it as an overselling risk once
         # that explicit restoration has been audited after the sale was
-        # applied.
+        # applied. The same goes for the owner confirming that a copy really
+        # remains after a partial sale: AVAILABLE stock is correct then.
         restored_at = session.scalar(
             select(func.max(AuditEvent.occurred_at)).where(
-                AuditEvent.action == "listing.cancelled_order_stock_restored",
+                AuditEvent.action.in_(STOCK_CONFIRMED_ACTIONS),
                 AuditEvent.resource_type == "shop_listing",
                 AuditEvent.resource_id == listing.id,
                 AuditEvent.outcome == "success",

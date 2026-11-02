@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         for order_row, listing in sold_rows:
             restored_at = session.scalar(
                 select(func.max(AuditEvent.occurred_at)).where(
-                    AuditEvent.action == "listing.cancelled_order_stock_restored",
+                    AuditEvent.action.in_(("listing.cancelled_order_stock_restored", "listing.remaining_stock_confirmed")),
                     AuditEvent.resource_type == "shop_listing",
                     AuditEvent.resource_id == listing.id,
                     AuditEvent.outcome == "success",

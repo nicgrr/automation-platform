@@ -38,12 +38,11 @@ no logged-in browser check was run.
 
 Next: operator reviews https://homeserver.tailefaa51.ts.net/graded-cards, then
 explicitly approves publishing. Slabs would post on the untracked single-card policy.
-Sold-but-AVAILABLE findings: operator confirmed 2026-11-03 both cards sold with a
-second copy remaining; stock is already correct at quantity 1. Next: let the audit
-and repair script honour a `listing.remaining_stock_confirmed` audit event, record
-one per listing, no stock writes. Then commit Claude's edits in `~/server` and
-`~/trading-bot` only, as the operator asked; older dirty work there stays in place.
-
+Sold-but-AVAILABLE findings resolved 2026-11-03: operator confirmed both cards sold
+with a second copy remaining. Stock was already correct at quantity 1 and was not
+changed. Audit and repair script now honour a `listing.remaining_stock_confirmed`
+audit event, recorded for both listings. Manual audit run: all checks clean, exit 0.
+tests/test_audit_inventory_vs_listings.py passed; full suite not rerun for this.
 
 Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
 the replace-or-keep, parcel policy and measurement answers recorded below.
