@@ -3,6 +3,47 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — three graded cards for eBay (Codex, 2026-11-02)
+
+Branch planned `graded-cards-ebay`, base `0d7c775`; clean tree at task start.
+User requests the three previously uploaded slabs sorted for eBay and explicitly
+chose researched prices FOR REVIEW. Do not confirm prices or publish until user
+reviews proposed prices. Packed slab dimensions/weight requested, unanswered.
+Collectibles remain Vinted-first; graded cards are a separate, authorized eBay task.
+
+Read-only findings: all three pairs still NEEDS_REVIEW, no graded inventory.
+All six original photos viewed; front/back complete and labels legible:
+- Shroom & Salsa BT18-133, CGC Pristine10, cert4245735015, English2022,
+  Dawn of the Z-Legends SR; pair30ac06cd-eed8-44e5-bf54-de85593c9118.
+- Jiren FB03-009 alternate art SR, Vault Mint9, cert00003575, English2024,
+  Raging Roar; pair1872982d-4e4b-4584-8bbc-1d43800a46b7.
+- Venusaur V 001/021 sEF, CGC Mint9, cert3813309008, Japanese2020,
+  Venusaur VMAX Starter Set; pairf0bbe565-9712-4033-b827-a6335b4c0234.
+Same batch b0222d6e-070c-4dff-9c6e-9ef5638f74c2. Certs visually read, online CGC
+verification currently403 and Vault429; do not claim independently authenticated.
+
+Plan batch1: add reviewed TcgCard metadata to isolated GRADED_CARD catalogue
+records (existing import_collector_export pattern); duplicate guard per cert,
+actual photos only. Add graded review/preparation page with proposed vs confirmed
+price, Australia sold links, certificate fields and measured parcel inputs.
+Generate slab-specific title/description preserving CGC Pristine vs Mint.
+Prepare the three as one-copy drafts, price0/unconfirmed; snapshot before any
+production writes and audit. Keep raw-card inventory/prices untouched.
+
+Plan batch2 after checkpoint: graded publisher branch with correct2750 condition,
+CGC/Other descriptors, grade/cert, two actual photos, canonical available stock,
+no duplicate/reserved stock, explicit tracked-parcel policy + packed dimensions.
+Read-only API audit found category183454 allowsCGC275015/Other2750123,
+grade10=275020/grade9=275022, cert27503 free-textmax20. Vault not listed; preserve
+Vault in buyer copy with Other descriptor. Existing default265296854017 is $4
+letter; suitable existing tracked policy266481104017 is calculated AU_Regular,
+handling2days, needs measured package. No external policy mutation/publication.
+
+Agents graded_publish_audit and graded_research hit usage limits after read-only
+reports; root continues implementation/research. No dirty code at checkpoint.
+Next: finish current price evidence, implement/test preparation, checkpoint data
+writes, deploy and verify user review links. Final price/parcel decisions pending.
+
 ## Current task — save to Vinted copy pack and 14-day eBay fallback (Codex, 2026-11-02)
 
 Last updated: Codex, 2026-11-02 (Australia/Sydney). Operator explicitly requested
