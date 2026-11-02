@@ -434,18 +434,6 @@ def _card_aspects(
     return aspects
 
 
-def _graded_publish_fields(session: Session, listing: ShopListing, catalog_item: CatalogItem, settings) -> tuple[dict | None, str | None]:
-    """Measured parcel and tracked policy for a slab; (None, None) for raw cards.
-
-    Call before recording an approval or link: both raise ValueError when the
-    review is incomplete, and that must not leave a link stuck in PUBLISHING.
-    """
-    if catalog_item.item_type != CatalogItemType.GRADED_CARD:
-        return None, None
-    from .graded_cards import graded_package, graded_policy
-    return graded_package(session, listing), graded_policy(session, settings)
-
-
 def _build_inventory_item_payload(
     listing: ShopListing,
     catalog_item: CatalogItem,
@@ -455,8 +443,6 @@ def _build_inventory_item_payload(
     image_urls: list[str],
     title: str,
     description: str,
-    *,
-    package_weight_and_size: dict | None = None,
 ) -> dict:
     is_graded = catalog_item.item_type == CatalogItemType.GRADED_CARD
     aspects = _card_aspects(catalog_item, tcg_card, card_set, inventory_item)
@@ -464,8 +450,6 @@ def _build_inventory_item_payload(
         from .graded_cards import graded_condition
         if inventory_item is None:
             raise ValueError("graded inventory is required")
-        if not package_weight_and_size:
-            raise ValueError("measured graded-card parcel is required")
         condition_fields = graded_condition(inventory_item)
         aspects["Professional Grader"] = [inventory_item.grading_company]
         # The condition descriptors carry eBay's authoritative numeric grade;
@@ -488,7 +472,6 @@ def _build_inventory_item_payload(
         }
     return {
         **condition_fields,
-        **({"packageWeightAndSize": package_weight_and_size} if is_graded else {}),
         "product": {
             "title": title,
             "description": description,
@@ -503,7 +486,6 @@ def _build_inventory_item_payload(
 def _build_offer_payload(
     listing: ShopListing, sku: str, category_id: str, settings, *, description: str,
     price_override: Decimal | None = None,
-    fulfillment_policy_id: str | None = None,
 ) -> dict:
     effective_price = price_override if price_override is not None else listing.price
     return {
@@ -521,7 +503,7 @@ def _build_offer_payload(
         "categoryId": category_id,
         "listingDescription": description,
         "listingPolicies": {
-            "fulfillmentPolicyId": fulfillment_policy_id or settings.ebay_fulfillment_policy_id,
+            "fulfillmentPolicyId": settings.ebay_fulfillment_policy_id,
             "paymentPolicyId": settings.ebay_payment_policy_id,
             "returnPolicyId": settings.ebay_return_policy_id,
         },
@@ -1532,14 +1514,12 @@ async def revise_listing_on_ebay(
         )
         inventory_payload = offer_payload = None
         if direct_revision and link:
-            package, fulfillment_policy_id = _graded_publish_fields(session, listing, catalog_item, settings)
             inventory_payload = _build_inventory_item_payload(
                 listing, catalog_item, tcg_card, card_set, inventory_item,
-                image_urls, title, description, package_weight_and_size=package,
+                image_urls, title, description,
             )
             offer_payload = _build_offer_payload(
                 listing, link.sku, check.category_id, settings, description=description,
-                fulfillment_policy_id=fulfillment_policy_id,
             )
 
         approval = Approval(
@@ -1727,7 +1707,6 @@ async def _publish_to_ebay_locked(
     outgoing_description = outgoing_ebay_description(
         listing, catalog_item, tcg_card, card_set, inventory_item, has_own_photo=True,
     )
-    package, fulfillment_policy_id = _graded_publish_fields(session, listing, catalog_item, settings)
 
     approval = Approval(
         requested_at=datetime.now(UTC),
@@ -1760,12 +1739,11 @@ async def _publish_to_ebay_locked(
 
     inventory_payload = _build_inventory_item_payload(
         listing, catalog_item, tcg_card, card_set, inventory_item,
-        image_urls, outgoing_title, outgoing_description, package_weight_and_size=package,
+        image_urls, outgoing_title, outgoing_description,
     )
     offer_payload = _build_offer_payload(
         listing, link.sku, check.category_id, settings,
         description=outgoing_description, price_override=price_override,
-        fulfillment_policy_id=fulfillment_policy_id,
     )
     adapter = None
     try:

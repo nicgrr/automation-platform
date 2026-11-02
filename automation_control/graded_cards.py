@@ -1,11 +1,11 @@
-"""Graded-card price review and parcel requirements, separate from raw stock."""
+"""Graded-card price review, separate from raw stock. Slabs post like single cards."""
 from __future__ import annotations
 
 import hashlib
 import re
 import uuid
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal, InvalidOperation
 from html import escape
 
 from fastapi import APIRouter, Depends, Form, HTTPException
@@ -24,7 +24,6 @@ from .ui import page, brand_header
 
 router = APIRouter(tags=['graded-cards'])
 PREFIX = 'graded_listing:'
-POLICY_KEY = 'graded_parcel_policy'
 
 
 def review_data(session, listing):
@@ -74,30 +73,6 @@ def positive(value, maximum):
         raise ValueError('Enter a positive, finite measurement within parcel limits.') from None
 
 
-def graded_package(session, listing):
-    measurements = review_data(session, listing).get('package') or {}
-    if not measurements.get('measured_at'):
-        raise ValueError('Add the packed slab weight and dimensions in Graded cards.')
-    weight = positive(measurements.get('weight_g'), 22000)
-    dimensions = {key: int(positive(measurements.get(key + '_cm'), 105).to_integral_value(rounding=ROUND_CEILING))
-                  for key in ('length', 'width', 'height')}
-    return {'weight': {'value': float(weight / 1000), 'unit': 'KILOGRAM'},
-            'dimensions': {**dimensions, 'unit': 'CENTIMETER'},
-            'packageType': 'PACKAGE_THICK_ENVELOPE'}
-
-
-def graded_policy(session, settings):
-    row = session.get(PlatformConfig, POLICY_KEY)
-    policy = row.value if row else {}
-    if not (policy.get('environment') == settings.ebay_env
-            and policy.get('marketplace_id') == settings.ebay_marketplace_id
-            and policy.get('service') == 'AU_Regular'
-            and policy.get('shipping_cost_type') == 'CALCULATED'
-            and policy.get('verified_at') and policy.get('fulfillment_policy_id')):
-        raise ValueError('A verified tracked-parcel policy is required for graded cards.')
-    return str(policy['fulfillment_policy_id'])
-
-
 def graded_preflight(session, listing, settings, effective_price):
     errors = []
     stock = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
@@ -125,11 +100,10 @@ def graded_preflight(session, listing, settings, effective_price):
         approved = False
     if not approved:
         errors.append('Confirm this exact price in Graded cards before publishing.')
-    for check in (lambda: graded_condition(stock), lambda: graded_package(session, listing), lambda: graded_policy(session, settings)):
-        try:
-            check()
-        except ValueError as exc:
-            errors.append(str(exc))
+    try:
+        graded_condition(stock)
+    except ValueError as exc:
+        errors.append(str(exc))
     return errors
 
 
@@ -173,8 +147,6 @@ def graded_review(user: str = Depends(require_dashboard_user), session: Session 
         title = listing.ebay_title or (generated_ebay_title(listing, item, card, card_set, stock) if card else listing.title)
         photos = ''.join(f'<a href="/shop-listings/{listing.id}/ebay-photo/{i}" target="_blank"><img src="/shop-listings/{listing.id}/ebay-photo/{i}" alt="Actual slab {side}" loading="lazy"></a>' for i, side in enumerate(('front', 'back')) if i < len(listing.ebay_photo_paths or []))
         sources = ''.join(f'<li><a href="{escape(s["url"], quote=True)}" target="_blank" rel="noopener">{escape(s["label"])}</a></li>' for s in data.get('sources', []) if s.get('url', '').startswith('https://'))
-        package = data.get('package') or {}
-        fields = ''.join(f'<label>{label}<input type="number" step="0.1" min="0.1" max="{maximum}" name="{key}" value="{escape(str(package.get(key, "")))}" required></label>' for key, label, maximum in [('weight_g', 'Packed weight (grams)', 22000), ('length_cm', 'Length (cm)', 105), ('width_cm', 'Width (cm)', 105), ('height_cm', 'Height (cm)', 105)])
         body += f'''<article class="graded-card" id="{listing.id}"><h2>{escape(item.name)}</h2>
         <p><strong>{escape(stock.grading_company or '')} {escape(stock.grade or '')}</strong> · Certificate {escape(stock.certification_number or '')} · Qty {listing.quantity}</p>
         <p>{escape(card_set.name if card_set else 'Set pending')} · {escape(card.language if card else '')} · {escape(card.number or '' if card else '')}</p>
@@ -182,7 +154,7 @@ def graded_review(user: str = Depends(require_dashboard_user), session: Session 
         <p>{escape(data.get('research_note', 'Pricing research pending.'))}</p><ul>{sources}</ul>
         <p><a href="{escape(australian_sold_listings_url(query), quote=True)}" target="_blank" rel="noopener">Sold listings · Australia</a></p>
         <form method="post" action="/graded-cards/{listing.id}/price"><label>Your asking price (AUD)<input type="number" min="1" max="999999.99" step="0.01" name="price" value="{escape(price)}" required></label><button class="btn">Confirm price</button></form>
-        <details><summary>Postage: {'measurements saved' if package.get('measured_at') else 'packed measurements needed'}</summary><p>Buyer-paid calculated tracked parcel. Measure the slab inside its protective packaging. Decimal centimetres round up for eBay.</p><form method="post" action="/graded-cards/{listing.id}/parcel">{fields}<button class="btn">Save packed measurements</button></form></details>
+        <p>Postage: same policy as single cards.</p>
         <p><strong>Listing title:</strong> {escape(title)}</p><a class="btn" href="/shop-listings/{listing.id}/ebay-preview">Open Listing Studio</a></article>'''
     if not rows:
         body += '<p>No graded drafts yet. Review the slab photos from your upload first.</p>'
@@ -210,24 +182,6 @@ def confirm_price(listing_id: str, price: str = Form(...), user: str = Depends(r
     save_review_data(session, listing, data)
     record_event(session, actor_type='user', actor_id=user, action='graded.price_confirm', resource_type='shop_listing', resource_id=listing.id,
                  outcome='success', correlation_id=str(uuid.uuid4()), details={'price': f'{amount:.2f}', 'currency': 'AUD'})
-    return RedirectResponse('/graded-cards#' + listing.id, 303)
-
-
-@router.post('/graded-cards/{listing_id}/parcel')
-def save_parcel(listing_id: str, weight_g: str = Form(...), length_cm: str = Form(...), width_cm: str = Form(...), height_cm: str = Form(...),
-                user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
-    listing = _get(session, listing_id)
-    _draft_only(session, listing)
-    try:
-        package = {k: str(positive(v, 22000 if k == 'weight_g' else 105)) for k, v in
-                   {'weight_g': weight_g, 'length_cm': length_cm, 'width_cm': width_cm, 'height_cm': height_cm}.items()}
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from None
-    data = review_data(session, listing)
-    data['package'] = {**package, 'measured_at': datetime.now(UTC).isoformat(), 'measured_by': user}
-    save_review_data(session, listing, data)
-    record_event(session, actor_type='user', actor_id=user, action='graded.parcel_confirm', resource_type='shop_listing', resource_id=listing.id,
-                 outcome='success', correlation_id=str(uuid.uuid4()), details=package)
     return RedirectResponse('/graded-cards#' + listing.id, 303)
 
 
@@ -275,7 +229,7 @@ def prepare_graded_draft(session, pair, facts, research):
         ebay_photo_paths=[pair.front_image_path, pair.back_image_path])
     session.add(listing); session.flush()
     save_review_data(session, listing, {**research, 'prepared_at': datetime.now(UTC).isoformat(), 'pair_id': pair.id})
-    pair.extracted = {**(pair.extracted or {}), 'product_review': {'kind': 'graded', **facts, 'reviewed_by': 'Codex', 'verification': 'Photos of slab labels; not online certificate authentication'}}
+    pair.extracted = {**(pair.extracted or {}), 'product_review': {'kind': 'graded', **facts, 'verification': 'Photos of slab labels; not online certificate authentication'}}
     pair.proposed_catalog_item_id=cid; pair.matched_shop_listing_id=listing.id; pair.status=ListingPhotoPairStatus.APPLIED; pair.issue=None
     from .ebay_photo_batch import _refresh_batch_counts
     batch=session.get(ListingPhotoBatch,pair.batch_id)

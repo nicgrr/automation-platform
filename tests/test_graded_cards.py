@@ -1,4 +1,4 @@
-"""A slab may only reach eBay with a reviewed price, measured parcel and tracked policy."""
+"""A slab may only reach eBay with a reviewed price and verified identity."""
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
@@ -12,12 +12,12 @@ from automation_control.config import Settings
 from automation_control.database import Base
 from automation_control.ebay_oauth import INVENTORY_WRITE_SCOPE
 from automation_control.graded_cards import (
-    POLICY_KEY, confirm_price, graded_condition, identity, review_data, save_parcel, save_review_data,
+    confirm_price, graded_condition, identity, prepare_graded_draft, review_data, save_review_data,
 )
 from automation_control.listing_quality import generated_ebay_title
 from automation_control.models import (
     CardSet, CatalogItem, CatalogItemType, EbayCategoryMapping, EbayCredential, EbayListingLink,
-    InventoryItem, InventoryStatus, PlatformConfig, ShopListing, ShopListingStatus, TcgCard,
+    InventoryItem, InventoryStatus, ListingPhotoBatch, ListingPhotoPair, ListingPhotoPairStatus, ShopListing, ShopListingStatus, TcgCard,
 )
 
 PHOTOS = ["https://example.test/front.jpg", "https://example.test/back.jpg"]
@@ -36,7 +36,7 @@ def settings():
         ebay_bulk_upload_only=False,
         ebay_env="sandbox", ebay_client_id="app-SBX-x", ebay_runame="app-SBX-runame",
         ebay_client_secret="s", ebay_token_encryption_key="k", app_public_base_url="https://example.test",
-        ebay_payment_policy_id="pay-1", ebay_fulfillment_policy_id="letter-1",
+        ebay_payment_policy_id="pay-1", ebay_fulfillment_policy_id="single-card-1",
         ebay_return_policy_id="ret-1", ebay_merchant_location_key="loc-1",
     )
 
@@ -65,19 +65,9 @@ def make_slab(session, *, reviewed=True):
         save_review_data(session, listing, {
             "confirmed_price": "34.99", "price_confirmed_at": "2026-11-03T00:00:00+00:00",
             "reviewed_identity": identity(stock),
-            "package": {"weight_g": "120", "length_cm": "19.2", "width_cm": "14", "height_cm": "3",
-                        "measured_at": "2026-11-03T00:00:00+00:00"},
         })
-        add_policy(session)
     session.commit()
     return listing
-
-
-def add_policy(session):
-    session.add(PlatformConfig(key=POLICY_KEY, value={
-        "environment": "sandbox", "marketplace_id": settings().ebay_marketplace_id, "service": "AU_Regular",
-        "shipping_cost_type": "CALCULATED", "verified_at": "2026-11-03", "fulfillment_policy_id": "tracked-1",
-    }))
 
 
 def errors_for(session, listing):
@@ -110,11 +100,8 @@ def test_fully_reviewed_slab_passes_preflight(session):
     assert errors_for(session, make_slab(session)) == ()
 
 
-def test_unreviewed_slab_is_blocked_on_price_parcel_and_policy(session):
-    errors = " ".join(errors_for(session, make_slab(session, reviewed=False)))
-    assert "Confirm this exact price" in errors
-    assert "packed slab weight" in errors
-    assert "tracked-parcel policy" in errors
+def test_unreviewed_slab_is_blocked_on_price(session):
+    assert any("Confirm this exact price" in e for e in errors_for(session, make_slab(session, reviewed=False)))
 
 
 def test_changing_the_price_after_review_blocks_publishing(session):
@@ -138,15 +125,6 @@ def test_second_stock_record_for_a_certificate_blocks_publishing(session):
     assert any("grading certificate" in e for e in errors_for(session, listing))
 
 
-def test_policy_for_another_environment_is_rejected(session):
-    listing = make_slab(session)
-    session.get(PlatformConfig, POLICY_KEY).value = {
-        **session.get(PlatformConfig, POLICY_KEY).value, "environment": "production",
-    }
-    session.commit()
-    assert any("tracked-parcel policy" in e for e in errors_for(session, listing))
-
-
 def test_title_keeps_the_exact_label_grade(session):
     listing = make_slab(session)
     title = generated_ebay_title(
@@ -160,15 +138,14 @@ def test_title_keeps_the_exact_label_grade(session):
 def test_review_forms_store_values_without_touching_marketplace(session):
     listing = make_slab(session, reviewed=False)
     confirm_price("listing-1", price="29.50", user="nic", session=session)
-    save_parcel("listing-1", weight_g="120", length_cm="19", width_cm="14", height_cm="3", user="nic", session=session)
     session.commit()
     data = review_data(session, listing)
     assert listing.price == Decimal("29.50") and listing.status == ShopListingStatus.DRAFT
-    assert data["confirmed_price"] == "29.50" and data["package"]["measured_by"] == "nic"
+    assert data["confirmed_price"] == "29.50" and data["price_confirmed_by"] == "nic"
 
 
 @pytest.mark.asyncio
-async def test_publish_sends_slab_parcel_and_tracked_policy(session, monkeypatch):
+async def test_publish_sends_slab_fields_on_the_single_card_policy(session, monkeypatch):
     make_slab(session)
     monkeypatch.setattr(ebay_publish, "get_settings", settings)
     monkeypatch.setattr(ebay_publish, "ebay_services", lambda s: (object(), object()))
@@ -183,11 +160,10 @@ async def test_publish_sends_slab_parcel_and_tracked_policy(session, monkeypatch
 
     inventory = adapter.upsert_inventory_item.await_args.args[1]
     assert inventory["condition"] == "LIKE_NEW"
-    assert inventory["packageWeightAndSize"]["weight"] == {"value": 0.12, "unit": "KILOGRAM"}
-    assert inventory["packageWeightAndSize"]["dimensions"] == {"length": 20, "width": 14, "height": 3, "unit": "CENTIMETER"}
+    assert "packageWeightAndSize" not in inventory
     assert inventory["product"]["aspects"]["Certification Number"] == ["4245735015"]
     assert inventory["product"]["imageUrls"] == PHOTOS
-    assert adapter.create_offer.await_args.args[0]["listingPolicies"]["fulfillmentPolicyId"] == "tracked-1"
+    assert adapter.create_offer.await_args.args[0]["listingPolicies"]["fulfillmentPolicyId"] == "single-card-1"
 
 
 @pytest.mark.asyncio
@@ -212,7 +188,62 @@ def test_slab_resolves_the_card_category_without_a_graded_mapping(session):
     assert ebay_publish.publication_preflight(session, listing, settings()).category_id == "183454"
 
 
-def test_raw_cards_keep_their_existing_postage_policy(session):
-    assert ebay_publish._graded_publish_fields(
-        session, ShopListing(id="raw"), CatalogItem(id="raw", item_type=CatalogItemType.TCG_CARD, name="r"), settings(),
-    ) == (None, None)
+FACTS = {
+    "name": "Venusaur V", "company": "CGC", "grade": "Mint 9", "certificate": "3813309008",
+    "set_id": "pokemon-jp-sef", "set_name": "Venusaur VMAX Starter Set", "set_code": "sEF", "game": "pokemon_japan",
+    "character": "Venusaur V", "number": "001/021", "language": "Japanese", "year": "2020",
+    "title": "CGC Mint 9 Venusaur V 001/021",
+}
+
+
+def make_pair(session, pair_id="pair-1"):
+    if session.get(ListingPhotoBatch, "batch-1") is None:
+        session.add(ListingPhotoBatch(id="batch-1"))
+    position = len(session.scalars(select(ListingPhotoPair)).all())
+    pair = ListingPhotoPair(id=pair_id, batch_id="batch-1", position=position, front_image_path=f"{pair_id}-front.jpg",
+                            back_image_path=f"{pair_id}-back.jpg", status=ListingPhotoPairStatus.NEEDS_REVIEW)
+    session.add(pair)
+    session.flush()
+    return pair
+
+
+def test_prepare_creates_an_unconfirmed_one_copy_draft(session):
+    pair = make_pair(session)
+    listing = prepare_graded_draft(session, pair, FACTS, {"suggested_price": "24.99"})
+    session.commit()
+    stock = session.get(InventoryItem, listing.inventory_item_id)
+    assert (listing.status, listing.price, listing.quantity) == (ShopListingStatus.DRAFT, Decimal("0"), 1)
+    assert listing.ebay_photo_paths == ["pair-1-front.jpg", "pair-1-back.jpg"]
+    assert (stock.grading_company, stock.grade, stock.certification_number, stock.quantity) == ("CGC", "Mint 9", "3813309008", 1)
+    assert session.get(CatalogItem, listing.catalog_item_id).item_type == CatalogItemType.GRADED_CARD
+    assert pair.status == ListingPhotoPairStatus.APPLIED and pair.matched_shop_listing_id == listing.id
+    assert any("Confirm this exact price" in e for e in errors_for(session, listing))
+
+
+def test_prepare_is_idempotent_for_the_same_certificate(session):
+    pair = make_pair(session)
+    first = prepare_graded_draft(session, pair, FACTS, {})
+    session.commit()
+    assert prepare_graded_draft(session, pair, FACTS, {}).id == first.id
+    assert len(session.scalars(select(InventoryItem)).all()) == 1
+
+
+def test_prepare_refuses_a_second_photo_pair_for_a_certificate(session):
+    prepare_graded_draft(session, make_pair(session), FACTS, {})
+    session.commit()
+    with pytest.raises(ValueError, match="Certificate already exists"):
+        prepare_graded_draft(session, make_pair(session, "pair-2"), FACTS, {})
+
+
+def test_prepare_refuses_a_conflicting_grade(session):
+    pair = make_pair(session)
+    prepare_graded_draft(session, pair, FACTS, {})
+    session.commit()
+    with pytest.raises(ValueError, match="Conflicting"):
+        prepare_graded_draft(session, pair, {**FACTS, "grade": "Pristine 10"}, {})
+
+
+def test_prepare_refuses_a_conflicting_card_set(session):
+    session.add(CardSet(id="pokemon-jp-sef", name="Something else", game="pokemon_japan"))
+    with pytest.raises(ValueError, match="conflicts"):
+        prepare_graded_draft(session, make_pair(session), FACTS, {})
