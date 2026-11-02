@@ -38,7 +38,12 @@ no logged-in browser check was run.
 
 Next: operator reviews https://homeserver.tailefaa51.ts.net/graded-cards, then
 explicitly approves publishing. Slabs would post on the untracked single-card policy.
-Sold-but-AVAILABLE audit findings remain unresolved and need the operator.
+Sold-but-AVAILABLE findings: operator confirmed 2026-11-03 both cards sold with a
+second copy remaining; stock is already correct at quantity 1. Next: let the audit
+and repair script honour a `listing.remaining_stock_confirmed` audit event, record
+one per listing, no stock writes. Then commit Claude's edits in `~/server` and
+`~/trading-bot` only, as the operator asked; older dirty work there stays in place.
+
 
 Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
 the replace-or-keep, parcel policy and measurement answers recorded below.
