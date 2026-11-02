@@ -50,6 +50,12 @@ committed: `~/trading-bot/bot/briefing.py` timestamp fix (live in the working tr
 `master`). That repo's `.git` is owned by `tradingbot` and root, so `nic` cannot
 write to it, and running git as `tradingbot` via sudo was denied. Operator decides.
 
+Operator published Venusaur V 2026-11-03 at $24.99 (eBay 267831286735). They raised
+Shroom & Salsa to $39.99 and Jiren to $24.99 in Listing Studio, which tripped the
+exact-price gate. Claude confirmed those operator-set prices locally; operator
+publishes. Known bug, not fixed: /graded-cards pre-fills the old suggested price
+after a Studio edit, so tapping Confirm there would silently revert it.
+
 Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
 the replace-or-keep, parcel policy and measurement answers recorded below.
 
