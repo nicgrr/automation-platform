@@ -12,7 +12,7 @@ from automation_control.config import Settings
 from automation_control.database import Base
 from automation_control.ebay_oauth import INVENTORY_WRITE_SCOPE
 from automation_control.graded_cards import (
-    confirm_price, graded_condition, identity, prepare_graded_draft, review_data, save_review_data,
+    confirm_price, graded_condition, graded_review, identity, prepare_graded_draft, review_data, save_review_data,
 )
 from automation_control.listing_quality import generated_ebay_title
 from automation_control.models import (
@@ -133,6 +133,25 @@ def test_title_keeps_the_exact_label_grade(session):
     )
     assert title.startswith("CGC Pristine 10 ")
     assert len(title) <= 80
+
+
+def test_review_page_prefills_a_price_changed_after_confirmation(session):
+    listing = make_slab(session)
+    save_review_data(session, listing, {**review_data(session, listing), "suggested_price": "34.99"})
+    listing.price = Decimal("39.99")
+    session.commit()
+    html = graded_review("nic", session).body.decode()
+    assert 'name="price" value="39.99"' in html and "Current asking price" in html
+    assert 'value="34.99"' not in html
+
+
+def test_review_page_prefills_the_suggestion_before_any_price_is_set(session):
+    listing = make_slab(session, reviewed=False)
+    listing.price = Decimal("0")
+    save_review_data(session, listing, {"suggested_price": "34.99"})
+    session.commit()
+    html = graded_review("nic", session).body.decode()
+    assert 'name="price" value="34.99"' in html and "Suggested asking price" in html
 
 
 def test_review_forms_store_values_without_touching_marketplace(session):

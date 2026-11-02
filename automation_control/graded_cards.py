@@ -142,7 +142,8 @@ def graded_review(user: str = Depends(require_dashboard_user), session: Session 
         data = review_data(session, listing)
         suggested = data.get('suggested_price', '')
         confirmed = data.get('confirmed_price') if data.get('reviewed_identity') == identity(stock) and str(listing.price) == data.get('confirmed_price') else None
-        price = confirmed or suggested
+        current = str(listing.price) if listing.price and listing.price > 0 else None
+        price = confirmed or current or suggested
         query = f'{card.character or item.name} {card.number or ""} {stock.grading_company} {stock.grade} {card.language}' if card else item.name
         title = listing.ebay_title or (generated_ebay_title(listing, item, card, card_set, stock) if card else listing.title)
         photos = ''.join(f'<a href="/shop-listings/{listing.id}/ebay-photo/{i}" target="_blank"><img src="/shop-listings/{listing.id}/ebay-photo/{i}" alt="Actual slab {side}" loading="lazy"></a>' for i, side in enumerate(('front', 'back')) if i < len(listing.ebay_photo_paths or []))
@@ -150,7 +151,7 @@ def graded_review(user: str = Depends(require_dashboard_user), session: Session 
         body += f'''<article class="graded-card" id="{listing.id}"><h2>{escape(item.name)}</h2>
         <p><strong>{escape(stock.grading_company or '')} {escape(stock.grade or '')}</strong> · Certificate {escape(stock.certification_number or '')} · Qty {listing.quantity}</p>
         <p>{escape(card_set.name if card_set else 'Set pending')} · {escape(card.language if card else '')} · {escape(card.number or '' if card else '')}</p>
-        <div class="slab-photos">{photos}</div><p>{'Confirmed asking price' if confirmed else 'Suggested asking price'}: <strong>{'AU $' + escape(price) if price else 'Research pending'}</strong>{'' if confirmed else ' · Needs your review'}</p>
+        <div class="slab-photos">{photos}</div><p>{'Confirmed asking price' if confirmed else 'Current asking price' if current else 'Suggested asking price'}: <strong>{'AU $' + escape(price) if price else 'Research pending'}</strong>{'' if confirmed else ' · Needs your review'}</p>
         <p>{escape(data.get('research_note', 'Pricing research pending.'))}</p><ul>{sources}</ul>
         <p><a href="{escape(australian_sold_listings_url(query), quote=True)}" target="_blank" rel="noopener">Sold listings · Australia</a></p>
         <form method="post" action="/graded-cards/{listing.id}/price"><label>Your asking price (AUD)<input type="number" min="1" max="999999.99" step="0.01" name="price" value="{escape(price)}" required></label><button class="btn">Confirm price</button></form>

@@ -5,7 +5,8 @@ handoff protocol in `AGENTS.md`.
 
 ## Current task — graded publisher wiring (Claude Code, 2026-11-03)
 
-Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Branch `graded-cards-ebay`.
+Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Branch `graded-cards-ebay`,
+not merged to `main`; `ezbay` runs from this checkout.
 Took over Codex's interrupted WIP (its session stopped 2026-11-02 12:00 with no
 final reply) and committed it with the fixes below.
 
@@ -36,8 +37,6 @@ restarted on this branch. Full pytest passed before deploy. Slabs pass preflight
 Nothing sent to eBay; no links or exports. Page rendering was checked server-side;
 no logged-in browser check was run.
 
-Next: operator reviews https://homeserver.tailefaa51.ts.net/graded-cards, then
-explicitly approves publishing. Slabs would post on the untracked single-card policy.
 Sold-but-AVAILABLE findings resolved 2026-11-03: operator confirmed both cards sold
 with a second copy remaining. Stock was already correct at quantity 1 and was not
 changed. Audit and repair script now honour a `listing.remaining_stock_confirmed`
@@ -50,11 +49,12 @@ has Claude's monitor and hub fixes; older dirty work there is untouched.
 `briefing-timestamps`, not merged to `master`; that branch is checked out. `.git`
 there is now all `tradingbot`-owned: use `sudo -u tradingbot git`, never plain sudo.
 
-Operator published Venusaur V 2026-11-03 at $24.99 (eBay 267831286735). They raised
-Shroom & Salsa to $39.99 and Jiren to $24.99 in Listing Studio, which tripped the
-exact-price gate. Claude confirmed those operator-set prices locally; operator
-publishes. Known bug, not fixed: /graded-cards pre-fills the old suggested price
-after a Studio edit, so tapping Confirm there would silently revert it.
+All three slabs published by the operator 2026-11-03 on the single-card policy:
+Venusaur V $24.99 (267831286735), Shroom & Salsa $39.99 (267831287951), Jiren $24.99
+(267831288182). /graded-cards now pre-fills the current listing price, so confirming
+there no longer reverts a Studio edit; deployed with an `ezbay` restart. Validation:
+tests/test_graded_cards.py and tests/test_ebay_publish.py passed (77); full suite
+not rerun for this change.
 
 Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
 the replace-or-keep, parcel policy and measurement answers recorded below.
