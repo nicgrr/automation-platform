@@ -17,9 +17,8 @@ Done in this batch:
 - Fixed: missing `import re` in ebay_publish.py crashed slab payload building.
 - Added tests/test_graded_cards.py.
 
-Validation: full `.venv/bin/pytest` passed (see commit). Graded payloads are tested
+Validation: full `.venv/bin/pytest` passed. Graded payloads are tested
 against a mocked adapter only; never sent to eBay, sandbox or production.
-NOT deployed: `ezbay` not restarted, so /graded-cards is not live.
 
 Operator answers 2026-11-03: Codex's proposed prices approved, operator reviews
 afterwards. "Same packaging and weight as single cards". Restart `ezbay` and create
@@ -30,12 +29,16 @@ postage policy, so slabs use the same default policy and send no package data. T
 replaces Codex's tracked-parcel gate and its parcel form. Slabs post untracked.
 Photos and certificates re-verified by Claude against all six slab images.
 
-In progress, in order: (1) remove tracked-parcel gate, test prepare_graded_draft,
-add scripts/prepare_graded_drafts.py; (2) dry run on a DB copy; (3) snapshot to
-backups/, apply, confirm prices; (4) restart `ezbay`, verify /graded-cards.
-If interrupted: check production for graded items before rerunning; the script is
-idempotent by grader + certificate. Also in `~/trading-bot` and `~/server`: fixing
-the briefing timestamp crash and the hub's false EZBay warning.
+Done 2026-11-03: tracked-parcel gate removed, draft script added and dry-run on a
+copy, snapshot `backups/automation-before-graded-drafts-20261103.db`, three drafts
+created with approved prices via `scripts/prepare_graded_drafts.py`, `ezbay`
+restarted on this branch. Full pytest passed before deploy. Slabs pass preflight.
+Nothing sent to eBay; no links or exports. Page rendering was checked server-side;
+no logged-in browser check was run.
+
+Next: operator reviews https://homeserver.tailefaa51.ts.net/graded-cards, then
+explicitly approves publishing. Slabs would post on the untracked single-card policy.
+Sold-but-AVAILABLE audit findings remain unresolved and need the operator.
 
 Open from Codex's other task: figurine eBay fallback remains unimplemented, pending
 the replace-or-keep, parcel policy and measurement answers recorded below.
