@@ -38,8 +38,10 @@ exist); drafts stay in the database. Done and read back. Vinted preparation filt
 committed but live only after the next `ezbay` restart, not run by Claude; until then the
 four still show there but cannot be posted. Vinted test files passed; full suite not rerun.
 First Owl pair now uses the second Owl's photos on the operator's request; old paths are in
-its `extracted.previous_photos`. Both Owl records show the same photos: unresolved whether
-there are one or two physical Owls.
+its `extracted.previous_photos`. Operator confirmed two physical Owls, so both records stay,
+but each still shows the same photos and neither is linked to stock.
+Also confirmed 2026-11-04: Chicken Leg, Hippo, Ox $24.99, Christmas figure $44.99, Hippo
+series Animal Series 4. Mushroom unpriced: operator did not recognise it from the name.
 
 ## Figurine Vinted prices (Claude Code, 2026-11-04)
 
