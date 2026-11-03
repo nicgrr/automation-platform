@@ -34,8 +34,10 @@ Task complete; refresh page toseeupdatedmenu.
 
 Operator approved a higher pricing strategy. 12 `confirmed_price` values written to
 `vinted_draft:*` with audit events (`vinted.draft.save`); titles, stock and listings
-untouched. Still on hold: Kappa, Polar Bear, two Monchhichi. Proposed name and series
-fixes (Hedgehog looks like Uribou) NOT applied: operator approved prices only.
+untouched. Still on hold: Kappa, Polar Bear, two Monchhichi. Operator then approved the fixes,
+applied in this batch after a snapshot: Hedgehog to Uribou, series names, stock and listing
+condition New to Used on 10 loose figures. Second Owl kept as a separate figure, as the
+operator said; priced like the first. New uploads still need pricing.
 
 ## Current task — figurine eBay fallback from Vinted (Claude Code, 2026-11-03)
 
