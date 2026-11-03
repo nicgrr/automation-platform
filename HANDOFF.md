@@ -30,6 +30,13 @@ No fallback timer changes or marketplace/data writes. Restart also loads existin
 Claude fallback code alreadyonbranch; timer deployment isstillseparate/notdonehere.
 Task complete; refresh page toseeupdatedmenu.
 
+## Figurine review with the operator, one at a time (Claude Code, 2026-11-04)
+
+Order: Uribou, Labubu, Owl 1, Owl 2, Chicken Leg, Hippo, Ox, Christmas, Jellyfish, two
+Monchhichi. Each is confirmed in chat, then linked with `product_photo_review.save`.
+Done: Uribou ($14.99, qty 1). Caution: `save` matches catalogue by brand/series/name and
+reuses existing stock without changing its quantity, so the second Owl needs care.
+
 ## Figures kept by the owner (Claude Code, 2026-11-04)
 
 Operator is not selling Kappa, Lily Bell, Polar Bear or Skunk. Moving their stock to
