@@ -38,6 +38,8 @@ Done: Uribou ($14.99, qty 1), Labubu ($29.99, qty 1), Owls (operator chose one c
 both pairs linked to one stock row), Fried Chicken, Snack Series, renamed from Chicken Leg
 ($24.99, qty 1), Gorilla, Animal Series 4, renamed from Hippo ($24.99, qty 1 assumed), Buffalo,
 Animal Series 4, renamed from Ox ($24.99, qty 1 assumed).
+Dalmatian, Santa's Little Helper Series ($26.99, qty 1 assumed; operator says the seat is red), Jellyfish.
+Left: two Monchhichi.
 
 ## Figures kept by the owner (Claude Code, 2026-11-04)
 
