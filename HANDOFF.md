@@ -41,7 +41,9 @@ First Owl pair now uses the second Owl's photos on the operator's request; old p
 its `extracted.previous_photos`. Operator confirmed two physical Owls, so both records stay,
 but each still shows the same photos and neither is linked to stock.
 Also confirmed 2026-11-04: Chicken Leg, Hippo, Ox $24.99, Christmas figure $44.99, Hippo
-series Animal Series 4. Mushroom unpriced: operator did not recognise it from the name.
+series Animal Series 4. The "Mushroom" record is really Sonny Angel Marine Series Jellyfish,
+named by the operator, so it is not the Vegetable secret; renamed, price not yet approved.
+Comparable: eBay 156732171375, A$26 new in box and foil, active, 0 sold.
 
 ## Figurine Vinted prices (Claude Code, 2026-11-04)
 
