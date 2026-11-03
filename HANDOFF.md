@@ -3,6 +3,19 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — photo audit review (Codex, 2026-11-03)
+
+Branch `photo-audit-review-20261103`, base `0c1305a`; clean checkout verified.
+User asks READ-ONLY review of photo-audit duplicates and already updated photos.
+Claude completed/deployed the graded workflow, and operator published the three
+slabs; do not repeat draft creation, change prices/postage or publish again.
+Plan: compare all pending cached findings with current inventory, canonical
+listings, latest upload pairs and image hashes; visually inspect suspect images.
+Write a local evidence report and summarize concrete duplicate/stale findings.
+No inventory, cache, dismissals, photos or marketplace changes in this task.
+Independent helper checks duplicate stock/listings; root checks stale photo source
+and false positives. Next: quantify pending entries and verify suspects visually.
+
 ## Current task — graded publisher wiring (Claude Code, 2026-11-03)
 
 Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Branch `graded-cards-ebay`,
