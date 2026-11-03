@@ -22,8 +22,13 @@ search and drawer. Existing navigation tests adjusted for added links/renamedlab
 Validation PASSED:39 tests (test_nav.py,test_ui.py), git diff --check; Chromium at
 390/1024/1440 verified allfourdrawerlinks, activehighlight onallfourroutes andno
 horizontaloverflow. Mobile screenshot visually checked. No application data writes.
-Next authorized action: restart ezbay.service and verify served navigation with
-an authenticated read-only request. No fallback timer changes.
+DEPLOYED 131e43a: ezbay.service restart completed (old process took its configured
+90-second stop grace period). Initial connection checks during restart were refused;
+final authenticated GETs allPASSED200 at /scan-add,/shop-listings,/graded-cards,
+/collectibles/vinted, eachwithallfourupdateddrawerlinks. Serviceactive.
+No fallback timer changes or marketplace/data writes. Restart also loads existing
+Claude fallback code alreadyonbranch; timer deployment isstillseparate/notdonehere.
+Task complete; refresh page toseeupdatedmenu.
 
 ## Figurine Vinted prices (Claude Code, 2026-11-04)
 
