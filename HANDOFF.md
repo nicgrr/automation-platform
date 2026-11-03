@@ -3,18 +3,49 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
-## Current task — photo audit review (Codex, 2026-11-03)
+## Current task — photo audit review COMPLETE (Codex, 2026-11-03)
 
-Branch `photo-audit-review-20261103`, base `0c1305a`; clean checkout verified.
-User asks READ-ONLY review of photo-audit duplicates and already updated photos.
-Claude completed/deployed the graded workflow, and operator published the three
-slabs; do not repeat draft creation, change prices/postage or publish again.
-Plan: compare all pending cached findings with current inventory, canonical
-listings, latest upload pairs and image hashes; visually inspect suspect images.
-Write a local evidence report and summarize concrete duplicate/stale findings.
-No inventory, cache, dismissals, photos or marketplace changes in this task.
-Independent helper checks duplicate stock/listings; root checks stale photo source
-and false positives. Next: quantify pending entries and verify suspects visually.
+Last updated: Codex, 2026-11-03 (Australia/Sydney).
+Branch `photo-audit-review-20261103`, base `0c1305a`, plan `66bb08f`.
+READ-ONLY user request: duplicates and already-updated photos in photo audit.
+No application code, stock, listings, dismissals, photo files, audit cache,
+marketplace records or services changed. Reports only plus this handoff.
+
+Results: cache from 2026-10-30 06:14 Sydney contains246 findings;117 remain pending
+(129 cached dismissed;134 dismissal rows globally). Pending breakdown:
+- 23 old inventory photos despite newer linked listing fronts; SHA256-different
+  and all23 old/new pairs visually inspected. All23 have Active eBay mirror rows.
+- 84 same current listing photo; not automatically wrong/duplicate. Matcher
+  suggests a different card game for90 of all117. Plume Fossil079/086 visual
+  photo is correctcard/newstand, not suggestedProfessorResearch; finish notreaudited.
+- 8 zero-stock/sold entries remain in queue.
+- 2 no current inventory-linked listing: Heracross and Vegapunk below.
+Duplicate audit across2352 local frontpaths (all readable), SHA256+equalpHash,
+identity/variant/language/condition found NO confirmed duplicate stock among
+pending117. Shared backs excluded. Eight old/new listingpairs have withdrawnold
+plusactive replacement (Alcremie,Kadabra,Wishiwashi,Wugtrio,Glimmora,Sharpedo,
+Zamazenta,GotenksFS11-03), not simultaneous active duplicates.
+
+ATTENTION (do not discard/merge without resolving):
+- Mega Heracross ex004/094: currentlisting4b055b08-8589-4f11-8b01-78ecd4016879
+  eBay267826904031 has2updatedphotos andquantity2 butinventory_item_idNULL.
+  Old inventoryd0f64c25-c248-4f9b-a73c-7ac46ce799c0 quantity1LISTED. Matched
+  intakepairb7f9cadc-824e-4ad6-a033-7359d86d14d8 stillREADY. Newfront visually
+  verifiedPFL004/094. Quantity/linkage needs resolution; not confirmedduplicate.
+- VegapunkOP13-112: inventory9fc292ba-48ae-4017-b59d-06a239494b76 qty1AVAILABLE,
+  onlywithdrawnlisting8a2cb75f-feff-4886-812a-b899dea021c4. Noownedreplacement or
+  currenteBaymirror match found. Keepforreview.
+
+Rootcause: inventory_audit_review._pending checks only cachedpath vs inventory
+scan_image_path, ignorescurrentlistingfront andzeroquantity. Rescanalone will
+retainoldsource. Futurefix shouldresolvecanonicalcurrentphoto, invalidatereview
+onphotochanges, separatesold/withdrawn andretainunresolvedstock/identity.
+
+Evidence: /home/nic/Documents/Codex/2026-11-03/photo-audit-review.md and .json.
+Report hasfull23listinglinks and8soldentries. Readqueries/hashcomparisons/visual
+inspection completed; tests notneeded (nocodechanges). No fresh eBay API/image
+verification: remote status/quantity fromexistingmirror, notsyncguarantee.
+Claude alreadyfinishedgradedworkflow/operatorpublished3slabs; do not repeat.
 
 ## Current task — graded publisher wiring (Claude Code, 2026-11-03)
 
