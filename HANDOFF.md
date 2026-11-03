@@ -3,6 +3,31 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — figurine eBay fallback from Vinted (Claude Code, 2026-11-03)
+
+Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Branch
+`vinted-ebay-fallback`, base `472dd02` (contains the unmerged graded work).
+
+Operator answers 2026-11-03, superseding the pending questions further down:
+- Vinted listing STAYS UP when a figurine moves to eBay.
+- Goes to eBay AUTOMATICALLY after 14 days, no per-item OK. This is the operator's
+  explicit authorization for this one job to publish; nothing else changes.
+- Buyers pay. Small tracked parcel through eBay.
+
+Read-only findings: eBay policy 266481104017 "Tracked Parcel" is CALCULATED AU_Regular,
+2 days handling, so every listing needs weight and dimensions. Operator has given no
+numbers yet: fail closed and alert, never invent them. No Vinted sale reader exists
+(`record_vinted_sale` has only the manual route as caller). Order import runs every
+10 minutes. 0 Vinted listings tracked, 11 figurines AVAILABLE.
+
+Double-sale rules to implement: one stock unit backs both listings. eBay sale closes
+the Vinted row without decrementing the already reserved unit, and alerts to delete
+it from Vinted. Marking sold on Vinted ends the eBay offer. Do not let storefront,
+reconciliation or quantity sync treat that reservation as an error or sell it.
+
+Next: batch 1 publisher branch + `vinted_fallback.py` + tests; batch 2 job, timer, UI.
+Deploy needs `ezbay` restart and enabling a new timer; both follow from the request.
+
 ## Current task — photo audit review COMPLETE (Codex, 2026-11-03)
 
 Last updated: Codex, 2026-11-03 (Australia/Sydney).
