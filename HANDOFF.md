@@ -25,6 +25,13 @@ horizontaloverflow. Mobile screenshot visually checked. No application data writ
 Next authorized action: restart ezbay.service and verify served navigation with
 an authenticated read-only request. No fallback timer changes.
 
+## Figurine Vinted prices (Claude Code, 2026-11-04)
+
+Operator approved a higher pricing strategy. 12 `confirmed_price` values written to
+`vinted_draft:*` with audit events (`vinted.draft.save`); titles, stock and listings
+untouched. Still on hold: Kappa, Polar Bear, two Monchhichi. Proposed name and series
+fixes (Hedgehog looks like Uribou) NOT applied: operator approved prices only.
+
 ## Current task — figurine eBay fallback from Vinted (Claude Code, 2026-11-03)
 
 Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Branch
