@@ -23,7 +23,7 @@ from .audit import record_event
 from .database import get_session
 from .collectible_reference import PICKER_SCRIPT, clean
 from .images import serve_image
-from .models import (CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem,
+from .models import (CatalogItem, CatalogItemType, CollectibleProduct, InventoryItem, InventoryStatus,
                      ListingPhotoPair, PlatformConfig, ShopListing)
 from .ui import brand_header, page
 from .vinted_copy import generate_copy
@@ -42,7 +42,8 @@ def rows_for_review(session):
     owned = session.execute(select(InventoryItem, CatalogItem, CollectibleProduct)
         .join(CatalogItem, InventoryItem.catalog_item_id == CatalogItem.id)
         .outerjoin(CollectibleProduct, CollectibleProduct.catalog_item_id == CatalogItem.id)
-        .where(CatalogItem.item_type == CatalogItemType.COLLECTIBLE, InventoryItem.quantity > 0)).all()
+        .where(CatalogItem.item_type == CatalogItemType.COLLECTIBLE, InventoryItem.quantity > 0,
+               InventoryItem.status != InventoryStatus.PERSONAL_COLLECTION)).all()
     for inv, item, product in owned:
         listings = session.scalars(select(ShopListing).where(ShopListing.inventory_item_id == inv.id)
                                     .order_by(ShopListing.updated_at.desc())).all()

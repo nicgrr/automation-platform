@@ -268,3 +268,13 @@ def test_review_holds_remain_visible_and_recording_a_real_listing_does_not_clear
     s.expire_all()
     assert s.get(PlatformConfig, "vinted_draft:i-inv").value["hold_reason"] == "Check the figure's edition."
     assert s.get(ListingPhotoPair, "pair").extracted["identity_confidence"] == "low"
+
+
+def test_a_figure_the_owner_keeps_leaves_vinted_preparation_and_shows_in_the_collection(context):
+    s, client = context
+    assert "Sonny Angel Cat Life Persian" in client.get("/collectibles/vinted").text
+    s.get(InventoryItem, "inv").status = InventoryStatus.PERSONAL_COLLECTION
+    s.commit()
+    assert "Sonny Angel Cat Life Persian" not in client.get("/collectibles/vinted").text
+    collection = client.get("/personal-collection")
+    assert collection.status_code == 200 and "Sonny Angel Cat Life Persian" in collection.text

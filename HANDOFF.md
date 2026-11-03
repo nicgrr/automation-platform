@@ -30,6 +30,17 @@ No fallback timer changes or marketplace/data writes. Restart also loads existin
 Claude fallback code alreadyonbranch; timer deployment isstillseparate/notdonehere.
 Task complete; refresh page toseeupdatedmenu.
 
+## Figures kept by the owner (Claude Code, 2026-11-04)
+
+Operator is not selling Kappa, Lily Bell, Polar Bear or Skunk. Moving their stock to
+PERSONAL_COLLECTION and withdrawing their EzBay listings (no eBay, Vinted or export rows
+exist); drafts stay in the database. Done and read back. Vinted preparation filter is
+committed but live only after the next `ezbay` restart, not run by Claude; until then the
+four still show there but cannot be posted. Vinted test files passed; full suite not rerun.
+First Owl pair now uses the second Owl's photos on the operator's request; old paths are in
+its `extracted.previous_photos`. Both Owl records show the same photos: unresolved whether
+there are one or two physical Owls.
+
 ## Figurine Vinted prices (Claude Code, 2026-11-04)
 
 Operator approved a higher pricing strategy. 12 `confirmed_price` values written to
