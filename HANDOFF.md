@@ -35,7 +35,8 @@ Task complete; refresh page toseeupdatedmenu.
 Order: Uribou, Labubu, Owl 1, Owl 2, Chicken Leg, Hippo, Ox, Christmas, Jellyfish, two
 Monchhichi. Each is confirmed in chat, then linked with `product_photo_review.save`.
 Done: Uribou ($14.99, qty 1), Labubu ($29.99, qty 1), Owls (operator chose one card, qty 2, $24.99 each,
-both pairs linked to one stock row).
+both pairs linked to one stock row), Fried Chicken, Snack Series, renamed from Chicken Leg
+($24.99, qty 1).
 
 ## Figures kept by the owner (Claude Code, 2026-11-04)
 
