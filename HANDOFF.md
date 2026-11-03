@@ -3,6 +3,19 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Current task — upload workflow navigation (Codex, 2026-11-04)
+
+Branch `upload-workflow-navigation-20261104`, base `8613c99`; clean tree.
+User requests the upload destinations in navigation. Planned small edit: rename
+Scan & add to Add stock, expose Listing Studio, Graded cards and Vinted preparation
+in drawer, add upload/Studio/Vinted desktop shortcuts and correct active states.
+Preserve current branch's completed Claude changes. Files: ui.py and existing
+navigation checks. Run relevant tests and desktop/mobile rendering checks.
+Deploy navigation through existing localhost ezbay service if restart allowed;
+no inventory or marketplace writes, no timer installation/activation. Existing
+Vinted fallback code is already on disk but restart previously denied for Claude;
+report any denial accurately rather than bypassing it. Next: edit and validate.
+
 ## Current task — figurine eBay fallback from Vinted (Claude Code, 2026-11-03)
 
 Last updated: Claude Code, 2026-11-03 (Australia/Sydney). Branch
