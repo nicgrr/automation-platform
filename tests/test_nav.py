@@ -91,7 +91,7 @@ def test_labels_are_unique():
 
 def test_drawer_includes_pack_assistant():
     # Daily packing is directly accessible on desktop and mobile.
-    assert sum(len(links) for _title, links, _collapsed in ADMIN_NAV) == 13
+    assert sum(len(links) for _title, links, _collapsed in ADMIN_NAV) == 16
     assert [title for title, _links, _collapsed in ADMIN_NAV] == [
         "Home", "Add stock", "Review", "Inventory", "Sell", "Research", "System",
     ]
@@ -207,7 +207,7 @@ def test_nav_counts_requires_login():
 
 
 @pytest.mark.parametrize(("path", "heading"), [
-    ("/scan-add", "Scan &amp; add"),
+    ("/scan-add", "Add stock"),
     ("/review-centre", "Review centre"),
     ("/ebay", "eBay"),
     ("/nl-vault", "NL Vault shop"),

@@ -14,7 +14,16 @@ navigation checks. Run relevant tests and desktop/mobile rendering checks.
 Deploy navigation through existing localhost ezbay service if restart allowed;
 no inventory or marketplace writes, no timer installation/activation. Existing
 Vinted fallback code is already on disk but restart previously denied for Claude;
-report any denial accurately rather than bypassing it. Next: edit and validate.
+report any denial accurately rather than bypassing it.
+Implemented: Add stock label; direct Listing Studio, Graded cards, Vinted preparation
+links in drawer/palette; three new desktop shortcuts; specific active prefixes and
+Listing Studio count badge. Desktop nav hides at1250px so small screens keep usable
+search and drawer. Existing navigation tests adjusted for added links/renamedlabel.
+Validation PASSED:39 tests (test_nav.py,test_ui.py), git diff --check; Chromium at
+390/1024/1440 verified allfourdrawerlinks, activehighlight onallfourroutes andno
+horizontaloverflow. Mobile screenshot visually checked. No application data writes.
+Next authorized action: restart ezbay.service and verify served navigation with
+an authenticated read-only request. No fallback timer changes.
 
 ## Current task — figurine eBay fallback from Vinted (Claude Code, 2026-11-03)
 

@@ -231,8 +231,10 @@ body.nav-open .sidenav{transform:none}
   letter-spacing:.08em;flex:none}
 .palette-empty{padding:18px;font-size:13px;color:var(--text-dim);text-align:center}
 
-@media (max-width: 680px) {
+@media (max-width: 1250px) {
   .topbar-nav { display: none; }
+}
+@media (max-width: 680px) {
   .topbar-search { max-width: none; }
 }
 </style>"""
@@ -251,7 +253,7 @@ ADMIN_NAV = [
         ("/analytics", "Analytics"),
     ], False),
     ("Add stock", [
-        ("/scan-add", "Scan & add"),
+        ("/scan-add", "Add stock"),
     ], False),
     ("Review", [
         ("/review-centre", "Review centre"),
@@ -262,6 +264,9 @@ ADMIN_NAV = [
         ("/personal-collection", "Personal collection"),
     ], False),
     ("Sell", [
+        ("/shop-listings", "Listing Studio"),
+        ("/graded-cards", "Graded cards"),
+        ("/collectibles/vinted", "Vinted preparation"),
         ("/ebay", "eBay"),
         ("/ebay-listing-cleanup", "eBay listing cleanup"),
         ("/ebay-sales", "Pack Assistant"),
@@ -360,7 +365,10 @@ NAV_ACTIVE_PREFIXES = {
     "/personal-collection": ("/personal-collection",),
     "/ebay": ("/ebay", "/ebay-listings", "/ebay-sales", "/ebay-export", "/ebay-listing-cleanup"),
     "/ebay-sales": ("/ebay-sales",),
-    "/nl-vault": ("/nl-vault", "/shop-listings", "/shop-pricing", "/shop-orders", "/contact-messages"),
+    "/shop-listings": ("/shop-listings",),
+    "/graded-cards": ("/graded-cards",),
+    "/collectibles/vinted": ("/collectibles/vinted",),
+    "/nl-vault": ("/nl-vault", "/shop-pricing", "/shop-orders", "/contact-messages"),
     "/sales": ("/sales", "/customers"),
     "/market-tools": ("/market-tools", "/collectibles/pricing", "/market-search", "/market-watch", "/deal-check", "/buying-calculator", "/release-calendar", "/retailer-goals", "/purchase-lots", "/suppliers"),
     "/settings": ("/settings", "/export"),
@@ -399,7 +407,7 @@ HIDDEN_NAV = [
 # computes their real numbers, just for dashboard.py's Operations widget
 # and /review-centre's own inline breakdown, not a nav badge), but listed
 # here it read as "these have badges too", which they never did.
-NAV_COUNT_HREFS = {"/review-centre", "/ebay-sales"}
+NAV_COUNT_HREFS = {"/review-centre", "/ebay-sales", "/shop-listings"}
 
 
 def _nav_link(href: str, label: str) -> str:
@@ -645,6 +653,9 @@ NAV_SCRIPT = r"""<script>
 
 
 _TOPBAR_NAV_LINKS = [
+    ("/scan-add", "Add stock"),
+    ("/shop-listings", "Listing Studio"),
+    ("/collectibles/vinted", "Vinted preparation"),
     ("/ebay-sales", "Pack Assistant"),
     ("/dashboard", "Dashboard"),
     ("/inventory", "Inventory"),
