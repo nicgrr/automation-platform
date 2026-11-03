@@ -1,0 +1,10 @@
+[Unit]
+Description=Check hourly for figurines due to move from Vinted to eBay
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

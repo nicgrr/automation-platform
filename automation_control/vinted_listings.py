@@ -77,7 +77,7 @@ def _utc(value: datetime) -> datetime:
 
 
 def _posting_time(raw_date: str, now: datetime) -> datetime:
-    """Use the end of a historical Sydney date, avoiding an early 14-day review."""
+    """Use the end of a historical Sydney date, avoiding an early move to eBay."""
     now = _utc(now)
     if not raw_date.strip():
         return now
@@ -244,7 +244,7 @@ def post_screen(key: str, error: str = "", user: str = Depends(require_dashboard
         + f"<form method='post' action='/collectibles/vinted/{escape(key)}/posted' class='posted'>"
         + "<input name='url' inputmode='url' required placeholder='https://www.vinted.com.au/items/…'>"
         + f"<label>Date posted on Vinted (Sydney)<input name='posted_date' type='date' value='{today.isoformat()}' max='{today.isoformat()}'></label>"
-        + "<small>The 14-day eBay review starts from this posting date. Check unsold status before moving it to eBay; this does not publish automatically.</small>"
+        + "<small>This figurine moves to eBay automatically 14 days after this posting date, and stays up on Vinted. Mark it sold here as soon as it sells on Vinted.</small>"
         + f"<input type='hidden' name='price' value='{escape(str(draft.get('confirmed_price') or ''), quote=True)}'>"
         + "<button class='btn' " + ("disabled" if blockers else "") + ">Mark as live on Vinted</button></form>"
         + "<small>This reserves one unit of stock so it can't sell anywhere else.</small></li></ol>"

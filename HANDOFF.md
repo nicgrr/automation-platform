@@ -30,7 +30,15 @@ Live on Vinted parcel form, `scripts/vinted_ebay_fallback.py`, tests/test_vinted
 (18 passed, mocked eBay; no real figurine payload has reached eBay). Reuses each
 figure's existing ShopListing (9 ACTIVE, 1 DRAFT, 1 WITHDRAWN today). Storefront hides
 collectibles as coming soon. Category 149372, policy 266481104017.
-Next: full pytest; add timer; restart `ezbay`; operator supplies parcel numbers.
+Validation: full pytest passed, read from pytest's real exit code. An earlier run looked
+green only because it reported `tail`'s exit code: one outdated wording test had failed.
+NOT DEPLOYED: Claude's attempts to install the timer and restart `ezbay` were denied by
+the permission classifier, so the operator does both (unit files in deploy/systemd/,
+commands in the chat). `ezbay` still runs the code from its last restart and nothing
+moves automatically until then. No figurine has reached real eBay, so the first live
+move is untested against eBay.
+Next after that: operator enters parcel size on /collectibles/vinted/live, then posts.
+Branch is unmerged; `ezbay` runs from this checkout, stay on it or merge first.
 
 ## Current task — photo audit review COMPLETE (Codex, 2026-11-03)
 

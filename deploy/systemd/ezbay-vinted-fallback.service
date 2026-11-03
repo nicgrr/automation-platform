@@ -1,0 +1,12 @@
+[Unit]
+Description=EzBay move figurines unsold on Vinted for 14 days to eBay
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ezbay
+Group=ezbay
+WorkingDirectory=/home/nic/automation-platform
+ExecStart=/bin/bash /home/nic/automation-platform/scripts/run-vinted-ebay-fallback.sh
+StandardOutput=append:/home/nic/automation-platform/scan_ingest_data/logs/vinted-ebay-fallback.log
+StandardError=append:/home/nic/automation-platform/scan_ingest_data/logs/vinted-ebay-fallback.log

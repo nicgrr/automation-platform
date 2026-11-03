@@ -46,8 +46,8 @@ def test_recording_form_defaults_to_sydney_today(context, clock):
     body = client.get("/collectibles/vinted/i-inv/post").text
     assert "name='posted_date' type='date' value='2026-11-01'" in body
     assert "max='2026-11-01'" in body
-    assert "Check unsold status" in body
-    assert "does not publish automatically" in body
+    assert "moves to eBay automatically 14 days after this posting date" in body
+    assert "Mark it sold here" in body
 
 
 @pytest.mark.parametrize("posted_date", ["", "2026-11-01"])
@@ -125,16 +125,16 @@ def test_countdown_crossing_daylight_savings_is_fourteen_elapsed_days():
     assert (days, due) == (0, True)
 
 
-def test_live_screen_shows_due_in_sydney_and_requires_unsold_check(context, clock):
+def test_live_screen_shows_when_it_moves_to_ebay_in_sydney_time(context, clock):
     session, client = context
     client.post("/collectibles/vinted/i-inv/posted", data={"url": URL, "price": "14.99"})
     listing = session.scalar(select(VintedListing))
     listing.posted_at = NOW - timedelta(days=14)
     session.commit()
     body = client.get("/collectibles/vinted/live").text
-    assert "eBay review due — check that this item is still unsold on Vinted." in body
+    assert "Moving to eBay shortly." in body
     assert "Due 01 Nov 2026, 11:15 AEDT" in body
-    assert "This does not publish automatically." in body
+    assert "The Vinted listing stays up" in body
 
 
 @pytest.mark.parametrize("action", ["sold", "remove"])
@@ -146,5 +146,5 @@ def test_sold_and_removed_listings_do_not_have_an_ebay_countdown(context, clock,
     session.commit()
     client.post(f"/collectibles/vinted/listing/{listing.id}/{action}", data={"price": "14.99"})
     body = client.get("/collectibles/vinted/live").text
-    assert "eBay review due" not in body
-    assert "eBay review in" not in body
+    assert "Moving to eBay" not in body
+    assert "Moves to eBay in" not in body
