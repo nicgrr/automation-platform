@@ -36,6 +36,9 @@ def decrement_listing_quantity(session: Session, listing: ShopListing | BulkLot,
     if listing.quantity == 0:
         listing.status = ShopListingStatus.SOLD_OUT
     if isinstance(listing, ShopListing) and listing.inventory_item_id:
+        from .vinted_fallback import consume_reservation_for_ebay_sale
+        if consume_reservation_for_ebay_sale(session, listing):
+            return listing.quantity  # Vinted's reservation already took this unit out of stock
         item = session.get(InventoryItem, listing.inventory_item_id)
         if item is not None and item.status != InventoryStatus.SOLD:
             item.quantity = max(0, item.quantity - sold_quantity)

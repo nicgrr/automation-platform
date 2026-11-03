@@ -38,6 +38,7 @@ from automation_control.config import get_settings
 from automation_control.database import SessionLocal
 from automation_control.discord_notify import send_discord_message
 from automation_control.ebay_bulk_export import _latest_export_items, _variation_group_children
+from automation_control.vinted_fallback import shares_reserved_stock
 from automation_control.models import (
     CatalogItem,
     AuditEvent,
@@ -97,6 +98,8 @@ def check_active_listing_gone_inventory(session) -> list[str]:
         inv = session.get(InventoryItem, listing.inventory_item_id)
         if inv is None:
             findings.append(f"{listing.title}  ({listing.id})  -- inventory_item_id points to a deleted row")
+        elif inv.status == InventoryStatus.RESERVED and shares_reserved_stock(session, listing):
+            continue  # one figurine, live on both Vinted and eBay by the owner's choice
         elif inv.status not in (InventoryStatus.AVAILABLE, InventoryStatus.LISTED):
             findings.append(f"{listing.title}  ({listing.id})  -- ACTIVE but inventory is {inv.status.value}")
     return findings

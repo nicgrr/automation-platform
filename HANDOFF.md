@@ -25,8 +25,12 @@ the Vinted row without decrementing the already reserved unit, and alerts to del
 it from Vinted. Marking sold on Vinted ends the eBay offer. Do not let storefront,
 reconciliation or quantity sync treat that reservation as an error or sell it.
 
-Next: batch 1 publisher branch + `vinted_fallback.py` + tests; batch 2 job, timer, UI.
-Deploy needs `ezbay` restart and enabling a new timer; both follow from the request.
+Batch 1 committed: `vinted_fallback.py`, publisher branch, stock hook, audit exemption,
+Live on Vinted parcel form, `scripts/vinted_ebay_fallback.py`, tests/test_vinted_fallback.py
+(18 passed, mocked eBay; no real figurine payload has reached eBay). Reuses each
+figure's existing ShopListing (9 ACTIVE, 1 DRAFT, 1 WITHDRAWN today). Storefront hides
+collectibles as coming soon. Category 149372, policy 266481104017.
+Next: full pytest; add timer; restart `ezbay`; operator supplies parcel numbers.
 
 ## Current task — photo audit review COMPLETE (Codex, 2026-11-03)
 

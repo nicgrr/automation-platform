@@ -13,6 +13,7 @@ Drafts (title, description, confirmed price) come from vinted_prep.py.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import uuid
@@ -35,6 +36,8 @@ from .auth import require_dashboard_user
 from .database import get_session
 from .models import (
     CatalogItem,
+    EbayListingLink,
+    EbayListingLinkStatus,
     InventoryItem,
     InventoryStatus,
     Marketplace,
@@ -45,6 +48,10 @@ from .models import (
 )
 from .ui import brand_header, page
 from .vinted_copy import all_details
+from .vinted_fallback import (
+    close_ebay_listing_for_vinted_sale, end_ebay_listing, notify, save_parcel, saved_parcel, save_source,
+    state_for, _set_state,
+)
 from .vinted_prep import _draft, _get_row, _status
 
 router = APIRouter(prefix="/collectibles/vinted", tags=["vinted-listings"])
@@ -308,6 +315,8 @@ def mark_posted(key: str, url: str = Form(...), price: str = Form(""), posted_da
     )
     session.add(listing)
     try:
+        session.flush()
+        save_source(session, listing.id, draft, row.get("paths") or [])
         session.commit()
     except IntegrityError:
         session.rollback()
@@ -321,7 +330,7 @@ def mark_posted(key: str, url: str = Form(...), price: str = Form(""), posted_da
 
 
 @router.get("/live", response_class=HTMLResponse)
-def live_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+def live_page(error: str = "", user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     rows = session.scalars(select(VintedListing).order_by(
         VintedListing.status, VintedListing.posted_at.desc())).all()
     cards = []
@@ -332,10 +341,14 @@ def live_page(user: str = Depends(require_dashboard_user), session: Session = De
         review = ""
         if l.status == VintedListingStatus.ACTIVE:
             due, days, is_due = _review_timing(l.posted_at, now)
-            review_label = ("eBay review due — check that this item is still unsold on Vinted."
-                            if is_due else f"eBay review in {days} {'day' if days == 1 else 'days'}.")
+            state = state_for(session, l.id)
+            review_label = (f"Also live on eBay ({state['ebay_listing_id']}). Mark it sold here if it sells on Vinted."
+                            if state.get("ebay_listing_id")
+                            else f"Couldn't move to eBay: {state['blocked']}" if state.get("blocked")
+                            else "Moving to eBay shortly."
+                            if is_due else f"Moves to eBay in {days} {'day' if days == 1 else 'days'}.")
             review = (f"<p class='vinted-review {'due' if is_due else 'pending'}'><strong>{escape(review_label)}</strong> "
-                      f"Due {due:%d %b %Y, %H:%M %Z}. This does not publish automatically.</p>")
+                      f"Due {due:%d %b %Y, %H:%M %Z}. The Vinted listing stays up; sold items end on the other side.</p>")
             actions = (
                 f"<form method='post' action='/collectibles/vinted/listing/{l.id}/sold' class='inline'>"
                 f"<label>Sold for (AUD)<input name='price' type='number' step='0.01' min='0.01' value='{l.price}'></label>"
@@ -343,6 +356,16 @@ def live_page(user: str = Depends(require_dashboard_user), session: Session = De
                 "<button class='btn small'>Sold on Vinted</button></form>"
                 f"<form method='post' action='/collectibles/vinted/listing/{l.id}/remove' class='inline'>"
                 "<button class='btn small ghost'>Removed from Vinted</button></form>")
+        else:
+            state = state_for(session, l.id)
+            if state.get("delete_from_vinted"):
+                review = ("<p class='vinted-review due'><strong>Sold on eBay. Delete this from Vinted so it can't "
+                          "sell twice.</strong></p>"
+                          f"<form method='post' action='/collectibles/vinted/listing/{l.id}/deleted' class='inline'>"
+                          "<button class='btn small'>Deleted from Vinted</button></form>")
+            elif state.get("end_on_ebay"):
+                review = (f"<p class='vinted-review due'><strong>End eBay listing {escape(str(state.get('ebay_listing_id')))} "
+                          "on eBay: it did not end automatically.</strong></p>")
         cards.append(
             f"<article class='panel vinted-live {l.status.value}'><h3>{escape(name)}</h3>"
             f"<p><a href='{escape(l.url, quote=True)}' target='_blank' rel='noopener'>{escape(l.title)}</a></p>"
@@ -350,6 +373,7 @@ def live_page(user: str = Depends(require_dashboard_user), session: Session = De
             + (f" · sold {_utc(l.sold_at).astimezone(_SYDNEY):%d %b %Y}" if l.sold_at else "") + f"</p>{review}{actions}</article>")
     body = (brand_header("Live on Vinted")
             + "<p><a class='btn ghost' href='/collectibles/vinted'>Vinted preparation</a></p>"
+            + _parcel_form(session, error)
             + ("".join(cards) or "<p>Nothing posted yet. Save a draft or choose <b>Copy listing &amp; photos</b> on the preparation page.</p>")
             + _STYLE)
     return HTMLResponse(page("EzBay — Live on Vinted", body))
@@ -362,6 +386,49 @@ def _active(session: Session, listing_id: str) -> VintedListing:
     return listing
 
 
+def _parcel_form(session: Session, error: str) -> str:
+    parcel = saved_parcel(session)
+    fields = "".join(
+        f"<label>{label}<input name='{key}' type='number' step='0.1' min='0.1' required "
+        f"value='{escape(str(parcel.get(key, '')), quote=True)}'></label>"
+        for key, label in (("weight_g", "Weight (g)"), ("length_cm", "Length (cm)"),
+                           ("width_cm", "Width (cm)"), ("height_cm", "Height (cm)")))
+    status = "Used for every figurine moving to eBay." if parcel else "Needed before any figurine can move to eBay."
+    notice = f"<p class='vinted-review due'>{escape(error)}</p>" if error else ""
+    return (f"<article class='panel'><h3>Packed figurine parcel</h3><p class='muted'>{status} Buyers pay tracked postage "
+            f"calculated from these.</p>{notice}<form method='post' action='/collectibles/vinted/parcel' class='inline'>"
+            f"{fields}<button class='btn small'>Save parcel</button></form></article>")
+
+
+@router.post("/parcel")
+def update_parcel(weight_g: str = Form(...), length_cm: str = Form(...), width_cm: str = Form(...),
+                  height_cm: str = Form(...), user: str = Depends(require_dashboard_user),
+                  session: Session = Depends(get_session)):
+    try:
+        save_parcel(session, weight_g, length_cm, width_cm, height_cm)
+    except ValueError as exc:
+        return RedirectResponse(f"/collectibles/vinted/live?error={quote(str(exc))}", status_code=303)
+    session.commit()
+    record_event(session, actor_type="user", actor_id=user, action="vinted.parcel_saved",
+                 resource_type="platform_config", resource_id="figurine_parcel", outcome="success",
+                 correlation_id=str(uuid.uuid4()),
+                 details={"weight_g": weight_g, "length_cm": length_cm, "width_cm": width_cm, "height_cm": height_cm})
+    return RedirectResponse(f"/collectibles/vinted/live?_saved={quote('Parcel saved')}", status_code=303)
+
+
+@router.post("/listing/{listing_id}/deleted")
+def mark_deleted_from_vinted(listing_id: str, user: str = Depends(require_dashboard_user),
+                             session: Session = Depends(get_session)):
+    if session.get(VintedListing, listing_id) is None:
+        raise HTTPException(status_code=404, detail="Vinted listing not found")
+    _set_state(session, listing_id, delete_from_vinted=False)
+    session.commit()
+    record_event(session, actor_type="user", actor_id=user, action="vinted.listing.deleted_after_ebay_sale",
+                 resource_type="vinted_listing", resource_id=listing_id, outcome="success",
+                 correlation_id=str(uuid.uuid4()), details={})
+    return RedirectResponse(f"/collectibles/vinted/live?_saved={quote('Marked as deleted')}", status_code=303)
+
+
 @router.post("/listing/{listing_id}/sold")
 def mark_sold(listing_id: str, price: str = Form(...), fees: str = Form("0"),
               user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
@@ -371,7 +438,24 @@ def mark_sold(listing_id: str, price: str = Form(...), fees: str = Form("0"),
     amount = _money(price, "sale price")
     fee = _money(fees or "0", "fee", allow_zero=True)
     record_vinted_sale(session, listing, amount, fee, actor=user)
-    return RedirectResponse(f"/collectibles/vinted/live?_saved={quote('Sale recorded')}", status_code=303)
+    message = "Sale recorded"
+    if (shop_listing_id := close_ebay_listing_for_vinted_sale(session, listing)) is not None:
+        session.commit()
+        message = _end_on_ebay(session, listing, shop_listing_id)
+    return RedirectResponse(f"/collectibles/vinted/live?_saved={quote(message)}", status_code=303)
+
+
+def _end_on_ebay(session: Session, listing: VintedListing, shop_listing_id: str) -> str:
+    asyncio.run(end_ebay_listing(shop_listing_id))
+    session.expire_all()
+    link = session.scalar(select(EbayListingLink).where(EbayListingLink.shop_listing_id == shop_listing_id))
+    if link is None or link.status == EbayListingLinkStatus.ENDED:
+        return "Sale recorded and the eBay listing ended"
+    _set_state(session, listing.id, end_on_ebay=True, ebay_listing_id=link.ebay_listing_id)
+    session.commit()
+    notify(f"Sold on Vinted but the eBay listing did NOT end. End it on eBay now: {listing.title}\n"
+           f"eBay {link.ebay_listing_id}: {link.last_error}")
+    return f"Sale recorded, but the eBay listing did NOT end. End {link.ebay_listing_id} on eBay now"
 
 
 def record_vinted_sale(session: Session, listing: VintedListing, amount: Decimal, fee: Decimal, *,

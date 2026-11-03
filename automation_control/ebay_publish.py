@@ -89,6 +89,12 @@ from .models import (
 from .navigation import redirect_back
 from .pricing_safety import assess_listing_price
 from .selling_channels import ebay_channel_block_reason
+from .vinted_fallback import (
+    CATEGORY_ID as FIGURE_CATEGORY_ID,
+    build_inventory_payload as build_figure_inventory_payload,
+    fallback_preflight,
+    is_fallback_listing,
+)
 from .ui import brand_header, page, pill
 
 register_heif_opener()
@@ -280,7 +286,10 @@ def publication_preflight(
     quality = None
     inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
     is_graded = bool(catalog_item and catalog_item.item_type == CatalogItemType.GRADED_CARD)
-    if is_graded:
+    is_figure_fallback = is_fallback_listing(session, listing)
+    if is_figure_fallback:
+        errors.extend(fallback_preflight(session, listing, settings, effective_price))
+    elif is_graded:
         from .graded_cards import graded_preflight
         errors.extend(graded_preflight(session, listing, settings, effective_price))
     elif inventory_item and inventory_item.grading_company:
@@ -302,9 +311,11 @@ def publication_preflight(
     if catalog_item is None:
         errors.append("The catalogue item is missing.")
     else:
-        if catalog_item.item_type not in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD):
+        if catalog_item.item_type not in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD) and not is_figure_fallback:
             errors.append("Direct publishing currently supports single TCG cards and reviewed graded cards only.")
-        if tcg_card is None:
+        if is_figure_fallback:
+            pass
+        elif tcg_card is None:
             errors.append("TCG card details are missing.")
         else:
             card_set = session.get(CardSet, tcg_card.set_id) if tcg_card.set_id else None
@@ -320,7 +331,8 @@ def publication_preflight(
                     "This catalogue record is classified as unofficial. eBay prohibits "
                     "unauthorised trading-card reprints and branded inspired-by items."
                 )
-        category_id = _resolve_category(session, catalog_item, tcg_card, settings.ebay_marketplace_id)
+        category_id = (FIGURE_CATEGORY_ID if is_figure_fallback
+                       else _resolve_category(session, catalog_item, tcg_card, settings.ebay_marketplace_id))
         if category_id is None:
             game = tcg_card.game if tcg_card else None
             errors.append(
@@ -486,6 +498,7 @@ def _build_inventory_item_payload(
 def _build_offer_payload(
     listing: ShopListing, sku: str, category_id: str, settings, *, description: str,
     price_override: Decimal | None = None,
+    fulfillment_policy_id: str | None = None,
 ) -> dict:
     effective_price = price_override if price_override is not None else listing.price
     return {
@@ -503,7 +516,7 @@ def _build_offer_payload(
         "categoryId": category_id,
         "listingDescription": description,
         "listingPolicies": {
-            "fulfillmentPolicyId": settings.ebay_fulfillment_policy_id,
+            "fulfillmentPolicyId": fulfillment_policy_id or settings.ebay_fulfillment_policy_id,
             "paymentPolicyId": settings.ebay_payment_policy_id,
             "returnPolicyId": settings.ebay_return_policy_id,
         },
@@ -1503,6 +1516,8 @@ async def revise_listing_on_ebay(
     if lock.locked():
         raise HTTPException(status_code=409, detail="this listing is already being published or revised")
     async with lock:
+        if is_fallback_listing(session, listing):
+            raise HTTPException(status_code=400, detail="revise this figurine on eBay directly; EzBay only lists it")
         catalog_item = session.get(CatalogItem, listing.catalog_item_id)
         tcg_card = session.get(TcgCard, listing.catalog_item_id)
         card_set = session.get(CardSet, tcg_card.set_id)
@@ -1700,13 +1715,17 @@ async def _publish_to_ebay_locked(
 
     catalog_item = session.get(CatalogItem, listing.catalog_item_id)
     tcg_card = session.get(TcgCard, listing.catalog_item_id)
-    card_set = session.get(CardSet, tcg_card.set_id)
+    is_figure_fallback = is_fallback_listing(session, listing)
+    card_set = session.get(CardSet, tcg_card.set_id) if tcg_card else None
     inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
     image_urls = _prepare_images(session, listing, catalog_item, settings)
-    outgoing_title = outgoing_ebay_title(listing, catalog_item, tcg_card, card_set, inventory_item)
-    outgoing_description = outgoing_ebay_description(
-        listing, catalog_item, tcg_card, card_set, inventory_item, has_own_photo=True,
-    )
+    if is_figure_fallback:
+        outgoing_title, outgoing_description = listing.ebay_title, listing.ebay_description
+    else:
+        outgoing_title = outgoing_ebay_title(listing, catalog_item, tcg_card, card_set, inventory_item)
+        outgoing_description = outgoing_ebay_description(
+            listing, catalog_item, tcg_card, card_set, inventory_item, has_own_photo=True,
+        )
 
     approval = Approval(
         requested_at=datetime.now(UTC),
@@ -1737,13 +1756,17 @@ async def _publish_to_ebay_locked(
     session.add(link)
     session.commit()
 
-    inventory_payload = _build_inventory_item_payload(
-        listing, catalog_item, tcg_card, card_set, inventory_item,
-        image_urls, outgoing_title, outgoing_description,
-    )
+    if is_figure_fallback:
+        inventory_payload = build_figure_inventory_payload(session, listing, image_urls)
+    else:
+        inventory_payload = _build_inventory_item_payload(
+            listing, catalog_item, tcg_card, card_set, inventory_item,
+            image_urls, outgoing_title, outgoing_description,
+        )
     offer_payload = _build_offer_payload(
         listing, link.sku, check.category_id, settings,
         description=outgoing_description, price_override=price_override,
+        fulfillment_policy_id=settings.ebay_figure_fulfillment_policy_id if is_figure_fallback else None,
     )
     adapter = None
     try:

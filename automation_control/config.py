@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     market_alert_imap_use_ssl: bool = True
     ebay_payment_policy_id: str | None = None
     ebay_fulfillment_policy_id: str | None = None
+    # Calculated, buyer-paid tracked parcel, for figurines moving from Vinted.
+    ebay_figure_fulfillment_policy_id: str | None = "266481104017"
     ebay_return_policy_id: str | None = None
     ebay_merchant_location_key: str | None = None
     # The File Exchange bulk-upload path (scripts/export_ebay_bulk_listing.py
