@@ -37,7 +37,11 @@ Operator approved a higher pricing strategy. 12 `confirmed_price` values written
 untouched. Still on hold: Kappa, Polar Bear, two Monchhichi. Operator then approved the fixes,
 applied in this batch after a snapshot: Hedgehog to Uribou, series names, stock and listing
 condition New to Used on 10 loose figures. Second Owl kept as a separate figure, as the
-operator said; priced like the first. New uploads still need pricing.
+operator said; priced like the first. Applied and read back; snapshot
+backups/automation-before-figure-fixes-20261104.db. Not confirmed, proposals awaiting
+operator: Chicken Leg, Hippo, Ox, Christmas gingerbread, Mushroom (possible Vegetable Series
+secret, verify before pricing low). All seven p- uploads still lack a stock link. Monitor's
+`ezbay` restart at 09:34 2026-11-04 was Codex's; `ezbay-vinted-fallback.timer` still absent.
 
 ## Current task — figurine eBay fallback from Vinted (Claude Code, 2026-11-03)
 
