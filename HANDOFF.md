@@ -3,6 +3,18 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## XL promo set correction — Codex, 2026-11-05
+
+Owner asks why XL promos cannot publish. Read-only preflight found zero prices
+and absent TcgCard.set_id for three separate jumbo identities. Existing CardSets
+svp and mep have the correct promo names. Production clean at661366e on Claude
+nl-vault-label-design; no code edits or branch switch needed for bounded data fix.
+Next snapshot and link pokemon-jumbo-svp-049/081 tosvp and pokemon-jumbo-mep-025
+tomep in one audited transaction. Preserve jumbo identities, explicitXL copy,
+photos, quantity and unapproved prices. Recheck preflight for additional issues;
+do not publish or invent prices. No tests needed for this reversible data link;
+verify exact rows and live Studio response.
+
 ## Sealed deck Studio deployment — Codex, 2026-11-05
 
 Owner wants sealed decks in same review/confirm/publish flow. Implementation in
