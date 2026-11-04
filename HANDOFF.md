@@ -39,6 +39,13 @@ No fallback timer changes or marketplace/data writes. Restart also loads existin
 Claude fallback code alreadyonbranch; timer deployment isstillseparate/notdonehere.
 Task complete; refresh page toseeupdatedmenu.
 
+## Branded NL Vault address label (Claude Code, 2026-11-04)
+
+Branch `nl-vault-label-design`, base `e4c9c3a`. Operator supplied a mock-up for the address label.
+Printer is 1-bit, so red becomes white. Logo panel and swoosh are cropped from the mock-up into
+automation_control/label_assets/; its customer details must never be committed. Postage labels are
+untouched. Next: render, test, commit, then an `ezbay` restart to go live.
+
 ## NL Vault Collectables page from live Vinted listings (Claude Code, 2026-11-04)
 
 Branch `storefront-vinted-collectables`, base `6403afe`. Operator chose option A: show live
