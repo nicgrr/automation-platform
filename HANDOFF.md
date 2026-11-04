@@ -24,6 +24,21 @@ with audit records. Before-image saved at Documents/Codex/2026-11-05/
 sealed-studio-before.json. Prices/quantities/photos unchanged. Next restart service,
 then verify live pages and final checks. No external marketplace writes.
 
+### Live verification complete — Codex, 2026-11-05
+
+Deployed09fcce8; ezbay.service restarted successfully and active. Authenticated
+public HTTPS GETs all200 for three Studio pages and allsix actual-product images.
+Each preflight has exactly one blocker: packed weight/dimensions. Score86 until
+measurements saved. All stale raw-TCG/category blockers gone. Prices145/130/89.99,
+quantity1 and two photos preserved. No eBay publication or revision performed.
+Owner next: open Studio, enter PACKED grams and cm, save, review and explicitly
+confirm publication. Three listing IDs: FS12 15ac4264-9c28-41f1-8bde-4eff6c490ead;
+FS11 95195d5e-3143-46ef-9d34-08afdf7a27ce; ST30 6335785f-7056-491b-a47c-13ca708d4b3d.
+Scope is sealed starter decks only; sleeves and XL promos retain their own workflow.
+No changes to Claude labels/collectibles or Vinted. Code ready; measurements remain
+owner input. Regression104passed, final sealed11passed; writes mocked. No live
+publication claimed. Last updated Codex2026-11-05.
+
 ## CRM dashboard outage recovery — Codex, 2026-11-04
 
 User reports blank home-screen app. Reproduced dashboard timeouts; traceback
