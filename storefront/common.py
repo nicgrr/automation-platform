@@ -155,14 +155,19 @@ def _line_art(line: dict, session: Session | None = None) -> str:
 def nav_links(session: Session) -> str:
     """Drawer categories built from what's actually in stock, so the shop
     never advertises a section that would land on an empty page."""
-    from . import departments
+    from . import departments, vinted_showcase
 
     groups = []
     stocked = departments.in_stock(session)
     if stocked:
+        def _count(d, n):
+            if vinted_showcase.is_showing(session, d.slug):
+                return len(vinted_showcase.live_listings(session))
+            return "Soon" if departments.is_coming_soon(d) else n
+
         rows = "".join(
             f"<a href='/shop/{escape(d.slug)}'>{escape(d.name)}"
-            f"<span class='n'>{'Soon' if departments.is_coming_soon(d) else n}</span></a>"
+            f"<span class='n'>{_count(d, n)}</span></a>"
             for d, n in stocked
         )
         groups.append(f"<div class='navgroup'><h4>Departments</h4>{rows}</div>")

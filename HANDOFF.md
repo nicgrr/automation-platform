@@ -37,7 +37,9 @@ Vinted figurines with photo, price and a Buy on Vinted link, then restart the si
 are recorded live; second Owl stays unposted on purpose. Keep STOREFRONT_COMING_SOON on so
 old ShopListings stay hidden; /shop/collectibles shows ACTIVE VintedListing rows instead and
 falls back to coming soon when empty. Nothing is sold through the site. Files:
-storefront/vinted_showcase.py, app.py, common.py, tests. Next: test, commit, restart `nl-vault`.
+storefront/vinted_showcase.py, app.py, common.py, tests. Full pytest passed (real exit code).
+Checked against production data read-only: 17 cards, kept figures and old listings absent.
+Next: restart `nl-vault`, verify on 127.0.0.1:8090. Branch is unmerged; services run from this checkout.
 
 ## Figurine review with the operator, one at a time (Claude Code, 2026-11-04)
 

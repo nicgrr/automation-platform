@@ -26,7 +26,7 @@ from automation_control.models import (
     ShopListing, ShopListingStatus, TcgCard,
 )
 
-from . import catalogue, departments, discounts, live_inventory
+from . import catalogue, departments, discounts, live_inventory, vinted_showcase
 from .assets import DEPARTMENT_ART, GAME_LOGOS
 from .photos import has_own_photo, router as photo_router
 from .brand import logo_lockup, logo_mark
@@ -250,7 +250,10 @@ def home(request: Request, session: Session = Depends(get_session)) -> HTMLRespo
 
     cards = []
     for department, count in stocked:
-        soon = departments.is_coming_soon(department)
+        showing = vinted_showcase.is_showing(session, department.slug)
+        soon = departments.is_coming_soon(department) and not showing
+        if showing:
+            count = len(vinted_showcase.live_listings(session))
         meta = "Coming soon" if soon else f"{count} {'listing' if count == 1 else 'listings'} to explore"
         badge = "<span class='soon-badge'>Coming soon</span>" if soon else ""
         cards.append(
@@ -314,6 +317,33 @@ def _coming_soon_page(session: Session, request: Request, department: department
                  crumbs=crumbs, robots="noindex,follow")
 
 
+def _vinted_showcase_page(session: Session, request: Request, department: departments.Department) -> HTMLResponse:
+    cards = []
+    for listing in vinted_showcase.live_listings(session):
+        title = escape(listing.title)
+        art = (f"<img src='/vinted-photo/{escape(listing.id, quote=True)}' alt='{escape(listing.title, quote=True)}' loading='lazy'>"
+               if vinted_showcase.has_photo(session, listing.id) else "")
+        condition = vinted_showcase.source_details(session, listing.id).get("condition") or ""
+        cards.append(
+            f"<a class='card' href='{escape(listing.url, quote=True)}' target='_blank' rel='noopener noreferrer'>"
+            f"<div class='card-art'>{art}</div>"
+            "<div class='card-body'>"
+            f"<div class='card-title'>{title}</div>"
+            f"<div class='card-sub'>{escape(condition)}</div>"
+            f"<div class='card-price'>{_money(listing.price)}</div>"
+            "<div class='card-sub'>Buy on Vinted</div>"
+            "</div></a>"
+        )
+    body = (
+        f"<h1>{escape(department.name)}</h1>"
+        f"<p class='muted'>{escape(department.blurb)} These are sold through our Vinted shop, "
+        "so tapping one takes you to Vinted to buy it.</p>"
+        f"<div class='grid'>{''.join(cards)}</div>"
+    )
+    crumbs = (("Home", "/"), (department.name, ""))
+    return shell(session, f"{department.name} — NL Vault", body, request=request, crumbs=crumbs)
+
+
 @router.get("/shop/{slug}", response_class=HTMLResponse)
 def department_page(slug: str, request: Request, q: str = Query(""), seg: str = Query("all"),
                     set_id: str = Query("", alias="set"), sort: str = Query(DEFAULT_SORT),
@@ -328,6 +358,8 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
         if parent is not None and code in parent.game_codes and code != parent.game:
             return RedirectResponse(f"/shop/{parent.slug}?sub={quote_plus(code)}", status_code=301)
         raise HTTPException(status_code=404, detail="department not found")
+    if vinted_showcase.is_showing(session, whole.slug):
+        return _vinted_showcase_page(session, request, whole)
     if departments.is_coming_soon(whole):
         return _coming_soon_page(session, request, whole)
 
@@ -907,6 +939,7 @@ def create_app() -> FastAPI:
     app.include_router(bulk_router)
     app.include_router(router)
     app.include_router(photo_router)
+    app.include_router(vinted_showcase.router)
     from .favicon import router as favicon_router
     app.include_router(favicon_router)
     from .assets import router as assets_router
