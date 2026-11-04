@@ -3,6 +3,15 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## CRM dashboard outage recovery — Codex, 2026-11-04
+
+User reports blank home-screen app. Reproduced dashboard timeouts; traceback
+shows repeated external FX timeouts per holding. Isolated fix cf498f5 at
+/home/nic/automation-crm-fx passed24 FX/dashboard tests. Production tree clean;
+copy only scan_ingest/fx.py and regression test, restart ezbay to restore access.
+Preserve Claude storefront branch and all inventory/marketplace data. No data writes.
+Next: authenticate and verify dashboard after restart, record timings.
+
 ## Current task — upload workflow navigation (Codex, 2026-11-04)
 
 Branch `upload-workflow-navigation-20261104`, base `8613c99`; clean tree.
