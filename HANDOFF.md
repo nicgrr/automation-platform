@@ -3,6 +3,22 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Sealed deck Studio deployment — Codex, 2026-11-05
+
+Owner wants sealed decks in same review/confirm/publish flow. Implementation in
+isolated sealed-listing-studio-20261104 atf86de18.104 tests passed plus final11
+sealed tests; two existing Vinted AsyncMock warnings. Current production tree clean
+on Claude nl-vault-label-design229bb42; preserve branch/label files. Deploy ONLY
+config.py,ebay_publish.py,newsealed_studio.py andtests/test_sealed_studio.py.
+Current AU API verified category183457 and New/FactorySealed, required Game/Set;
+existing account policy266481104017 calculated AustraliaPost parcels. No live writes.
+Next snapshot current three draft records then add sealed_studio metadata language
+English and owner-confirmed unopenedcomplete (no invented packedmeasurements).
+Approved FS12=145,FS11=130,ST30=89.99,qty1/two photos each unchanged. Restart ezbay
+and verify authenticated Studio pages show only missing parcel fields; no raw-card
+blockers. No collectible/storefront changes or publication. Snapshot under
+/home/nic/Documents/Codex/2026-11-05. Deploy only files unchanged since31a5478.
+
 ## CRM dashboard outage recovery — Codex, 2026-11-04
 
 User reports blank home-screen app. Reproduced dashboard timeouts; traceback
