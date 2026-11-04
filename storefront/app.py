@@ -338,6 +338,8 @@ def _vinted_showcase_page(session: Session, request: Request, department: depart
         f"<h1>{escape(department.name)}</h1>"
         f"<p class='muted'>{escape(department.blurb)} These are sold through our Vinted shop, "
         "so tapping one takes you to Vinted to buy it.</p>"
+        f"<p class='muted'>New to Vinted? <a href='{escape(vinted_showcase.INVITE_URL, quote=True)}' target='_blank' "
+        "rel='noopener noreferrer'>Sign up with our invite link</a>.</p>"
         f"<div class='grid'>{''.join(cards)}</div>"
     )
     crumbs = (("Home", "/"), (department.name, ""))

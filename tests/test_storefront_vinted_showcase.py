@@ -7,7 +7,7 @@ from PIL import Image
 
 from automation_control.config import get_settings
 from automation_control.models import PlatformConfig, VintedListing, VintedListingStatus
-from storefront import departments, photos
+from storefront import departments, photos, vinted_showcase
 
 from tests.test_departments import add_card, add_collectible, client, session  # noqa: F401
 
@@ -44,6 +44,19 @@ def test_the_page_shows_live_figures_linking_to_vinted(client, session):
     assert "Sonny Angel Owl" in body and "$24.99" in body and "Buy on Vinted" in body
     assert f"href='{URL}'" in body and "rel='noopener noreferrer'" in body
     assert "Coming soon" not in body and "noindex" not in body
+
+
+def test_the_invite_link_is_labelled_and_separate_from_the_buy_links(client, session):
+    add_vinted(session)
+    body = client.get("/shop/collectibles").text
+    assert "Sign up with our invite link" in body
+    assert f"href='{vinted_showcase.INVITE_URL}'" in body
+    assert body.count(vinted_showcase.INVITE_URL) == 1
+    assert f"class='card' href='{URL}'" in body
+
+
+def test_no_invite_link_on_the_coming_soon_page(client, session):
+    assert vinted_showcase.INVITE_URL not in client.get("/shop/collectibles").text
 
 
 def test_old_listings_and_their_prices_stay_hidden(client, session):

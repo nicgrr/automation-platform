@@ -21,6 +21,8 @@ router = APIRouter()
 
 DEPARTMENT_SLUG = "collectibles"
 _SOURCE_PREFIX = "vinted_fallback_source:"
+# The owner's referral link, labelled as ours on the page. Buy links stay direct to each item.
+INVITE_URL = "https://www.vinted.com.au/invite/nlvaultco/LybacAF0z3Cha2ia2m3c4oj2fdcahxbbd"
 
 
 def live_listings(session: Session) -> list[VintedListing]:

@@ -39,7 +39,10 @@ old ShopListings stay hidden; /shop/collectibles shows ACTIVE VintedListing rows
 falls back to coming soon when empty. Nothing is sold through the site. Files:
 storefront/vinted_showcase.py, app.py, common.py, tests. Full pytest passed (real exit code).
 Checked against production data read-only: 17 cards, kept figures and old listings absent.
-Next: restart `nl-vault`, verify on 127.0.0.1:8090. Branch is unmerged; services run from this checkout.
+`nl-vault` restarted and verified 2026-11-04. Operator then asked for their Vinted invite link on
+this page only; added as a labelled line, restart follows. Vinted's AU referral terms do not
+address public posting and can suspend abusive use; operator was told. Branch is unmerged;
+services run from this checkout.
 
 ## Figurine review with the operator, one at a time (Claude Code, 2026-11-04)
 
