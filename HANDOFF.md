@@ -30,6 +30,15 @@ No fallback timer changes or marketplace/data writes. Restart also loads existin
 Claude fallback code alreadyonbranch; timer deployment isstillseparate/notdonehere.
 Task complete; refresh page toseeupdatedmenu.
 
+## NL Vault Collectables page from live Vinted listings (Claude Code, 2026-11-04)
+
+Branch `storefront-vinted-collectables`, base `6403afe`. Operator chose option A: show live
+Vinted figurines with photo, price and a Buy on Vinted link, then restart the site. All 17
+are recorded live; second Owl stays unposted on purpose. Keep STOREFRONT_COMING_SOON on so
+old ShopListings stay hidden; /shop/collectibles shows ACTIVE VintedListing rows instead and
+falls back to coming soon when empty. Nothing is sold through the site. Files:
+storefront/vinted_showcase.py, app.py, common.py, tests. Next: test, commit, restart `nl-vault`.
+
 ## Figurine review with the operator, one at a time (Claude Code, 2026-11-04)
 
 Order: Uribou, Labubu, Owl 1, Owl 2, Chicken Leg, Hippo, Ox, Christmas, Jellyfish, two
