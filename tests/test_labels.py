@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from automation_control.labels import ebay_label_lines, shop_order_label_lines
 from automation_control.models import EbayImportedOrder, ShopOrderStatus
 from tests.test_shop_orders import client, make_order, session  # noqa: F401
@@ -37,7 +39,7 @@ def test_shop_label_page_has_name_address_and_sender(client, session):  # noqa: 
     assert "A Buyer" in page.text and "1 Test St" in page.text
     assert "0404 959 211" in page.text
     assert "150mm 100mm" in page.text and "window.print()" in page.text
-    assert "FROM: NL Vault 0405209496" in page.text
+    assert "data:image/png;base64," in page.text
     assert f"/labels/shop/{order.id}/print" in client.get(f"/shop-orders/{order.id}").text
 
 
@@ -148,3 +150,56 @@ def test_ebay_label_phone_falls_back_to_buyer_registration_address():
         }}}],
     }
     assert ebay_label_lines(snap)[-1] == "0412 000 111"
+
+
+def _text_rows(lines):
+    """Every drawn row of the address, by capturing what the renderer writes."""
+    from PIL import ImageDraw
+
+    import automation_control.labels as labels
+
+    drawn = []
+    real = ImageDraw.ImageDraw.text
+
+    def spy(self, xy, text, *args, **kwargs):
+        drawn.append((xy, text, self.textlength(text, font=kwargs.get("font"))))
+        return real(self, xy, text, *args, **kwargs)
+
+    ImageDraw.ImageDraw.text = spy
+    try:
+        labels.render_landscape_label(lines)
+    finally:
+        ImageDraw.ImageDraw.text = real
+    return drawn
+
+
+@pytest.mark.parametrize("lines", [
+    ["Alex Example", "1 Sample Road", "Example Heights QLD 4000", "0400000000"],
+    ["Alexandria Christodoulopoulos-Fitzgerald", "Unit 12, Level 3, The Very Long Apartment Building Name",
+     "123-125 Extraordinarily Long Boulevard Parade", "Mount Example North Heights NSW 2000", "0400000000"],
+    ["X" * 120, "1 Sample Road"],
+])
+def test_nothing_on_the_label_runs_off_the_edge(lines):
+    from automation_control.labels import LABEL_H, LABEL_W
+
+    for (x, y), _text, width in _text_rows(lines):
+        assert x + width <= LABEL_H
+        assert y < LABEL_W - 20
+
+
+def test_every_character_of_the_address_is_on_the_label():
+    lines = ["Alexandria Christodoulopoulos-Fitzgerald", "1 Sample Road", "Example Heights QLD 4000"]
+    drawn = "".join(text for _xy, text, _width in _text_rows(lines)).replace(" ", "")
+    assert all(line.replace(" ", "") in drawn for line in lines)
+
+
+def test_a_normal_address_keeps_the_postcode_with_its_suburb():
+    rows = [text for _xy, text, _width in _text_rows(["Alex Example", "Example Heights QLD 4000"])]
+    assert "Example Heights QLD 4000" in rows
+
+
+def test_the_label_is_one_bit_at_the_printers_size():
+    from automation_control.labels import render_label_image
+
+    image = render_label_image(["Alex Example", "1 Sample Road"])
+    assert (image.size, image.mode) == ((800, 1200), "1")

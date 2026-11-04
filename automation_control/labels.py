@@ -1,9 +1,11 @@
 """Printable 4x6in (100x150mm) buyer address labels for sold orders."""
 
+import base64
 import os
 import subprocess
 import tempfile
 import uuid
+from pathlib import Path
 from html import escape
 from io import BytesIO
 
@@ -21,7 +23,6 @@ from .models import EbayImportedOrder, ShopOrder
 router = APIRouter(tags=["labels"])
 
 _HOME_COUNTRIES = {"", "au", "aus", "australia"}
-SENDER = "NL Vault 0405209496"
 # Audit action marking an eBay order's address label as printed; the pick
 # run's "Print all labels" skips any order that already has one.
 LABEL_PRINTED_ACTION = "label.print_ebay"
@@ -29,8 +30,11 @@ LABEL_PRINTED_ACTION = "label.print_ebay"
 PRINTER_QUEUE = os.environ.get("LABEL_PRINTER_QUEUE", "HotLabel")
 DPI = 203
 LABEL_W, LABEL_H = 800, 1200  # 100x150mm at 203 dpi; width is a multiple of 8
-_FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-_FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+SENDER_NAME = "NL Vault"
+WEBSITE = "www.nlvault.com.au"
+_ASSETS = Path(__file__).resolve().parent / "label_assets"
+_FONT_REGULAR = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+_FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 
 
 def ebay_label_lines(snapshot: dict) -> list[str]:
@@ -68,10 +72,28 @@ def _font(bold: bool, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(_FONT_BOLD if bold else _FONT_REGULAR, size)
 
 
+def _split_long_word(draw: ImageDraw.ImageDraw, word: str, font, max_width: int) -> list[str]:
+    """Break a word wider than the label, so no part of a name or address is cut off."""
+    parts, part = [], ""
+    for char in word:
+        if part and draw.textlength(part + char, font=font) > max_width:
+            parts.append(part)
+            part = ""
+        part += char
+    return parts + [part]
+
+
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
     out: list[str] = []
     line = ""
     for word in text.split():
+        pieces = _split_long_word(draw, word, font, max_width)
+        for piece in pieces[:-1]:
+            if line:
+                out.append(line)
+                line = ""
+            out.append(piece)
+        word = pieces[-1]
         trial = f"{line} {word}".strip()
         if draw.textlength(trial, font=font) <= max_width or not line:
             line = trial
@@ -81,34 +103,70 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[st
     return out + ([line] if line else [])
 
 
+def _draw_header(draw: ImageDraw.ImageDraw, x: int, y: int, right: int) -> None:
+    label, sender = _font(True, 30), _font(True, 36)
+    draw.text((x, y + 4), "FROM:", font=label, fill=0)
+    x += int(draw.textlength("FROM:", font=label)) + 14
+    draw.text((x, y), SENDER_NAME, font=sender, fill=0)
+    site = _font(True, 28)
+    site_x = right - int(draw.textlength(WEBSITE, font=site))
+    draw.text((site_x, y + 6), WEBSITE, font=site, fill=0)
+    # Globe, then the divider between sender and website.
+    cx, cy, r = site_x - 34, y + 22, 21
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=0, width=3)
+    draw.ellipse((cx - 9, cy - r, cx + 9, cy + r), outline=0, width=2)
+    draw.line((cx - r, cy, cx + r, cy), fill=0, width=2)
+    divider = cx - r - 22
+    draw.line((divider, y - 4, divider, y + 48), fill=0, width=4)
+
+
+def render_landscape_label(lines: list[str]) -> Image.Image:
+    """The branded address label, 1200x800 and greyscale, before it is thresholded."""
+    name, rest = (lines[0], lines[1:]) if lines else ("", [])
+    panel = Image.open(_ASSETS / "panel.png").convert("L")
+    swoosh = Image.open(_ASSETS / "swoosh.png").convert("L")
+    left = panel.width + 36
+    right = LABEL_H - 30
+    width = right - left
+    for scale in (1.0, 0.85, 0.72, 0.6, 0.5, 0.42):
+        image = Image.new("L", (LABEL_H, LABEL_W), 255)  # landscape: 1200 x 800
+        image.paste(panel, (0, 0))
+        draw = ImageDraw.Draw(image)
+        _draw_header(draw, left, 40, right)
+        draw.line((left, 112, right, 112), fill=0, width=4)
+        draw.text((left, 134), "TO:", font=_font(True, 34), fill=0)
+        y = 186
+        rows, sources = [], []
+        for text, bold, size in [(name, True, int(72 * scale)), *[(line, False, int(56 * scale)) for line in rest]]:
+            font = _font(bold, size)
+            sources.append((text, font))
+            for row in _wrap(draw, text, font, width):
+                rows.append((row, font, y))
+                y += int(size * 1.28)
+            if bold:
+                y += 12
+        words_fit = all(draw.textlength(word, font=font) <= width
+                        for text, font in sources for word in text.split())
+        if y <= LABEL_W - 24 and words_fit:
+            break
+    # The swoosh is decoration, so it only appears where it can't touch the address.
+    swoosh_top = LABEL_W - swoosh.height - 6
+    if y <= swoosh_top:
+        # Dithered on its own so it prints as a tone while the address stays crisp.
+        image.paste(swoosh.convert("1", dither=Image.Dither.FLOYDSTEINBERG).convert("L"),
+                    (right - swoosh.width, swoosh_top))
+    for row, font, row_y in rows:
+        draw.text((left, row_y), row, font=font, fill=0)
+    return image
+
+
 def render_label_image(lines: list[str]) -> Image.Image:
     """The label as a 1-bit 800x1200 bitmap, black on white.
 
     The label is laid out landscape (150mm wide x 100mm tall) and then turned
     90 degrees, because the stock feeds through the printer 100mm wide.
     """
-    name, rest = (lines[0], lines[1:]) if lines else ("", [])
-    for scale in (1.0, 0.85, 0.72, 0.6, 0.5):
-        image = Image.new("L", (LABEL_H, LABEL_W), 255)  # landscape: 1200 x 800
-        draw = ImageDraw.Draw(image)
-        margin, width = 60, LABEL_H - 120
-        y = 50
-        draw.text((margin, y), f"FROM: {SENDER}", font=_font(True, 32), fill=0)
-        y += 60
-        draw.line((margin, y, LABEL_H - margin, y), fill=0, width=4)
-        y += 36
-        draw.text((margin, y), "TO", font=_font(True, 32), fill=0)
-        y += 56
-        for text, bold, size in [(name, True, int(78 * scale)), *[(line, False, int(62 * scale)) for line in rest]]:
-            font = _font(bold, size)
-            for row in _wrap(draw, text, font, width):
-                draw.text((margin, y), row, font=font, fill=0)
-                y += int(size * 1.28)
-            if bold:
-                y += 14
-        if y <= LABEL_W - 30:
-            break
-    image = image.rotate(90, expand=True)
+    image = render_landscape_label(lines).rotate(90, expand=True)
     return image.point(lambda p: 255 if p >= 128 else 0).convert("1", dither=Image.Dither.NONE)
 
 
@@ -219,8 +277,10 @@ def label_buttons_html(kind: str, order_id: str, btn_class: str) -> str:
 
 
 def label_page(lines: list[str], *, auto_print: bool) -> str:
-    name, rest = (lines[0], lines[1:]) if lines else ("", [])
-    body = "".join(f"<div class='ln'>{escape(line)}</div>" for line in rest)
+    # The same picture the thermal printer gets, so a browser print can't drift from it.
+    buffer = BytesIO()
+    render_label_image(lines).rotate(-90, expand=True).save(buffer, "PNG")
+    picture = base64.b64encode(buffer.getvalue()).decode()
     script = "<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));</script>" if auto_print else ""
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -228,18 +288,15 @@ def label_page(lines: list[str], *, auto_print: bool) -> str:
         "<style>"
         "@page{size:150mm 100mm;margin:0}"
         "html,body{margin:0;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif}"
-        ".label{box-sizing:border-box;width:150mm;height:100mm;padding:8mm 10mm;overflow:hidden;background:#fff}"
-        ".from{font-size:11pt;font-weight:700;padding-bottom:3mm;margin-bottom:5mm;border-bottom:.4mm solid #000}"
-        ".to{font-size:10pt;font-weight:700;letter-spacing:.1em;margin-bottom:4mm}"
-        ".nm{font-size:26pt;font-weight:700;line-height:1.15;margin-bottom:2mm}"
-        ".ln{font-size:20pt;line-height:1.25}"
+        ".label{width:150mm;height:100mm;overflow:hidden;background:#fff}"
+        ".label img{display:block;width:150mm;height:100mm}"
         ".bar{padding:8px;background:#eee;text-align:center}"
         ".bar button{font-size:16px;padding:10px 22px}"
         "@media print{.bar{display:none}}"
         "@media screen{.label{margin:12px auto;border:1px dashed #999}}"
         "</style></head><body>"
         "<div class='bar'><button onclick='window.print()'>Print label</button></div>"
-        f"<div class='label'><div class='from'>FROM: {escape(SENDER)}</div><div class='to'>TO</div><div class='nm'>{escape(name)}</div>{body}</div>"
+        f"<div class='label'><img src='data:image/png;base64,{picture}' alt='{escape(' '.join(lines), quote=True)}'></div>"
         f"{script}</body></html>"
     )
 

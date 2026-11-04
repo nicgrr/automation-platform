@@ -44,7 +44,9 @@ Task complete; refresh page toseeupdatedmenu.
 Branch `nl-vault-label-design`, base `e4c9c3a`. Operator supplied a mock-up for the address label.
 Printer is 1-bit, so red becomes white. Logo panel and swoosh are cropped from the mock-up into
 automation_control/label_assets/; its customer details must never be committed. Postage labels are
-untouched. Next: render, test, commit, then an `ezbay` restart to go live.
+untouched. Long words wrap or shrink rather than clip. Sender phone removed from the label, per the
+mock-up. tests/test_labels.py and test_pick_run.py passed; full suite not rerun, no test print yet.
+Next: `ezbay` restart to go live, then operator prints a test label.
 
 ## NL Vault Collectables page from live Vinted listings (Claude Code, 2026-11-04)
 
