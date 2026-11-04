@@ -14,6 +14,13 @@ redirect back with escaped error instead of PWA502. Tests mock failures and safe
 GET; verify AU package metadata read-only. No automatic retry/publication; preserve
 owner-entered dimensions/prices. Primary clean5804b35, Claude branch preserved.
 
+Recovery tests PASSED67 in39.03s in isolatedworktree06337d5. Deployment next:
+copy onlyebay_publish.py,sealed_studio.py,test_sealed_studio.py after unchanged-base
+check; restartCRM, authenticatedGET verifies redirect/rendering withoutpublish.
+No inventory/prices/measurements/marketplace mutations. GeteBayDetails firsttwo
+reads returnedXMLerrors; adapter-based retry pending. Official Inventory enums
+confirmMAILING_BOX for mailingbox versus rejectedPACKAGE_THICK_ENVELOPE.
+
 ## XL promo set correction — Codex, 2026-11-05
 
 Owner asks why XL promos cannot publish. Read-only preflight found zero prices
