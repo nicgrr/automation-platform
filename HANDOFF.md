@@ -21,6 +21,15 @@ No inventory/prices/measurements/marketplace mutations. GeteBayDetails firsttwo
 reads returnedXMLerrors; adapter-based retry pending. Official Inventory enums
 confirmMAILING_BOX for mailingbox versus rejectedPACKAGE_THICK_ENVELOPE.
 
+Recovery deployed4ec284e; service restart succeeded. Authenticated publicGET to
+FS12 publish URL now303 back toStudio200. Saved145AUD and300g20x3x15cm preserved;
+outgoingpackage nowMAILING_BOX.67 tests passed, no actualpublicationretry.
+Read-onlyGeteBayDetails could not complete (two upstream XML failures then local
+adapter-name import error); don't claim live AU metadata validation. Change uses
+official Inventory enumMAILING_BOX; actual acceptance remains next owner-confirmed
+publish attempt. Existingfailed offer is retained for safe retry. LastupdatedCodex
+2026-11-05. Owner can reopenStudio and retry publication; no duplicate createdhere.
+
 ## XL promo set correction — Codex, 2026-11-05
 
 Owner asks why XL promos cannot publish. Read-only preflight found zero prices
