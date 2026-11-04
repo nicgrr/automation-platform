@@ -15,6 +15,14 @@ photos, quantity and unapproved prices. Recheck preflight for additional issues;
 do not publish or invent prices. No tests needed for this reversible data link;
 verify exact rows and live Studio response.
 
+Completed XL set links transactionally with three audit events. Snapshot:
+Documents/Codex/2026-11-05/xl-promo-set-before.json. All three preflights now
+have ONLY price minimum blocker ($0 still pending owner approval), quality92.
+Authenticated public Studio pages all200 and missing-set errors gone, XL copy
+retained. No prices/photos/quantities changed; no eBay writes or restart.
+Next owner enters and saves approved prices, then reviews and confirms publication.
+Last updated Codex2026-11-05.
+
 ## Sealed deck Studio deployment — Codex, 2026-11-05
 
 Owner wants sealed decks in same review/confirm/publish flow. Implementation in
