@@ -24,6 +24,7 @@ BASE = "AUD"
 ENDPOINT = "https://api.frankfurter.app/latest"
 TTL_SECONDS = 24 * 3600
 TIMEOUT = 5
+FAILURE_RETRY_SECONDS = 60
 
 # Only used if the network has never succeeded. Deliberately round numbers --
 # they are a floor on usefulness, not a claim of accuracy, and anything shown
@@ -33,6 +34,7 @@ FALLBACK_RATES = {"USD": 1.50, "EUR": 1.65, "AUD": 1.0}
 _lock = threading.Lock()
 _cache: dict[str, float] = {}
 _fetched_at: float = 0.0
+_retry_after: float = 0.0
 # Whether the rates currently in use came from the network. Exposed so the
 # UI can say "approximate" honestly rather than presenting a hardcoded
 # fallback as though it were a real rate.
@@ -66,16 +68,21 @@ def _fetch_rates() -> dict[str, float]:
 
 def rates(force: bool = False) -> dict[str, float]:
     """Current AUD-per-unit rates, cached for `TTL_SECONDS`."""
-    global _fetched_at, _is_live
+    global _fetched_at, _is_live, _retry_after
     with _lock:
         fresh = _cache and (time.time() - _fetched_at) < TTL_SECONDS
         if fresh and not force:
             return dict(_cache)
+        if not force and time.monotonic() < _retry_after:
+            return dict(_cache or FALLBACK_RATES)
         try:
             _cache.update(_fetch_rates())
             _fetched_at = time.time()
             _is_live = True
+            _retry_after = 0.0
         except Exception:
+            # One failed request must not become one timeout per holding.
+            _retry_after = time.monotonic() + FAILURE_RETRY_SECONDS
             if not _cache:
                 _is_live = False
                 return dict(FALLBACK_RATES)
@@ -91,6 +98,8 @@ def to_aud(amount, currency: str) -> float | None:
     if amount is None:
         return None
     code = (currency or "").upper()
+    if code == BASE:
+        return float(amount)
     rate = rates().get(code)
     if rate is None:
         return None
