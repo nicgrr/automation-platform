@@ -1488,6 +1488,23 @@ def move_listing_photo(
     return RedirectResponse(f"/shop-listings/{listing_id}/ebay-preview", status_code=303)
 
 
+@router.get("/shop-listings/{listing_id}/publish-to-ebay")
+def recover_publish_page(
+    listing_id: str,
+    user: str = Depends(require_dashboard_user),
+    session: Session = Depends(get_session),
+):
+    """A browser reload must return to review, never repeat a marketplace write."""
+    listing = session.get(ShopListing, listing_id)
+    if listing is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+    link = session.scalar(select(EbayListingLink).where(EbayListingLink.shop_listing_id == listing_id))
+    query = ("error=" + quote("eBay publish failed: " + link.last_error)
+             if link and link.status == EbayListingLinkStatus.FAILED and link.last_error
+             else "notice=" + quote("Review the listing before confirming publication."))
+    return RedirectResponse(f"/shop-listings/{listing_id}/ebay-preview?{query}", status_code=303)
+
+
 @router.post("/shop-listings/{listing_id}/publish-to-ebay")
 async def publish_to_ebay(
     listing_id: str,
@@ -1865,6 +1882,11 @@ async def _publish_to_ebay_locked(
             correlation_id=str(uuid.uuid4()),
             details={"error": str(exc)},
         )
+        if is_sealed:
+            return RedirectResponse(
+                f"/shop-listings/{listing_id}/ebay-preview?error={quote('eBay publish failed: ' + str(exc))}",
+                status_code=303,
+            )
         raise HTTPException(status_code=502, detail=f"eBay publish failed: {exc}") from exc
     finally:
         if adapter is not None:

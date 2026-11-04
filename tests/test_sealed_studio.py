@@ -95,6 +95,7 @@ async def test_publish_requires_confirmation_and_uses_sealed_payload(session, mo
     result = await ebay_publish.publish_to_ebay(listing.id, confirmation='publish', user='test', session=session)
     assert result.status_code == 303
     payload = adapter.upsert_inventory_item.await_args.args[1]
+    assert payload['packageWeightAndSize']['packageType'] == 'MAILING_BOX'
     assert payload['condition'] == 'NEW' and 'conditionDescriptors' not in payload
     assert payload['product']['aspects']['Game'] == ['One Piece CCG']
     assert payload['packageWeightAndSize']['weight'] == {'value': .35, 'unit': 'KILOGRAM'}
@@ -131,3 +132,33 @@ def test_reserved_stock_blocked(session):
     session.get(InventoryItem, listing.inventory_item_id).status = InventoryStatus.RESERVED
     session.flush()
     assert not ebay_publish.publication_preflight(session, listing, _configured_settings()).ready
+
+
+def test_reload_publish_returns_to_studio_without_writes(client, session):
+    listing = deck(session)
+    session.add(EbayListingLink(shop_listing_id=listing.id, sku=listing.id, marketplace_id='EBAY_AU',
+                               status=EbayListingLinkStatus.FAILED, last_error='Invalid postage package'))
+    session.commit()
+    response = client.get(f'/shop-listings/{listing.id}/publish-to-ebay', follow_redirects=False)
+    assert response.status_code == 303
+    assert '/ebay-preview?error=' in response.headers['location']
+    assert 'Invalid%20postage%20package' in response.headers['location']
+    assert listing.status == ShopListingStatus.DRAFT
+
+
+@pytest.mark.asyncio
+async def test_sealed_publish_failure_returns_review_page(session, monkeypatch):
+    from automation_control.ebay_publish import EbayApiError
+    listing = deck(session)
+    monkeypatch.setattr(ebay_publish, 'get_settings', _configured_settings)
+    monkeypatch.setattr(ebay_publish, 'ebay_services', lambda settings: (object(), object()))
+    monkeypatch.setattr(ebay_publish, 'valid_user_access_token', AsyncMock(return_value='tok'))
+    adapter = AsyncMock()
+    adapter.get_offers.return_value = []
+    adapter.create_offer.return_value = 'failed-offer'
+    adapter.publish_offer.side_effect = EbayApiError('Invalid postage package')
+    monkeypatch.setattr(ebay_publish, 'EbayWriteAdapter', lambda *a, **kw: adapter)
+    response = await ebay_publish.publish_to_ebay(listing.id, confirmation='publish', user='test', session=session)
+    assert response.status_code == 303
+    assert '/ebay-preview?error=' in response.headers['location']
+    adapter.publish_offer.assert_awaited_once()

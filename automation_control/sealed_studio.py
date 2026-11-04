@@ -42,7 +42,7 @@ def parcel_payload(data):
         raise ValueError('Add the packed weight and dimensions in Sealed product details.')
     return {'weight': {'value': float(positive(data['weight_g']) / 1000), 'unit': 'KILOGRAM'},
             'dimensions': {**{k: float(positive(data[k + '_cm'])) for k in ('length', 'width', 'height')}, 'unit': 'CENTIMETER'},
-            'packageType': 'PACKAGE_THICK_ENVELOPE'}
+            'packageType': 'MAILING_BOX'}
 
 
 def reviewed_data(language, complete, weight_g, length_cm, width_cm, height_cm):
