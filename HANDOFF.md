@@ -3,6 +3,17 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Publish error recovery — Codex, 2026-11-05
+
+User screenshot405 traced logs: FS12 Studio save succeeded06:01:13; publishPOST
+failed502 at06:01:23, eBay25101 InvalidPostagePackage PackageThickEnvelope.
+PWA reconnectGET toPOST-only publish endpoint caused405. Existing offer342369382011
+failed/unpublished. Next isolated worktree: useMAILING_BOX for sealed decks,
+GET publish route redirects safely toStudio (never publishes), sealed API failures
+redirect back with escaped error instead of PWA502. Tests mock failures and safe
+GET; verify AU package metadata read-only. No automatic retry/publication; preserve
+owner-entered dimensions/prices. Primary clean5804b35, Claude branch preserved.
+
 ## XL promo set correction — Codex, 2026-11-05
 
 Owner asks why XL promos cannot publish. Read-only preflight found zero prices
