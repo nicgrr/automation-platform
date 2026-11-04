@@ -19,6 +19,11 @@ and verify authenticated Studio pages show only missing parcel fields; no raw-ca
 blockers. No collectible/storefront changes or publication. Snapshot under
 /home/nic/Documents/Codex/2026-11-05. Deploy only files unchanged since31a5478.
 
+Deployment files copied; metadata seeded transactionally for exactly three drafts
+with audit records. Before-image saved at Documents/Codex/2026-11-05/
+sealed-studio-before.json. Prices/quantities/photos unchanged. Next restart service,
+then verify live pages and final checks. No external marketplace writes.
+
 ## CRM dashboard outage recovery — Codex, 2026-11-04
 
 User reports blank home-screen app. Reproduced dashboard timeouts; traceback

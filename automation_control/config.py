@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     ebay_fulfillment_policy_id: str | None = None
     # Calculated, buyer-paid tracked parcel, for figurines moving from Vinted.
     ebay_figure_fulfillment_policy_id: str | None = "266481104017"
+    # Verified calculated Australia Post parcel policy; never use letter postage for decks.
+    ebay_sealed_fulfillment_policy_id: str | None = "266481104017"
     ebay_return_policy_id: str | None = None
     ebay_merchant_location_key: str | None = None
     # The File Exchange bulk-upload path (scripts/export_ebay_bulk_listing.py
