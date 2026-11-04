@@ -908,3 +908,14 @@ Last updated for Vinted audit: Codex, 2026-10-31.
 Last updated for Vinted identity fields: Codex, 2026-11-01.
 
 Last updated for Vinted copy workflow and conditional eBay fallback: Codex, 2026-11-02.
+
+### Recovery verified — Codex, 2026-11-04
+
+Deployed FX cooldown and AUD bypass in production commit8786fc6; 24 tests passed.
+Restart used sudo systemctl after plain systemctl required authentication; completed
+normal90s stop grace. Authenticated public HTTPS checks all200: root/dashboard7.2s
+cold,1.6s warm; listings0.21s; add-stock immediate. No inventory, prices, uploads or
+marketplace changes. Owner should close/reopen home-screen app. Isolated fix and
+regression tests: /home/nic/automation-crm-fx. Production remains on Claude's
+storefront-vinted-collectables branch with own FX patch committed. Task resolved
+server-side; await user confirmation of home-screen app recovery.
