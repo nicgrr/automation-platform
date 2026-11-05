@@ -12,6 +12,12 @@ KeepOTHERtype until properlot publishing supported; neverpretend singleTCGcard.
 Next review shipping withowner (holder mayrequireparcel ratherthanletter), then
 preparelot support and reviewthree sleeveprices. Productionclean17b9ec0.
 
+Promo lot draft updated: three removableEnglishpromos plusred/blackholder,
+qty1lot,44.99 unchanged,NearMint,photos unchanged; snapshotpromo-lot-copy-before.json
+andAuditEvent saved. Notpublished; OTHERtype stillneedslotpublishing path.
+Next owner confirms shipping format/packedsize, thenprepare publication; sleeves
+remainunpriced. LastupdatedCodex2026-11-05.
+
 ## FS12 retry and remaining product review — Codex, 2026-11-05
 
 Owner explicitly requests publishstarterdeck andgo through others. Next retry
