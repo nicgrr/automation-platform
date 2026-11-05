@@ -3,6 +3,18 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Sleeve publishing — Codex, 2026-11-06
+
+Owner explicitlyrequests publishthree sleevepacks nowat4.99each. Correctidentities
+photoverified: ShiningFatesEevee,PerfectOrderZygarde,PrismaticEvolutionsEevee;sealed
+65eachqty1. Next isolatedbranch from9d56c83 add reviewedACCESSORY sleevehandler
+viaexistingStudio facade,category183461verifiedAUtaxonomy,NEW condition,required
+aspects andexistingdefaultletterpolicy4AUD. Do notuse deckparcelpolicy/measurements.
+Enableonlyreviewedcard-sleeve metadata boundtocatalog. Preserveprices/identities/
+photos. Tests then deployownedfiles/restart,seedthreeconfirmedmetadata withaudit/
+snapshot, preflightandpublishwithguardedapproval,verifyremotePUBLISHED andprices.
+Nootherlistingschanges. Productionclean9d56c83 onClaude branch.
+
 ## Sleeve identity correction — Codex, 2026-11-06
 
 Owner correctsPaldeanFates toPerfectOrder, unsurecharacter. Inspected actualimage
