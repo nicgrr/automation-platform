@@ -86,7 +86,7 @@ from .models import (
     TcgCard,
 )
 
-from . import sealed_studio
+from . import parcel_studio
 from .navigation import redirect_back
 from .pricing_safety import assess_listing_price
 from .selling_channels import ebay_channel_block_reason
@@ -287,12 +287,12 @@ def publication_preflight(
     quality = None
     inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
     is_graded = bool(catalog_item and catalog_item.item_type == CatalogItemType.GRADED_CARD)
-    is_sealed = sealed_studio.is_sealed(session, listing)
+    is_parcel_product = parcel_studio.is_supported(session, listing)
     is_figure_fallback = is_fallback_listing(session, listing)
     if is_figure_fallback:
         errors.extend(fallback_preflight(session, listing, settings, effective_price))
-    elif is_sealed:
-        errors.extend(sealed_studio.preflight(session, listing, settings))
+    elif is_parcel_product:
+        errors.extend(parcel_studio.preflight(session, listing, settings))
     elif is_graded:
         from .graded_cards import graded_preflight
         errors.extend(graded_preflight(session, listing, settings, effective_price))
@@ -315,9 +315,9 @@ def publication_preflight(
     if catalog_item is None:
         errors.append("The catalogue item is missing.")
     else:
-        if catalog_item.item_type not in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD) and not is_figure_fallback and not is_sealed:
+        if catalog_item.item_type not in (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD) and not is_figure_fallback and not is_parcel_product:
             errors.append("Direct publishing currently supports single TCG cards and reviewed graded cards only.")
-        if is_figure_fallback or is_sealed:
+        if is_figure_fallback or is_parcel_product:
             pass
         elif tcg_card is None:
             errors.append("TCG card details are missing.")
@@ -335,7 +335,7 @@ def publication_preflight(
                     "This catalogue record is classified as unofficial. eBay prohibits "
                     "unauthorised trading-card reprints and branded inspired-by items."
                 )
-        category_id = (sealed_studio.CATEGORY_ID if is_sealed else FIGURE_CATEGORY_ID if is_figure_fallback
+        category_id = (parcel_studio.category_id(session, listing) if is_parcel_product else FIGURE_CATEGORY_ID if is_figure_fallback
                        else _resolve_category(session, catalog_item, tcg_card, settings.ebay_marketplace_id))
         if category_id is None:
             game = tcg_card.game if tcg_card else None
@@ -364,8 +364,8 @@ def publication_preflight(
                         f"{len(local_photos)} local card photo(s) will upload to the public image bucket only after confirmation."
                     )
 
-        if is_sealed:
-            quality = sealed_studio.quality(session, listing, photos)
+        if is_parcel_product:
+            quality = parcel_studio.quality(session, listing, photos)
             errors.extend(f"{c.label}: {c.detail}" for c in quality.blockers)
         elif tcg_card is not None:
             card_set = session.get(CardSet, tcg_card.set_id) if tcg_card.set_id else None
@@ -386,15 +386,15 @@ def publication_preflight(
                 errors.append(f"{failed.label}: {failed.detail}")
 
     condition = listing.condition or (inventory_item.condition if inventory_item else "")
-    if tcg_card is not None and not is_graded and not is_sealed and _ungraded_condition_descriptor(condition) is None:
+    if tcg_card is not None and not is_graded and not is_parcel_product and _ungraded_condition_descriptor(condition) is None:
         errors.append(
             "Direct publishing supports Near Mint, Lightly Played, Moderately Played, "
             "or Heavily Played ungraded card conditions."
         )
 
     link = session.scalar(select(EbayListingLink).where(EbayListingLink.shop_listing_id == listing.id))
-    if is_sealed and allow_active_revision and link and not link.ebay_offer_id:
-        errors.append("This sealed listing uses the legacy eBay API; revise it on eBay directly.")
+    if is_parcel_product and allow_active_revision and link and not link.ebay_offer_id:
+        errors.append("This parcel-product listing uses the legacy eBay API; revise it on eBay directly.")
     if link:
         if link.status == EbayListingLinkStatus.ACTIVE:
             if not allow_active_revision:
@@ -419,7 +419,7 @@ def publication_preflight(
             errors.append(
                 "This item is already live through Bulk Upload. Direct publish is blocked to prevent a duplicate listing."
             )
-        elif latest_export and latest_export.status == EbayExportItemStatus.CONFIRMED and (is_graded or is_sealed):
+        elif latest_export and latest_export.status == EbayExportItemStatus.CONFIRMED and (is_graded or is_parcel_product):
             errors.append("This listing uses the legacy eBay API. Its product fields cannot be safely revised here yet; edit the existing listing on eBay.")
         elif latest_export and latest_export.status == EbayExportItemStatus.PENDING:
             errors.append(
@@ -954,8 +954,8 @@ def ebay_publish_preview(
     tcg_card = session.get(TcgCard, listing.catalog_item_id)
     card_set = session.get(CardSet, tcg_card.set_id) if tcg_card and tcg_card.set_id else None
     inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
-    is_sealed = sealed_studio.is_sealed(session, listing)
-    can_generate = bool(catalog_item and tcg_card and not is_sealed)
+    is_parcel_product = parcel_studio.is_supported(session, listing)
+    can_generate = bool(catalog_item and tcg_card and not is_parcel_product)
     recommendation = (
         generated_ebay_title(listing, catalog_item, tcg_card, card_set, inventory_item)
         if can_generate else listing.title
@@ -1105,8 +1105,8 @@ def ebay_publish_preview(
             f"<form method='post' action='/shop-listings/{escape(listing.id)}/ebay-ai-suggest' class='panel ai-suggest'>"
             "<div><h2>AI listing suggestion</h2><p class='subtitle'>Uses your card photos plus the verified CRM identity. It saves a draft for review and never updates eBay by itself.</p></div>"
             "<button class='btn' type='submit'>Suggest title &amp; description</button></form>"
-            if settings.anthropic_api_key and not is_sealed else
-            ("" if is_sealed else "<div class='callout warn'>AI suggestions are unavailable until the Anthropic photo-identification key is configured.</div>")
+            if settings.anthropic_api_key and not is_parcel_product else
+            ("" if is_parcel_product else "<div class='callout warn'>AI suggestions are unavailable until the Anthropic photo-identification key is configured.</div>")
         )
         + "<div class='studio-grid'><section class='panel studio-editor'><h2>Listing content</h2>"
         + f"<form method='post' action='/shop-listings/{escape(listing.id)}/ebay-studio'>"
@@ -1120,11 +1120,11 @@ def ebay_publish_preview(
         + f"<label class='studio-field'>Price (AUD)<input name='price' type='number' min='1' step='0.01' value='{listing.price}' required></label>"
         + f"<label class='studio-field'>Quantity<input name='quantity' type='number' min='1' step='1' value='{listing.quantity}' required></label>"
         + f"<label class='studio-field wide'>Condition<input name='condition' value='{escape(listing.condition or '', quote=True)}' maxlength='120' required></label>"
-        + (sealed_studio.fields_html(session, listing) if is_sealed else finish_field(listing))
+        + (parcel_studio.fields_html(session, listing) if is_parcel_product else finish_field(listing))
         + "</div><div class='studio-actions'><button class='btn'>Save listing draft</button>"
         + "<button class='btn ghost' name='action' value='reset'>Use generated copy</button></div></form></section>"
         + f"<aside class='panel studio-quality'><h2>Quality checks</h2>{quality_html}</aside></div>"
-        + ("<section class='panel'><div class='photo-heading'><div><h2>Actual-product photos</h2>" if is_sealed else "<section class='panel'><div class='photo-heading'><div><h2>Actual-card photos</h2>")
+        + ("<section class='panel'><div class='photo-heading'><div><h2>Actual-product photos</h2>" if is_parcel_product else "<section class='panel'><div class='photo-heading'><div><h2>Actual-card photos</h2>")
         + f"<p class='subtitle'>{len(check.photos)}/{MAX_EBAY_PHOTOS} images · first photo is the search image</p></div>"
         + "<div class='photo-upload-actions'>"
         + f"<form method='post' action='/shop-listings/{escape(listing.id)}/ebay-photos' enctype='multipart/form-data' class='photo-upload'>"
@@ -1209,14 +1209,13 @@ def save_listing_studio(
     if not condition.strip():
         error = error or "Condition cannot be empty."
     sealed_values = None
-    if sealed_studio.is_sealed(session, listing):
+    if parcel_studio.is_supported(session, listing):
         try:
-            sealed_values = sealed_studio.reviewed_data(sealed_language, sealed_complete == "yes",
+            sealed_values = parcel_studio.reviewed_data(sealed_language, sealed_complete == "yes",
                 sealed_weight_g, sealed_length_cm, sealed_width_cm, sealed_height_cm)
         except ValueError as exc:
             error = str(exc)
-        if condition.strip() != "New":
-            error = "Sealed decks must use New condition; opened decks require separate review."
+        error = error or parcel_studio.condition_error(session, listing, condition.strip())
     if error:
         return RedirectResponse(
             f"/shop-listings/{listing_id}/ebay-preview?error={quote(error)}", status_code=303,
@@ -1227,14 +1226,14 @@ def save_listing_studio(
         "finish": listing.finish, "price": str(listing.price), "quantity": listing.quantity, "condition": listing.condition,
     }
     if sealed_values is not None:
-        before["sealed_details"] = sealed_studio.details(session, listing)
+        before["sealed_details"] = parcel_studio.details(session, listing)
     listing.ebay_title = clean_title
     listing.ebay_description = clean_description[:5000]
     listing.price = price_value
     listing.quantity = quantity_value
     listing.condition = condition.strip()
     if sealed_values is not None:
-        sealed_studio.save_details(session, listing, sealed_values)
+        parcel_studio.save_details(session, listing, sealed_values)
     else:
         save_finish(listing, finish)
     session.commit()
@@ -1264,7 +1263,7 @@ def suggest_listing_studio_copy(
     listing = session.get(ShopListing, listing_id)
     if listing is None:
         raise HTTPException(status_code=404, detail="listing not found")
-    if sealed_studio.is_sealed(session, listing):
+    if parcel_studio.is_supported(session, listing):
         raise HTTPException(status_code=400, detail="Review sealed-product copy in Listing Studio.")
     settings = get_settings()
     if not settings.anthropic_api_key:
@@ -1570,12 +1569,12 @@ async def revise_listing_on_ebay(
             raise HTTPException(status_code=400, detail="revise this figurine on eBay directly; EzBay only lists it")
         catalog_item = session.get(CatalogItem, listing.catalog_item_id)
         tcg_card = session.get(TcgCard, listing.catalog_item_id)
-        is_sealed = sealed_studio.is_sealed(session, listing)
+        is_parcel_product = parcel_studio.is_supported(session, listing)
         card_set = session.get(CardSet, tcg_card.set_id) if tcg_card else None
         inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
         image_urls = _prepare_images(session, listing, catalog_item, settings)
-        if is_sealed:
-            title, description = sealed_studio.copy_for(listing)
+        if is_parcel_product:
+            title, description = parcel_studio.copy_for(listing)
         else:
             title = outgoing_ebay_title(listing, catalog_item, tcg_card, card_set, inventory_item)
             description = outgoing_ebay_description(
@@ -1583,14 +1582,14 @@ async def revise_listing_on_ebay(
             )
         inventory_payload = offer_payload = None
         if direct_revision and link:
-            inventory_payload = (sealed_studio.build_inventory_payload(session, listing, image_urls)
-                if is_sealed else _build_inventory_item_payload(
+            inventory_payload = (parcel_studio.build_inventory_payload(session, listing, image_urls)
+                if is_parcel_product else _build_inventory_item_payload(
                     listing, catalog_item, tcg_card, card_set, inventory_item,
                     image_urls, title, description,
                 ))
             offer_payload = _build_offer_payload(
                 listing, link.sku, check.category_id, settings, description=description,
-                fulfillment_policy_id=settings.ebay_sealed_fulfillment_policy_id if is_sealed else None,
+                fulfillment_policy_id=settings.ebay_sealed_fulfillment_policy_id if is_parcel_product else None,
             )
 
         approval = Approval(
@@ -1771,13 +1770,13 @@ async def _publish_to_ebay_locked(
 
     catalog_item = session.get(CatalogItem, listing.catalog_item_id)
     tcg_card = session.get(TcgCard, listing.catalog_item_id)
-    is_sealed = sealed_studio.is_sealed(session, listing)
+    is_parcel_product = parcel_studio.is_supported(session, listing)
     is_figure_fallback = is_fallback_listing(session, listing)
     card_set = session.get(CardSet, tcg_card.set_id) if tcg_card else None
     inventory_item = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
     image_urls = _prepare_images(session, listing, catalog_item, settings)
-    if is_sealed:
-        outgoing_title, outgoing_description = sealed_studio.copy_for(listing)
+    if is_parcel_product:
+        outgoing_title, outgoing_description = parcel_studio.copy_for(listing)
     elif is_figure_fallback:
         outgoing_title, outgoing_description = listing.ebay_title, listing.ebay_description
     else:
@@ -1815,8 +1814,8 @@ async def _publish_to_ebay_locked(
     session.add(link)
     session.commit()
 
-    if is_sealed:
-        inventory_payload = sealed_studio.build_inventory_payload(session, listing, image_urls)
+    if is_parcel_product:
+        inventory_payload = parcel_studio.build_inventory_payload(session, listing, image_urls)
     elif is_figure_fallback:
         inventory_payload = build_figure_inventory_payload(session, listing, image_urls)
     else:
@@ -1827,7 +1826,7 @@ async def _publish_to_ebay_locked(
     offer_payload = _build_offer_payload(
         listing, link.sku, check.category_id, settings,
         description=outgoing_description, price_override=price_override,
-        fulfillment_policy_id=(settings.ebay_sealed_fulfillment_policy_id if is_sealed else settings.ebay_figure_fulfillment_policy_id if is_figure_fallback else None),
+        fulfillment_policy_id=(settings.ebay_sealed_fulfillment_policy_id if is_parcel_product else settings.ebay_figure_fulfillment_policy_id if is_figure_fallback else None),
     )
     adapter = None
     try:
@@ -1882,7 +1881,7 @@ async def _publish_to_ebay_locked(
             correlation_id=str(uuid.uuid4()),
             details={"error": str(exc)},
         )
-        if is_sealed:
+        if is_parcel_product:
             return RedirectResponse(
                 f"/shop-listings/{listing_id}/ebay-preview?error={quote('eBay publish failed: ' + str(exc))}",
                 status_code=303,
