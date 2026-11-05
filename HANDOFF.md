@@ -25,6 +25,19 @@ identities,holderincluded,NearMint,300g20x3x15cm; preserveprice44.99/qty1/photos
 RestartCRM,verifyauthenticatedStudio,thenpublish via existingconfirmation under
 priorownerrequest. Productioncleansince93b6735; noClaude files touched.
 
+### Promo lot LIVE — Codex, 2026-11-06
+
+Deployedadc837a,restartedCRM,authenticatedpublicStudio200READY quality100. Seeded
+reviewedlotPlatformConfig withAuditEvent andsnapshot Documents/Codex/2026-11-06/
+promo-lot-before.json. Published viaexistingapprovalworkflow: offer344586587011,
+listing267834641143 at44.99AUD. RemoteGETconfirmedPUBLISHED/ACTIVE,sold0,category
+183455. Qty1complete3-cardlot+holder,NearMint description,USED_EXCELLENT=3000,
+parcel300g20x3x15cm MAILING_BOX withcalculatedAustraliaPostpolicy266481104017.
+Noerrors/duplicates. Existingdeck/single/graded/Vinted regressions passed115total;
+twoexistingAsyncMock warnings. Isolatedworktreeecf8d7d. Remainingbatch: three
+sealed65-sleevepacks prices0; askownerprices orresearchsoldcomparables. No sleeve
+publication orpriceassumptions. LastupdatedCodex2026-11-06.
+
 ## Removable promo lot identity — Codex, 2026-11-05
 
 Owner confirms three cards are removable fromred/blackholder. Next snapshot
