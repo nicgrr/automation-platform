@@ -3,6 +3,21 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Sleeve price research — Codex, 2026-11-06
+
+Owner requested soldcomparisons, notpriceapproval. Found matching65-pack soldpages:
+ShiningFates US336534565633 displaysUS2.50+4.78shipping,OBO soacceptedpriceuncertain;
+Mimikyu AU406967909915 soldOct17 displaysAU10.90 including0.99buyerfee,shippingunknown;
+PrismaticETB US376377794607 soldAug10 displaysUS3.99 (4sold), USshippingvariesbylocale.
+StronglocalactiveShiningFates134029933941=AU3+2.20letter,184sold buthistoricalsale
+pricesunknown. PrismaticAU317889990396 indexedactive8.95+3.40; mixedvariant offers
+excludedasexactsoldcomps. Suggested askingprices subjectownerreview: Shining3.99,
+Mimikyu7.99,Prismatic6.99 AUD pluspostage; no draftprices changed orpublication.
+DirectURLs https://www.ebay.com/itm/336534565633,
+https://www.ebay.com.au/itm/406967909915,https://www.ebay.com/itm/376377794607,
+https://www.ebay.com.au/itm/134029933941. USprices explicitlynotAUD; noFXconversion.
+Next owner choosesprices; accessorypublishing support stillneeded. LastupdatedCodex.
+
 ## Promo lot parcel workflow — Codex, 2026-11-06
 
 Owner confirms same packedshipping asdecks:300g20x3x15cm. Priorpublishauthorization
