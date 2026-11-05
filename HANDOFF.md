@@ -12,6 +12,15 @@ box anddispatch2229 using guardedworkflow; verifyremoteactive. Then inspectpromo
 publishing unsupportedproducts. Productioncleanceff94e; no codechanges planned
 in this publicationbatch. Existing snapshots/audits retained; reuseexistingoffer.
 
+FS12 COMPLETE: reusedoffer342369382011, live listing267834008913 at145AUD;
+remoteGETverifiedPUBLISHED/ACTIVE,sold0,localACTIVE/noerrors. Remainingreview:
+promo display saved44.99 qty1NearMint withfront/back; inspected bothphotos showing
+red/black three-card display (079/080/081), no proofsealed. Need ownerconfirm
+whether three removablecards inholder orsingleprinteddisplay before choosing
+publishingtype. Three sleevessealed65each qty1 prices0. No otherchanges. Next
+reviewdisplay first withowner, then sleeveprices andproductpublishing support.
+LastupdatedCodex2026-11-05.
+
 ## Remaining XL publication — Codex, 2026-11-05
 
 Owner says "All8.99" in response to remaining MegaKangaskhanXL andSkeledirgeXL
