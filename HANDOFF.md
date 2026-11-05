@@ -30,6 +30,20 @@ workflow for FS11 at130AUD/ST30 at89.99AUD. This is explicitly authorized by
 Record returned eBay IDs and verify remote offer published; no duplicate retries.
 Production cleanbe8f66b; no code edits or service restart required.
 
+### Publication blocked by dispatch postcode — Codex, 2026-11-05
+
+Saved both300g values transactionally with audit and before snapshot
+Documents/Codex/2026-11-05/decks-weight-before.json. Confirmed publish attempts
+FS11 offer343183567011 andST30 offer343183643011 FAILED with eBay25016/216007
+"Please enter a valid postcode". No live listingIDs returned. Existing offers
+retained for safe retry; no freshduplicate offers needed. Read-only GET current
+merchant location200: citySydney,stateNSW,countryAU,postalCode missing(None).
+Next ask owner dispatchpostcode, update location within publication scope after
+before snapshot/checkpoint, retry existing offers. Do not invent Sydney2000.
+XL prices remain0; owner requested soldsearch links provided forjumbo049/025/081;
+eBay search pages unavailable tobrowsertool, no verified soldprices claimed.
+LastupdatedCodex2026-11-05; publication authorization persists.
+
 ## Publish error recovery — Codex, 2026-11-05
 
 User screenshot405 traced logs: FS12 Studio save succeeded06:01:13; publishPOST
