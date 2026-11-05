@@ -5,6 +5,19 @@ handoff protocol in `AGENTS.md`.
 
 Sleeve deployment result: owned code copied; three metadata records snapshotted and audited; all three preflights ready, quality100, category183461. API confirms Type required and New1000 supported. Next restart and execute authorized publication, verify live offers. 121 tests passed.
 
+## Sleeve publication completed — Codex, 2026-11-06
+
+Deployed c54e090, restarted ezbay.service. All three existing sleeve listings published
+through guarded route on explicit owner instruction. eBay GET offer confirms PUBLISHED /
+ACTIVE, AUD4.99 each, qty1, letter policy265296854017 ($4). Live IDs:
+- Shining Fates Eevee: 267834764402, offer344762282011.
+- Perfect Order Zygarde: 267834764447, offer344762412011.
+- Prismatic Evolutions Eevee: 267834764504, offer344762602011.
+All local links active/no error; authenticated public Studio pages200 with sleeve fields.
+121 regression tests passed; only two existing Vinted AsyncMock warnings. Reviewed metadata
+snapshot: Documents/Codex/2026-11-06/sleeve-publish-before.json; audit rows saved.
+No other listings modified. Sleeve task complete; no further publication pending here.
+
 ## Sleeve deployment checkpoint — Codex, 2026-11-06
 
 Isolated implementation 40c7d10; 121 tests passed (two existing Vinted AsyncMock warnings). Production clean at636d573. Next copy owned sleeve_studio.py, parcel_studio.py, ebay_publish.py and test_sleeve_studio.py; snapshot/seed reviewed metadata for the three existing sleeve listings, restart CRM, verify/preflight and publish under explicit owner instruction. No other products touched.
