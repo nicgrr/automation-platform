@@ -20,6 +20,16 @@ Audit records committed with data; snapshot remaining-deck-dimensions-before.jso
 under Documents/Codex/2026-11-05. No prices/photos/quantities changed and no eBay
 writes yet. Awaiting owner weight confirmation and threeXL askingprices.
 
+### Authorized publication execution — Codex, 2026-11-05
+
+Owner now confirms FS11/ST30 each300g packed. XL prices pending sold comparisons;
+provide eBayAU sold search links, do not publishXL. Next snapshot two metadata
+records, save300g with audit, preflight each and invoke existing confirmed publish
+workflow for FS11 at130AUD/ST30 at89.99AUD. This is explicitly authorized by
+"Publish the others for me" plus confirmed shipping. Preserve photos/quantity1.
+Record returned eBay IDs and verify remote offer published; no duplicate retries.
+Production cleanbe8f66b; no code edits or service restart required.
+
 ## Publish error recovery — Codex, 2026-11-05
 
 User screenshot405 traced logs: FS12 Studio save succeeded06:01:13; publishPOST
