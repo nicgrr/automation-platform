@@ -3,6 +3,15 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Removable promo lot identity — Codex, 2026-11-05
+
+Owner confirms three cards are removable fromred/blackholder. Next snapshot
+listingb741c128-e2b4-4e5d-8aa6-8942f8c056bc, update title/description tothree-card
+promo lot withholder, preserving44.99price,qty1,NearMint,photos. No sealedclaim.
+KeepOTHERtype until properlot publishing supported; neverpretend singleTCGcard.
+Next review shipping withowner (holder mayrequireparcel ratherthanletter), then
+preparelot support and reviewthree sleeveprices. Productionclean17b9ec0.
+
 ## FS12 retry and remaining product review — Codex, 2026-11-05
 
 Owner explicitly requests publishstarterdeck andgo through others. Next retry
