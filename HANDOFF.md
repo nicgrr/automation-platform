@@ -52,6 +52,17 @@ then retry existing FS11/ST30 offers via confirmed publish workflow at130/89.99.
 Audit location update; retain duplicate guards and check remotePUBLISHED status.
 No XL publication pendingprices. Productioncleanf6dd95e, no code changes.
 
+### Publication complete — Codex, 2026-11-05
+
+Dispatch postcode2229 saved via update_location_details204 and GETverified;
+existing address otherwise preserved. Before snapshotdispatch-location-before.json
+under Documents/Codex/2026-11-05 and localAuditEvent recorded. Reused both existing
+offers: FS11 live267833788619 atAUD130; ST30 live267833788644 atAUD89.99.
+Remote GEToffers verifiedPUBLISHED,listingACTIVE,prices exact,soldQuantity0.
+EzBay linksACTIVE with no errors. No duplicates created. XL cards staydraft pending
+owner prices; FS12 not retried in this action (owner previously handling it).
+No code changes/restart. LastupdatedCodex2026-11-05.
+
 ## Publish error recovery — Codex, 2026-11-05
 
 User screenshot405 traced logs: FS12 Studio save succeeded06:01:13; publishPOST
