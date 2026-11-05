@@ -3,6 +3,15 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Sleeve prices approved — Codex, 2026-11-06
+
+Owner says setallto4.99, referring tothree65-sleevepacks only. Productioncleanee9358d.
+Next snapshot andtransactionally update ShopListing prices0->4.99AUD forShiningFates
+2893414d-169f-4921-9182-6641c56cb276,PaldeanFates457891f8-abac-432e-8159-9204a12109eb,
+Prismatic208d3c33-7578-4822-85e3-48dd151edcb2 withauditrecords. Preservequantity1,
+Newsealedcondition,photos anddraftstatus. Verify readback. No code orliveeBay changes
+inthispriceupdate; accessorypublishing support remainsoutstanding.
+
 ## Sleeve price research — Codex, 2026-11-06
 
 Owner requested soldcomparisons, notpriceapproval. Found matching65-pack soldpages:
