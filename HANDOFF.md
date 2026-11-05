@@ -15,6 +15,11 @@ snapshot with audits. Await required weight/prices before dependent publishing.
 Productionclean5e67fd7 on Claude branch, no code changes. Publication authorization
 persists; do not ask permission again once required information supplied.
 
+Saved and verified FS11/ST30 dimensions20x3x15cm; weights left blank as before.
+Audit records committed with data; snapshot remaining-deck-dimensions-before.json
+under Documents/Codex/2026-11-05. No prices/photos/quantities changed and no eBay
+writes yet. Awaiting owner weight confirmation and threeXL askingprices.
+
 ## Publish error recovery — Codex, 2026-11-05
 
 User screenshot405 traced logs: FS12 Studio save succeeded06:01:13; publishPOST
