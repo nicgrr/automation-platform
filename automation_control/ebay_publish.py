@@ -1589,7 +1589,7 @@ async def revise_listing_on_ebay(
                 ))
             offer_payload = _build_offer_payload(
                 listing, link.sku, check.category_id, settings, description=description,
-                fulfillment_policy_id=settings.ebay_sealed_fulfillment_policy_id if is_parcel_product else None,
+                fulfillment_policy_id=parcel_studio.fulfillment_policy_id(session, listing, settings) if is_parcel_product else None,
             )
 
         approval = Approval(
@@ -1826,7 +1826,7 @@ async def _publish_to_ebay_locked(
     offer_payload = _build_offer_payload(
         listing, link.sku, check.category_id, settings,
         description=outgoing_description, price_override=price_override,
-        fulfillment_policy_id=(settings.ebay_sealed_fulfillment_policy_id if is_parcel_product else settings.ebay_figure_fulfillment_policy_id if is_figure_fallback else None),
+        fulfillment_policy_id=(parcel_studio.fulfillment_policy_id(session, listing, settings) if is_parcel_product else settings.ebay_figure_fulfillment_policy_id if is_figure_fallback else None),
     )
     adapter = None
     try:

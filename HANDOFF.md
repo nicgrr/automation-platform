@@ -3,6 +3,8 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+Sleeve deployment result: owned code copied; three metadata records snapshotted and audited; all three preflights ready, quality100, category183461. API confirms Type required and New1000 supported. Next restart and execute authorized publication, verify live offers. 121 tests passed.
+
 ## Sleeve deployment checkpoint — Codex, 2026-11-06
 
 Isolated implementation 40c7d10; 121 tests passed (two existing Vinted AsyncMock warnings). Production clean at636d573. Next copy owned sleeve_studio.py, parcel_studio.py, ebay_publish.py and test_sleeve_studio.py; snapshot/seed reviewed metadata for the three existing sleeve listings, restart CRM, verify/preflight and publish under explicit owner instruction. No other products touched.
