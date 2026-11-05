@@ -3,6 +3,10 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Sleeve deployment checkpoint — Codex, 2026-11-06
+
+Isolated implementation 40c7d10; 121 tests passed (two existing Vinted AsyncMock warnings). Production clean at636d573. Next copy owned sleeve_studio.py, parcel_studio.py, ebay_publish.py and test_sleeve_studio.py; snapshot/seed reviewed metadata for the three existing sleeve listings, restart CRM, verify/preflight and publish under explicit owner instruction. No other products touched.
+
 ## Sleeve publishing — Codex, 2026-11-06
 
 Owner explicitlyrequests publishthree sleevepacks nowat4.99each. Correctidentities
