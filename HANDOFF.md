@@ -3,6 +3,19 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Promo lot parcel workflow — Codex, 2026-11-06
+
+Owner confirms same packedshipping asdecks:300g20x3x15cm. Priorpublishauthorization
+and saved44.99 apply. AUtaxonomy read-only verified183455CCGMixedCardLots,
+requiredGame,condition1000New/3000Used. Next isolatedbranch from503b8ab implement
+reviewed OTHER-cardlot handler withparcel fields, correctlotcategory/USED condition,
+explicitcardcount/holder/aspects, supportedvia sharedparcel facade alongside sealed
+workflow. Do notmisclassify catalog asTCGsingle; do not enable arbitraryOTHERitems.
+Tests forpreflight/save/publish/duplicate-safe recovery; preserve sealed tests.
+Then seedonlyconfirmedlot metadata withsnapshot/audit,deployownedfiles/restart,
+publish through existingapproval flow at44.99, verifyremote. No sleeveprices yet.
+Productionclean503b8ab onClaude branch. Needhandoff beforeeach mutationbatch.
+
 ## Removable promo lot identity — Codex, 2026-11-05
 
 Owner confirms three cards are removable fromred/blackholder. Next snapshot
