@@ -44,6 +44,14 @@ XL prices remain0; owner requested soldsearch links provided forjumbo049/025/081
 eBay search pages unavailable tobrowsertool, no verified soldprices claimed.
 LastupdatedCodex2026-11-05; publication authorization persists.
 
+### Dispatch postcode and retry — Codex, 2026-11-05
+
+Owner supplied2229. Authorized next: GET/snapshot existing merchantlocation,
+update only address postalCode to2229 preserving other fields, GET verify,
+then retry existing FS11/ST30 offers via confirmed publish workflow at130/89.99.
+Audit location update; retain duplicate guards and check remotePUBLISHED status.
+No XL publication pendingprices. Productioncleanf6dd95e, no code changes.
+
 ## Publish error recovery — Codex, 2026-11-05
 
 User screenshot405 traced logs: FS12 Studio save succeeded06:01:13; publishPOST
