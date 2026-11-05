@@ -15,6 +15,12 @@ RecordAccessory green/blackcolor andinventory correctionnote; no eBaywrites.
 Onlyone listing/inventory useaffectedcatalog. Productioncleancc84ac4.
 PriorMimikyu soldresearch no longer applies; price4.99ownerapproved stays.
 
+Identitycorrection completed/audited andreadbackverified. Samecatalog/inventory/
+listingIDs retained, catalogue anddraftcopy nowPerfectOrderZygarde65packsealed;
+price4.99,qty1,photo preserved. Beforeimageperfect-order-sleeves-before.json saved
+underDocuments/Codex/2026-11-06. LegacycatalogIDcontainsoldsetslug butisopaque;
+notduplicated/renamed. No liveeBay change; stilldraft pendingaccessorypublishing.
+
 ## Sleeve prices approved — Codex, 2026-11-06
 
 Owner says setallto4.99, referring tothree65-sleevepacks only. Productioncleanee9358d.
