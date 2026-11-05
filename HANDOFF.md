@@ -3,6 +3,17 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Zapdos XL publication — Codex, 2026-11-05
+
+Owner approvesZapdos8.99AUD; prior explicit publication request remains active.
+Next snapshot draft566c6464-6019-40d5-800b-04eb1b73b160 price0, save8.99 withaudit,
+preflight/publish through guardedworkflow, GETverify remoteoffer. Qty1NearMint,
+XL/Jumbo identity and two photos preserved. Existing defaultpolicy265296854017
+read-only verified AustraliaPostStandardLetter4AUD plus optionalpickup. Owner
+requested large-letter shipping; use existing flatletter service (no invented
+parcel measurements). OtherXL prices stillpending. Productionclean88e0b50,
+no code changes. Do not create duplicate if existing link becomesactive.
+
 ## Remaining listings publication — Codex, 2026-11-05
 
 Owner explicitly requested publication of the other starter decks and XL cards.
