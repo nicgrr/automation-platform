@@ -12,6 +12,11 @@ Prismatic208d3c33-7578-4822-85e3-48dd151edcb2 withauditrecords. Preservequantity
 Newsealedcondition,photos anddraftstatus. Verify readback. No code orliveeBay changes
 inthispriceupdate; accessorypublishing support remainsoutstanding.
 
+Completed: allthree sleeveprices4.99AUD savedwithAuditEvents andreadbackverified;
+quantity/statuspreserved. SnapshotDocuments/Codex/2026-11-06/sleeve-prices-before.json.
+No eBay writes. Stilldrafts pendingaccessorypublishing support/postage review.
+LastupdatedCodex2026-11-06.
+
 ## Sleeve price research — Codex, 2026-11-06
 
 Owner requested soldcomparisons, notpriceapproval. Found matching65-pack soldpages:
