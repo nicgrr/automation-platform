@@ -3,6 +3,18 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Sleeve identity correction — Codex, 2026-11-06
+
+Owner correctsPaldeanFates toPerfectOrder, unsurecharacter. Inspected actualimage
+edce099aa6c44429a1be23f64ae7dcdc.jpg: greenZygardeCore/Cellart, notMimikyu.
+OfficialPokemon PerfectOrderETB productpage confirms65sleeves; ownerconfirmsset.
+Next snapshot/correct CatalogItem.name andsameShopListing title/ebaytitle/descriptions
+for457891f8-abac-432e-8159-9204a12109eb toPerfectOrderZygarde. PreserveexistingIDs
+andforeignkeys toavoidduplicates,4.99price,qty1,sealed65pack,photo,draftstatus.
+RecordAccessory green/blackcolor andinventory correctionnote; no eBaywrites.
+Onlyone listing/inventory useaffectedcatalog. Productioncleancc84ac4.
+PriorMimikyu soldresearch no longer applies; price4.99ownerapproved stays.
+
 ## Sleeve prices approved — Codex, 2026-11-06
 
 Owner says setallto4.99, referring tothree65-sleevepacks only. Productioncleanee9358d.
