@@ -14,6 +14,12 @@ requested large-letter shipping; use existing flatletter service (no invented
 parcel measurements). OtherXL prices stillpending. Productionclean88e0b50,
 no code changes. Do not create duplicate if existing link becomesactive.
 
+ZapdosXL COMPLETE: saved8.99 withAuditEvent, published existingdraft; remoteoffer
+343186983011 confirmedPUBLISHED/ACTIVE listing267833788915 at8.99AUD,sold0.
+Postage existing4AUD AustraliaPostletter/pickup policy. Local linkACTIVE,errorNone.
+Snapshot Documents/Codex/2026-11-05/zapdos-xl-before-publish.json. No otheritem
+changes; Kangaskhan/SkeledirgeXL remainpendingprices. LastupdatedCodex2026-11-05.
+
 ## Remaining listings publication — Codex, 2026-11-05
 
 Owner explicitly requested publication of the other starter decks and XL cards.
