@@ -3,6 +3,15 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## FS12 retry and remaining product review — Codex, 2026-11-05
+
+Owner explicitly requests publishstarterdeck andgo through others. Next retry
+existingFS12 offer342369382011 atapproved145AUD,qty1,300g20x3x15cm, correctedmailing
+box anddispatch2229 using guardedworkflow; verifyremoteactive. Then inspectpromo
+ display44.99 andthree0-price sleevepacks for next review. No inventedprices or
+publishing unsupportedproducts. Productioncleanceff94e; no codechanges planned
+in this publicationbatch. Existing snapshots/audits retained; reuseexistingoffer.
+
 ## Remaining XL publication — Codex, 2026-11-05
 
 Owner says "All8.99" in response to remaining MegaKangaskhanXL andSkeledirgeXL
