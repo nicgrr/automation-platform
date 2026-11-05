@@ -3,6 +3,18 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Remaining listings publication — Codex, 2026-11-05
+
+Owner explicitly requested publication of the other starter decks and XL cards.
+FS11/ST30 prices130/89.99 approved; owner now confirms same package dimensions
+as FS12 (20x3x15cm). Packed weight not explicitly confirmed: async question asks
+whether both are300g. Three XL prices remain0; async asks owner prices. Owner says
+XL shipping is large-letter size; preserve that preference, do not fabricate
+postage weight or prices. Next save only confirmed two deck dimensions after
+snapshot with audits. Await required weight/prices before dependent publishing.
+Productionclean5e67fd7 on Claude branch, no code changes. Publication authorization
+persists; do not ask permission again once required information supplied.
+
 ## Publish error recovery — Codex, 2026-11-05
 
 User screenshot405 traced logs: FS12 Studio save succeeded06:01:13; publishPOST
