@@ -12,6 +12,13 @@ letterpolicy, confirm remoteoffersPUBLISHED with prices/IDs. Preserveqty1,NearMi
 twophotos andXLidentity. Zapdosalreadyactive untouched; decks unchanged. No code
 changes/restart. Guard against any preexistinglive link before publish.
 
+RemainingXL COMPLETE: MegaKangaskhanXL listing267833789117 offer343187881011;
+SkeledirgeXL listing267833789135 offer343187976011. BothremoteGETverifiedPUBLISHED,
+listingACTIVE at8.99AUD,sold0; local linksACTIVE/noerrors. Preservedqty1/photos,
+4AUDletter policy. Snapshotremaining-xl-before-publish.json underDocuments/Codex/
+2026-11-05 plusprice andpublicationaudits. AllthreeXL nowlive8.99each. Noother
+changes. LastupdatedCodex2026-11-05.
+
 ## Zapdos XL publication — Codex, 2026-11-05
 
 Owner approvesZapdos8.99AUD; prior explicit publication request remains active.
