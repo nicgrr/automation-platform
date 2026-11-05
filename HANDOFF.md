@@ -3,6 +3,15 @@
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
+## Remaining XL publication — Codex, 2026-11-05
+
+Owner says "All8.99" in response to remaining MegaKangaskhanXL andSkeledirgeXL
+prices. Prior publishauthorization applies. Productionclean27718e9. Next snapshot
+bothdrafts, save8.99AUD each with audits, preflight andpublish using existing4AUD
+letterpolicy, confirm remoteoffersPUBLISHED with prices/IDs. Preserveqty1,NearMint,
+twophotos andXLidentity. Zapdosalreadyactive untouched; decks unchanged. No code
+changes/restart. Guard against any preexistinglive link before publish.
+
 ## Zapdos XL publication — Codex, 2026-11-05
 
 Owner approvesZapdos8.99AUD; prior explicit publication request remains active.
