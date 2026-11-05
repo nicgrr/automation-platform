@@ -16,6 +16,15 @@ Then seedonlyconfirmedlot metadata withsnapshot/audit,deployownedfiles/restart,
 publish through existingapproval flow at44.99, verifyremote. No sleeveprices yet.
 Productionclean503b8ab onClaude branch. Needhandoff beforeeach mutationbatch.
 
+Promo lot implementation tested inisolatedpromo-lot-publishing ecf8d7d.
+115passed22.20s, twoexistingVintedAsyncMock warnings. FinalenumUSED_EXCELLENT maps
+verified3000Used inlotcategory183455. Deploy onlyebay_publish.py,newparcel_studio.py,
+newcard_lot_studio.py,newtest_card_lot_studio.py afterunchangedbasecheck.
+Then snapshot/seed exactlyone reviewedlot record withcatalogbinding,three card
+identities,holderincluded,NearMint,300g20x3x15cm; preserveprice44.99/qty1/photos.
+RestartCRM,verifyauthenticatedStudio,thenpublish via existingconfirmation under
+priorownerrequest. Productioncleansince93b6735; noClaude files touched.
+
 ## Removable promo lot identity — Codex, 2026-11-05
 
 Owner confirms three cards are removable fromred/blackholder. Next snapshot
