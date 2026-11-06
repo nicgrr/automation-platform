@@ -8,7 +8,13 @@ Owner-approved Vaporeon/Charizard corrections applied atomically and read back; 
 backups/printing-corrections-20261106.json, script scripts/correct_printings_20261106.py.
 Vaporeon now jp-sv8a-030 (030/187), Radiant Charizard svJL003/021, qty1 each, prices0,
 2photos each unchanged. Charizard reference official card45803.
-Next batch: repair unpublished multilingual draft names/set codes from already-reviewed photo
+37 unpublished drafts refreshed and audited (backups/multilingual-drafts-20261106.json).
+No quantities/prices/photos/catalogue IDs changed. Next batch: remote description-only revisions
+for26 current direct active shared-back offers (23old +3new). Read currentoffer, preserveall writable
+fields, updateonly listingDescription, verifylive GetItem and offer non-description equality.
+First Yanma267805604307 thenrest afterreadback. Save before/after snapshots; current DBfilters
+re-read each. No full ListingStudio revise action (it could change title/price/photos).
+Earlier plan: repair unpublished multilingual draft names/set codes from already-reviewed photo
 facts; no catalogue ID merges. Preserve live records, quantity, price, photos. Then read remote
 descriptions and perform approved description-only shared-back notice revisions, one first.
 
