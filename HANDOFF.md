@@ -1,5 +1,21 @@
 # Handoff
 
+## Pokemon front uploads — Codex, 2026-11-06
+
+Read-only review of new batches 7a7b1c8a-10b1-47e1-8a27-970b27ffdc25 (40),
+3fd7a5b0-4f32-4e58-ad47-1bf5082c49f9 (40), d51f20d2-2e82-44fc-8681-c87033d1eca8 (9).
+All89 front files exist; SHA256 scan across historical pair fronts found no identical-file
+duplicates involving new photos. This does NOT exclude same physical card rephotographed.
+First six recognized: Charmander ready existing listing; Charmeleon, Charizard ex SVP196,
+Bombirdier ex234, Mega Camerupt ex156, Stoutland156 need review. Other83 failed.
+One read-only extraction retry confirmed Anthropic400 invalid_request_error: credit balance
+is too low. No retry loop; owner needs replenish provider credits before standard recognition
+can resume. Six representative backs attached already; remaining pending recognition.
+No stock/listing/quantity/marketplace changes, no auto-apply. After credits restored retry failed
+pairs in these existing batches, check identity/finish/duplicates and ask new-stock quantities.
+Do not upload again or create replacement batches. Preserve Claude storefront feed work.
+
+
 ## NL Vault new-items feed for the Discord bot — Claude Code, 2026-11-06
 
 Branch `nl-vault-label-design` (also what the services run), base `bb8c2dd`; tree clean at start.
