@@ -12,6 +12,7 @@ import re
 
 from scripts.convert_to_ebay_template import sanitize_title
 
+from .card_display import display_name, display_set, language_family, printed_set_code
 from .models import CardSet, CatalogItem, InventoryItem, TcgCard
 
 
@@ -72,6 +73,8 @@ def _printed_number(card: TcgCard, card_set: CardSet | None) -> str:
         return ""
     if "/" in number or card.game not in {"pokemon", "pokemon_japan"} or not number.isdigit():
         return number
+    if language_family(card.language) == 'zh':
+        return number  # Never infer Chinese numbering from an English/Japanese set total.
     total = (card_set.printed_total or card_set.total) if card_set else None
     if not total:
         return number
@@ -141,15 +144,19 @@ def build_single_card_ebay_title(
     """Build an exact-printing eBay title without exceeding 80 characters."""
     raw_number = _clean(card.number)
     components = {
-        "name": _without_embedded_number(_clean(catalog_item.name), raw_number),
+        "name": _without_embedded_number(_clean(display_name(catalog_item, card)), raw_number),
         "number": _printed_number(card, card_set),
-        "set": _compact_set_name(card_set.name, card.game) if card_set else "",
+        "set": _compact_set_name(display_set(card, card_set), card.game) if card_set else "",
         "rarity": _clean(card.rarity),
         "parallel": _clean(card.parallel),
         "finish": _finish(card, inventory),
         "game": _GAME_TITLES.get(card.game, _clean(card.game.replace("_", " ")).title()),
         "language": _clean(card.language or "English"),
     }
+    if language_family(card.language) == 'zh':
+        code = printed_set_code(card.set_code) or printed_set_code(card_set.name if card_set else '')
+        if code and code.lower() not in components['number'].lower():
+            components['number'] = code + ' ' + components['number']
     if components["parallel"]:
         components["name"] = _clean(re.sub(
             rf"\(\s*{re.escape(components['parallel'])}\s*\)",

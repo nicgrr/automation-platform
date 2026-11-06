@@ -27,6 +27,14 @@ _RARITY_STAR_INSTRUCTIONS = (
     "star that is not printed, and do not drop one that is."
 )
 
+_CHINESE_INSTRUCTIONS = (
+    "For Chinese Pokemon cards, preserve the printed set code (for example CBB2C) in set_name "
+    "and all leading zeroes and digits in card_number (for example 0113, not 113 or 13). "
+    "Do not replace Chinese numbering or set names with English/Japanese equivalents. "
+    "Report Simplified Chinese or Traditional Chinese as visible, and give the English name "
+    "in parentheses after the printed name when known. Flag obscured digits as unreadable; do not guess. "
+)
+
 _FOIL_INSTRUCTIONS = (
     "Also return foil_observation: a short, literal description of where you "
     "can see holographic or foil texture on the card IN THIS PHOTO -- for "
@@ -69,7 +77,7 @@ def _extraction_prompt_front_and_back(game: str) -> str:
         "if slabbed). If a field for a given card is not clearly legible, list "
         "its name in that card's unreadable_fields rather than guessing a value "
         "for it. If no card is clearly identifiable in the photo, return an "
-        "empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS + " " + _RARITY_STAR_INSTRUCTIONS
+        "empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS + " " + _RARITY_STAR_INSTRUCTIONS + " " + _CHINESE_INSTRUCTIONS
     )
 
 
@@ -86,7 +94,7 @@ def _extraction_prompt_front_only(game: str) -> str:
         "number isn't visible from the front alone. If a field for a given card "
         "is not clearly legible, list its name in that card's unreadable_fields "
         "rather than guessing a value for it. If no card is clearly identifiable "
-        "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS + " " + _RARITY_STAR_INSTRUCTIONS
+        "in the photo, return an empty list. " + _BBOX_INSTRUCTIONS + " " + _FOIL_INSTRUCTIONS + " " + _RARITY_STAR_INSTRUCTIONS + " " + _CHINESE_INSTRUCTIONS
     )
 
 

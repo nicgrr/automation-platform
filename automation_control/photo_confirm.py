@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .audit import record_event
+from .card_display import display_name, display_set, english_name, language_family, printed_set_code
 from .auth import require_dashboard_user
 from .database import get_session
 from .ebay_photo_batch import _link_pair_inventory, _name_aliases, _normalise, _refresh_batch_counts
@@ -101,22 +102,32 @@ def catalogue_guess(session: Session, pair: ListingPhotoPair) -> tuple[CatalogIt
     over the stocked "130/222", and "Extra copy" double-listed one card.
     Still ambiguous after that means no guess, so the operator searches.
     """
+    facts = pair.extracted or {}
+    observed_language = language_family(facts.get("language"))
     if pair.proposed_catalog_item_id:
         item = session.get(CatalogItem, pair.proposed_catalog_item_id)
         card = session.get(TcgCard, pair.proposed_catalog_item_id)
-        return (item, card) if item and card else None
+        if item and card and (not observed_language or language_family(card.language) == observed_language):
+            return item, card
     facts = pair.extracted or {}
     number = str(facts.get("card_number") or "").strip()
     if not number:
         return None
-    names = _name_aliases(facts.get("character"))
+    names = _name_aliases(facts.get("character")) | _name_aliases(english_name(facts.get("character")))
     base = number.split("/", 1)[0]
     rows = session.execute(
         select(CatalogItem, TcgCard).join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id)
         .where((TcgCard.number == number) | (TcgCard.number == base) | TcgCard.number.like(f"{base}/%"))
     ).all()
     matches = [(item, card) for item, card in rows
-               if _normalise(item.name) in names and (card.number == number or "/" not in number or "/" not in (card.number or ""))]
+               if (_normalise(item.name) in names or _normalise(english_name(item.name)) in names)
+               and (not observed_language or language_family(card.language) == observed_language)
+               and (card.number == number or "/" not in number or "/" not in (card.number or ""))]
+    observed_code = printed_set_code(str(facts.get('set_code') or facts.get('set_name') or ''))
+    if observed_code:
+        matches = [(item, card) for item, card in matches
+                   if observed_code == (printed_set_code(card.set_code) or printed_set_code(
+                       (session.get(CardSet, card.set_id).name if card.set_id and session.get(CardSet, card.set_id) else '')))]
     if len(matches) > 1:
         held = [(item, card) for item, card in matches if any(_holdings(session, item.id))]
         matches = held or matches
@@ -209,8 +220,8 @@ def confirm_next(
         item, card = guess
         card_set = session.get(CardSet, card.set_id) if card.set_id else None
         identity = (
-            f"<h2 class='card-name'>{escape(item.name)}</h2>"
-            f"<p class='card-facts'>{escape(card_set.name if card_set else card.set_id or '')} · "
+            f"<h2 class='card-name'>{escape(display_name(item, card))}</h2>"
+            f"<p class='card-facts'>{escape(display_set(card, card_set) or card.set_id or '')} · "
             f"<b>{escape(card.number or '')}</b> · {escape(card.rarity or '')} · {escape(card.language or '')}</p>"
         )
         listings, stock = _holdings(session, item.id)
@@ -277,9 +288,7 @@ def _choice_html(listings: list[ShopListing], stock: list[InventoryItem]) -> str
 
 def _missing_card_html(session: Session, pair: ListingPhotoPair, batch_id: str, skipped: set[int]) -> str:
     facts = pair.extracted or {}
-    names = sorted(_name_aliases(facts.get("character")))
-    english = next((n for n in names if n.isascii()), "")
-    display = english.title() if english else str(facts.get("character") or "")
+    display = english_name(str(facts.get("character") or ""))
     card_set = _sibling_set(session, pair)
     action = _confirm_url(batch_id, skipped).replace("/confirm", f"/confirm/{pair.id}/catalogue", 1)
     set_field = (
@@ -318,16 +327,17 @@ def confirm_add_catalogue(
     if card_set is None:
         if not set_name.strip():
             raise HTTPException(status_code=400, detail="choose the card's set")
-        sid = "local-" + hashlib.sha256(("pokemon|" + set_name.strip().lower()).encode()).hexdigest()[:24]
+        sid = "local-" + hashlib.sha256(("pokemon|" + language_family(language) + "|" + set_name.strip().lower()).encode()).hexdigest()[:24]
         card_set = session.get(CardSet, sid) or CardSet(id=sid, name=set_name.strip(), game="pokemon")
         session.add(card_set)
         session.flush()
-    cid = "local-" + hashlib.sha256("|".join((card_set.id, name.lower(), number.lower())).encode()).hexdigest()[:24]
+    cid = "local-" + hashlib.sha256("|".join((card_set.id, language_family(language), name.lower(), number.lower())).encode()).hexdigest()[:24]
     if session.get(CatalogItem, cid) is None:
         session.add(CatalogItem(id=cid, item_type=CatalogItemType.TCG_CARD, name=name))
         session.flush()
         session.add(TcgCard(catalog_item_id=cid, game=card_set.game or "pokemon", set_id=card_set.id,
-                            number=number, language=language, rarity=rarity or None))
+                            number=number, language=language, rarity=rarity or None,
+                            set_code=printed_set_code(set_name or card_set.name) or None))
     pair.proposed_catalog_item_id = cid
     session.commit()
     record_event(session, actor_type="user", actor_id=user, action="photo_confirm.catalogue_add",
@@ -449,7 +459,7 @@ def confirm_card(
 def _new_draft(item: CatalogItem, card: TcgCard, inventory: InventoryItem) -> ShopListing:
     """A Listing Studio draft for this stock; priced there, never published here."""
     return ShopListing(
-        catalog_item_id=item.id, inventory_item_id=inventory.id, title=f"{item.name} #{card.number or ''}",
+        catalog_item_id=item.id, inventory_item_id=inventory.id, title=f"{display_name(item, card)} #{card.number or ''}",
         price=Decimal("0"), currency="AUD", quantity=inventory.quantity, status=ShopListingStatus.DRAFT,
         condition=inventory.condition or "Near Mint",
     )

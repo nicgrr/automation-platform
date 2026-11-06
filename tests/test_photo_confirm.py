@@ -207,3 +207,20 @@ def test_correcting_a_finish_onto_an_existing_record_asks_instead_of_crashing(co
     s.expire_all()
     assert s.get(InventoryItem, "rev").variant == CardVariant.REVERSE_HOLO
     assert s.get(ListingPhotoPair, "p1").status == ListingPhotoPairStatus.NEEDS_REVIEW
+
+
+def test_guess_rejects_cross_language_proposal(context):
+    s, client = context
+    pair = s.get(ListingPhotoPair, 'p1')
+    pair.extracted = {**pair.extracted, 'language': 'Japanese'}
+    assert catalogue_guess(s, pair) is None
+
+
+def test_bilingual_missing_name_preserves_word_boundaries(context):
+    s, client = context
+    pair = s.get(ListingPhotoPair, 'p3')
+    pair.extracted = {**pair.extracted, 'character': 'Nのゾロアークex (N\'s Zoroark ex)'}
+    s.commit()
+    response = client.get(CONFIRM + '?skip=1,2')
+    assert 'Zoroark ex' in response.text
+    assert 'Zoroarkex' not in response.text

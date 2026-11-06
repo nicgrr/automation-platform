@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 from PIL import Image
 from sqlalchemy.orm import Session
 
+from .card_display import display_name, display_set
 from .listing_finishes import finish_label, title_inventory
 from .ebay_titles import build_single_card_ebay_title
 from .models import CardSet, CatalogItem, CatalogItemType, InventoryItem, ShopListing, TcgCard
@@ -111,9 +112,9 @@ def generated_ebay_description(
         else (listing.condition or "Ungraded")
     )
     lines = [
-        catalog_item.name,
+        display_name(catalog_item, card),
         "",
-        *([f"Set: {card_set.name}"] if card_set else []),
+        *([f"Set: {display_set(card, card_set)}"] if card_set else []),
         *([f"Card number: {card.number}"] if card.number else []),
         *([f"Rarity: {card.rarity}"] if card.rarity else []),
         *([f"Parallel: {card.parallel}"] if card.parallel else []),
