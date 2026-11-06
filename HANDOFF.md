@@ -1,5 +1,17 @@
 # Handoff
 
+## eBay revenue integration — Codex, 2026-11-07
+
+Owner explicitly requests revenue. Current analytics sums only Sale (oneVinted24.50);
+37 importedlines represent32eBayorders, allcurrentlyPAID. Planread-onlyrollup uniqueorderID
+using newest snapshot, Sydneycalendar day/month. Grosspaid revenue includesbuyerpostage,
+beforefees/refunds, excludescancelled/unpaid; labelledclearly. Include inheadline totals
+and separateeBayrevenuepanelnear top; do not imply profit available. Local eBay Sale records
+havenoexternalID: whenimports exist useimports as eBaysource (avoid doublecount); clarify.
+Isolatedworktree, tests multi-line/cancel/unpaid/currency/monthboundary, deploythenverify.
+Productiontrackedclean; existinguntrackedbackupJSONpreserved.
+
+
 ## Analytics stale-page investigation — Codex, 2026-11-07
 
 Owner stillsees No eBay traffic. Re-read DB and liveHTML at both127.0.0.1:8080 and
