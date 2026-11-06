@@ -1,5 +1,6 @@
 """Owner-approved live description-only revision. Default dry-run; --apply --limit 1 first."""
 import argparse,asyncio,copy,json,uuid
+import httpx
 from pathlib import Path
 from dataclasses import asdict
 from automation_control.database import SessionLocal
@@ -21,12 +22,19 @@ def without_description(offer):
  if 'eBayPlusIfEligible' in policies:
   policies['ebayPlusIfEligible']=policies.pop('eBayPlusIfEligible')
  return result
+async def read_call(fn,*args):
+ for attempt in range(3):
+  try:return await fn(*args)
+  except (httpx.TimeoutException,httpx.NetworkError):
+   if attempt==2:raise
+   print("Read timed out; retrying read only",flush=True)
 async def run(apply=False,limit=0):
  cfg=get_settings();done=0;checked=0
  with SessionLocal() as s:
   cipher,oauth=ebay_services(cfg);token=await valid_user_access_token(s,cipher,oauth)
   a=EbayWriteAdapter(token,environment=cfg.ebay_env)
   r=EbayTradingReadAdapter(token,cfg.ebay_client_id,environment=cfg.ebay_env,marketplace_id=cfg.ebay_marketplace_id)
+  a.client.timeout=httpx.Timeout(45.0);r.client.timeout=httpx.Timeout(45.0)
   try:
    ids=[l.id for l in s.query(ShopListing).order_by(ShopListing.created_at) if any(is_representative(p) for p in l.ebay_photo_paths or [])]
    for lid in ids:
@@ -34,14 +42,14 @@ async def run(apply=False,limit=0):
     l=s.get(ShopListing,lid)
     link=s.query(EbayListingLink).filter_by(shop_listing_id=lid,status=EbayListingLinkStatus.ACTIVE).first()
     if not link or not link.ebay_offer_id:continue
-    offer=await a.get_offer(link.ebay_offer_id)
+    offer=await read_call(a.get_offer,link.ebay_offer_id)
     assert offer['sku']==link.sku==lid
     assert offer['listing']['listingId']==link.ebay_listing_id
     if offer.get('status')!='PUBLISHED' or offer['listing'].get('listingStatus')!='ACTIVE':continue
     checked+=1
     desc=revise_text(offer.get('listingDescription'),l.ebay_photo_paths)
     if desc==offer.get('listingDescription'):
-     live=await r.get_item_details(link.ebay_listing_id)
+     live=await read_call(r.get_item_details,link.ebay_listing_id)
      assert normalized_text(live.description)==normalized_text(desc)
      if apply and revise_text(l.ebay_description,l.ebay_photo_paths)!=l.ebay_description:
       l.ebay_description=revise_text(l.ebay_description,l.ebay_photo_paths)
@@ -51,7 +59,7 @@ async def run(apply=False,limit=0):
       s.add(AuditEvent(actor_type='user',actor_id='Codex (approved shared-back descriptions)',action='ebay.reconcile_verified_shared_back_notice',resource_type='shop_listing',resource_id=lid,outcome='success',correlation_id=str(uuid.uuid4()),details={'ebay_listing_id':link.ebay_listing_id,'verified_live':True}))
       s.commit()
      print('Already current and verified',link.ebay_listing_id,flush=True);continue
-    live=await r.get_item_details(link.ebay_listing_id)
+    live=await read_call(r.get_item_details,link.ebay_listing_id)
     assert normalized_text(live.description)==normalized_text(offer.get('listingDescription')), 'Live description differs; inspect before overwrite'
     payload={k:copy.deepcopy(v) for k,v in offer.items() if k in FIELDS}
     payload['listingDescription']=desc
@@ -61,10 +69,10 @@ async def run(apply=False,limit=0):
      path=Path(f'backups/shared-back-{link.ebay_listing_id}-20261106.json')
      with path.open('x') as f:json.dump(record,f,indent=2)
      # Refuse if another edit arrived between reading and writing.
-     assert await a.get_offer(link.ebay_offer_id)==offer
+     assert await read_call(a.get_offer,link.ebay_offer_id)==offer
      await a.update_offer(link.ebay_offer_id,payload)
-     after=await a.get_offer(link.ebay_offer_id)
-     after_live=await r.get_item_details(link.ebay_listing_id)
+     after=await read_call(a.get_offer,link.ebay_offer_id)
+     after_live=await read_call(r.get_item_details,link.ebay_listing_id)
      record.update(after_offer=after,after_live=asdict(after_live))
      path.write_text(json.dumps(record,indent=2))
      assert without_description(after)==without_description(offer), 'Unexpected non-description change; halt'

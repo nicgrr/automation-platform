@@ -1,5 +1,12 @@
 # Handoff
 
+## Shared-back continuation — Codex, 2026-11-06
+
+Five live listings verified (Yanma,Zarude,Dudunsparce,Mamoswine,Regirock).
+Crobat stopped beforewrite: API alternates eBayPlusIfEligible capitalization even between
+consecutive reads. Normalize same knownalias forprewrite compare too; no semanticchange.
+Use unique snapshotfilename if prewriteaborted snapshotexists. Resume remaining21.
+
 ## Remote read timeout — Codex, 2026-11-06
 
 Resume halted on GetItem read timeout before fourth write; three verified still complete.
