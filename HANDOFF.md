@@ -1,5 +1,13 @@
 # Handoff
 
+## Deploy eBay revenue — Codex, 2026-11-07
+
+Isolatedautomation-revenue implementationpassed43tests. Copy sixownedsource/testfiles
+(revenuehelper,analytics,orderimporter andthree tests), commit,restartCRM. Thenreadremote
+orders torefresh existingfinancialsnapshots only (backup/audit,noinventorychanges).
+Productiontrackedfilesclean beforecopy; localuntrackedbackups preserved.
+
+
 ## eBay revenue integration — Codex, 2026-11-07
 
 Owner explicitly requests revenue. Current analytics sums only Sale (oneVinted24.50);
