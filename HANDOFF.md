@@ -9,6 +9,8 @@ live Vinted figurines only, same data the Collectables page shows, no internal f
 The TCG Sniper bot (`~/tcg-sniper`) reads it as a source. Storefront restart is the owner's;
 nothing deployed by this task. Codex's Sonny queue and sleeve work are complete; untouched.
 
+Validation: full pytest passed (pytest's real exit code 0); storefront subset 96 passed. Feed route committed as 23e714a; storefront restart pending (owner).
+
 
 Sonny queue implementation16e4b28 validated:83 tests passed, two existing Vinted mock warnings. Next deploy only shop_listings_admin.py and its test from isolated worktree, restart CRM and verify nine Sonny records excluded with eight active timers preserved. No database mutations.
 
