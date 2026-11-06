@@ -1,5 +1,18 @@
 # Handoff
 
+## Stock-back notice + resume Pokemon front uploads — Claude Code, 2026-11-06
+
+Branch `nl-vault-label-design` (services run it), base `d211fea`; tree clean at start.
+Owner asks: continue the three front-only batches below, make sure the right backs show,
+and every description must say the back photo is a stock photo and to message for a real one.
+Checked: representative backs are correct images (EN/intl blue, JP modern); six recognized
+cards are English with the EN back. Anthropic 1-token probe returned 200 (credits restored).
+Plan: (1) reword `representative_backs.NOTICE` and make `with_notice` replace the old wording
+so CRM + outgoing eBay descriptions all carry the new text; tests. (2) Retry the 83 failed
+pairs in 7a7b1c8a/3fd7a5b0/d51f20d2 via the existing retry path; no new uploads/batches,
+no auto-apply, no stock or quantity changes. Restart of ezbay.service and revising the 23 live
+eBay listings with shared backs are owner decisions — ask, don't do.
+
 ## Pokemon front uploads — Codex, 2026-11-06
 
 Read-only review of new batches 7a7b1c8a-10b1-47e1-8a27-970b27ffdc25 (40),
