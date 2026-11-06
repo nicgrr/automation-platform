@@ -1,5 +1,16 @@
 # Handoff
 
+## eBay listing traffic analytics — Claude Code, 2026-11-06
+
+Owner approved: per-listing impressions/views/sales from eBay Sell Analytics on /analytics.
+Read-only against eBay. Plan: add `sell.analytics.readonly` to SELLER_SCOPE (existing token
+keeps its own scopes on refresh; owner must reconnect at /auth/ebay/start to grant it);
+new `automation_control/ebay_traffic.py` (traffic_report, LISTING dimension, 30 days, 200
+ids per call) storing the latest window in new table `ebay_listing_traffic` (migration
+20261106_01); `scripts/refresh_ebay_traffic.py` + run script + docs/systemd unit/timer;
+"eBay performance" panel on /analytics. Installing the timer, migrating the live DB and
+restarting ezbay.service are owner actions — ask.
+
 ## Stock-back notice + resume Pokemon front uploads — Claude Code, 2026-11-06
 
 Branch `nl-vault-label-design` (services run it), base `d211fea`; tree clean at start.
