@@ -1,5 +1,10 @@
 # Handoff
 
+## Sonny timer queue separation — Codex, 2026-11-06
+
+Owner asks to move Sonnys out of Listing Studio while awaiting eBay timer. Production clean87e53f0. Found eight active Vinted Sonnys and sold Dalmatian still in unpublished queue. Plan isolated sonny-timer-queue branch: filter only Sonny Angel records matched by inventory to active/sold Vinted and not-listed eBay state; preserve live/pending/failed visibility. Link to Vinted live management. No record, timer, stock, price or marketplace mutations. Test query lifecycle and deploy owned admin file/restart CRM.
+
+
 Read this at the start of a session; update it before stopping. See the
 handoff protocol in `AGENTS.md`.
 
