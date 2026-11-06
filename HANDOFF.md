@@ -1,5 +1,18 @@
 # Handoff
 
+## Reconnect login recovery — Codex, 2026-11-07
+
+All26 original shared-back revisions completed: snapshotreadbacks verify descriptions,
+prices/quantities/policies andphotos preserved; original26local notices synchronized.
+Many new listings nowpublished byowner since lastturn; do not replaydraftcleanup or assume
+old pendingcounts. Scriptsafety changes owned byCodex; localbackups intentionallyuntracked.
+User screenshot shows unauthenticated /auth/ebay/start raw401. Confirmed dependency always
+returnsJSON401; noHTML loginredirect or returntarget support. Next isolateauthfix worktree:
+HTML GET authfail -> login with safe localnext; login resumesreconnect; API401 unchanged.
+Tests auth/API redirect and maliciousnext, deployrestart under existingcontinuation authorization.
+Do not relax authentication or SameSite; OAuthconsent requiresowner.
+
+
 ## Shared-back continuation — Codex, 2026-11-06
 
 Five live listings verified (Yanma,Zarude,Dudunsparce,Mamoswine,Regirock).

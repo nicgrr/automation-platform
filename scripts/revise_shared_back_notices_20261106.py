@@ -67,9 +67,11 @@ async def run(apply=False,limit=0):
     record={'listing_id':lid,'ebay_listing_id':link.ebay_listing_id,'before_offer':offer,'before_live':asdict(live),'before_local':l.ebay_description,'proposed_description':desc}
     if apply:
      path=Path(f'backups/shared-back-{link.ebay_listing_id}-20261106.json')
+     if path.exists():path=path.with_name(path.stem+'-'+uuid.uuid4().hex[:8]+'.json')
      with path.open('x') as f:json.dump(record,f,indent=2)
      # Refuse if another edit arrived between reading and writing.
-     assert await read_call(a.get_offer,link.ebay_offer_id)==offer
+     latest=await read_call(a.get_offer,link.ebay_offer_id)
+     assert without_description(latest)==without_description(offer) and normalized_text(latest.get('listingDescription'))==normalized_text(offer.get('listingDescription'))
      await a.update_offer(link.ebay_offer_id,payload)
      after=await read_call(a.get_offer,link.ebay_offer_id)
      after_live=await read_call(r.get_item_details,link.ebay_listing_id)
