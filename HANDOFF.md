@@ -2,6 +2,8 @@
 
 Sonny queue implementation16e4b28 validated:83 tests passed, two existing Vinted mock warnings. Next deploy only shop_listings_admin.py and its test from isolated worktree, restart CRM and verify nine Sonny records excluded with eight active timers preserved. No database mutations.
 
+Completed Sonny queue separation — Codex2026-11-06: deployed61cc94e, CRM restarted. Live authenticated Studio200 and zero Sonny rows; Vinted200 shows preserved countdowns. Correct final count is NINE active Sonny timers plus ONE sold Dalmatian (initial manual count eight was incorrect). All ten absent from main queue; unchanged inventory, prices, posted_at and fallback data. 83 tests passed. View /collectibles/vinted/live via new Studio link. No external marketplace writes.
+
 ## Sonny timer queue separation — Codex, 2026-11-06
 
 Owner asks to move Sonnys out of Listing Studio while awaiting eBay timer. Production clean87e53f0. Found eight active Vinted Sonnys and sold Dalmatian still in unpublished queue. Plan isolated sonny-timer-queue branch: filter only Sonny Angel records matched by inventory to active/sold Vinted and not-listed eBay state; preserve live/pending/failed visibility. Link to Vinted live management. No record, timer, stock, price or marketplace mutations. Test query lifecycle and deploy owned admin file/restart CRM.
