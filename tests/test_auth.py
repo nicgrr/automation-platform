@@ -287,3 +287,56 @@ def test_the_renewed_cookie_is_itself_valid_for_a_fresh_window(client):
     new_cookie = resp.headers["set-cookie"].split(";")[0].split("=", 1)[1]
     # Would have failed under the old session's clock; must not fail under the new one.
     assert verify_session(new_cookie, KEY, now=int(time.time()) + SESSION_MAX_AGE_SECONDS - 60) == "nic"
+
+
+def test_browser_reconnect_without_cookie_goes_to_login(client):
+    response = client.get('/auth/ebay/start', headers={'Accept': 'text/html'}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/login?next=%2Fauth%2Febay%2Fstart'
+    page = client.get(response.headers['location'])
+    assert "name='next' value='/auth/ebay/start'" in page.text
+    assert page.headers['cache-control'] == 'no-store'
+
+
+def test_browser_expired_session_preserves_destination(client):
+    _set_cookie(client, SESSION_MAX_AGE_SECONDS + 100)
+    response = client.get('/analytics', headers={'Accept': 'text/html'}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/login?next=%2Fanalytics'
+
+
+def test_api_and_json_auth_failures_still_return_401(client):
+    for path, accept in [('/api/ebay/status', 'text/html'), ('/auth/ebay/start', 'application/json')]:
+        response = client.get(path, headers={'Accept': accept}, follow_redirects=False)
+        assert response.status_code == 401
+        assert response.json()['detail'] == 'authentication required'
+
+
+@pytest.mark.parametrize('target', ['https://evil.example', '//evil.example', '/\\evil.example',
+                                  '/%2fevil.example', '/%252fevil.example', '/\r\nevil.example', '/login'])
+def test_login_return_target_cannot_leave_app_or_loop(target):
+    from automation_control.api import safe_login_target
+    assert safe_login_target(target) == '/dashboard'
+
+
+def test_login_resumes_ebay_consent_with_analytics_scope(client, monkeypatch):
+    import automation_control.api as api
+    from automation_control.auth import hash_password
+    from urllib.parse import urlparse, parse_qs
+    from automation_control.ebay_oauth import ANALYTICS_SCOPE
+    settings = app.state.settings
+    monkeypatch.setattr(settings, 'dashboard_username', 'test-reconnect')
+    monkeypatch.setattr(settings, 'dashboard_password_hash', hash_password('test-password'))
+    monkeypatch.setattr(settings, 'ebay_client_id', 'test-client')
+    monkeypatch.setattr(settings, 'ebay_runame', 'test-runame')
+    monkeypatch.setattr(api, 'configured', lambda _: True)
+    browser = TestClient(app, base_url='https://testserver')
+    response = browser.post('/login', data={'username': 'test-reconnect', 'password': 'test-password',
+                                          'next': '/auth/ebay/start'}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/auth/ebay/start'
+    response = browser.get(response.headers['location'], follow_redirects=False)
+    assert response.status_code == 302
+    target = urlparse(response.headers['location'])
+    assert target.hostname in ('auth.ebay.com', 'auth.sandbox.ebay.com')
+    assert ANALYTICS_SCOPE in parse_qs(target.query)['scope'][0].split()

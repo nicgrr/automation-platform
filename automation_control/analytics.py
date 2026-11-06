@@ -168,7 +168,7 @@ def _ebay_performance_html(session: Session) -> str:
     ).all()
     if not rows:
         return ("<div class='panel'><h2>eBay performance</h2><p class='muted'>No eBay traffic yet. "
-                "Reconnect eBay at <a href='/auth/ebay/start'>/auth/ebay/start</a> to allow analytics; "
+                "<a class='btn' href='/auth/ebay/start'>Reconnect eBay</a> to allow analytics; "
                 "listing views and impressions then refresh daily.</p></div>")
 
     traffic = [row[0] for row in rows]

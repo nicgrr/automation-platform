@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
@@ -228,11 +230,38 @@ def health() -> HealthResponse:
     return HealthResponse()
 
 
+def safe_login_target(value: str | None) -> str:
+    """Keep post-login navigation on this app, including browser-normalized URLs."""
+    value = value or "/dashboard"
+    decoded = unquote(value)
+    if (not value.startswith("/") or decoded.startswith("//")
+            or "\\" in decoded or any(ord(c) < 32 for c in decoded)
+            or "%" in urlsplit(value).path):
+        return "/dashboard"
+    parts = urlsplit(value)
+    if parts.scheme or parts.netloc or parts.path in {"/login", "/logout"}:
+        return "/dashboard"
+    return value
+
+
+@app.exception_handler(HTTPException)
+async def browser_auth_failure(request: Request, exc: HTTPException):
+    if (exc.status_code == 401 and exc.detail == "authentication required"
+            and request.method in {"GET", "HEAD"}
+            and "text/html" in request.headers.get("accept", "")
+            and not request.url.path.startswith("/api/")):
+        target = safe_login_target(request.url.path + ("?" + request.url.query if request.url.query else ""))
+        return RedirectResponse("/login?next=" + quote(target, safe=""), status_code=303,
+                                headers={"Cache-Control": "no-store"})
+    return await http_exception_handler(request, exc)
+
+
 @app.get("/login", response_class=HTMLResponse)
-def login_page() -> str:
+def login_page(next_url: str = Query("/dashboard", alias="next")) -> str:
     body = (
         brand_header("Private Control Plane", show_back=False)
-        + "<div class='panel'><form method=post>"
+        + "<div class='panel'><form method=post action='/login'>"
+        + f"<input type='hidden' name='next' value='{escape(safe_login_target(next_url), quote=True)}'>"
         + "<label>Username <input name=username autocomplete=username required></label>"
         + "<label>Password <input type=password name=password autocomplete=current-password required></label>"
         + "<button>Sign in</button></form></div>"
@@ -241,7 +270,7 @@ def login_page() -> str:
 
 
 @app.post("/login")
-def login(request: Request, username: str = Form(), password: str = Form(), session: Session = Depends(get_session)):
+def login(request: Request, username: str = Form(), password: str = Form(), next_url: str = Form("/dashboard", alias="next"), session: Session = Depends(get_session)):
     settings = request.app.state.settings
     client_key = request.client.host if request.client else "unknown"
     if login_rate_limited(client_key):
@@ -256,7 +285,7 @@ def login(request: Request, username: str = Form(), password: str = Form(), sess
         raise HTTPException(status_code=401, detail="invalid credentials")
     clear_login_failures(client_key)
     issued = int(time.time())
-    response = RedirectResponse("/dashboard", status_code=303)
+    response = RedirectResponse(safe_login_target(next_url), status_code=303)
     response.set_cookie("rbay_session", create_session(username, settings.session_signing_key, now=issued),
                         httponly=True, secure=True, samesite="strict", max_age=SESSION_MAX_AGE_SECONDS)
     # Deliberately NOT httponly -- see auth.csrf_token_for's docstring:
