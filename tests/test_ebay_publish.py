@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -1274,3 +1275,55 @@ async def test_full_publish_contract_reaches_all_three_inventory_api_stages(sess
     assert listing.status == ShopListingStatus.ACTIVE
     assert listing.price == Decimal("9.99")
     assert listing.quantity == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous,expected", [
+    ("/shop-listings?status=all&ebay=unpublished&category=pokemon&q=", "/shop-listings?status=all&ebay=unpublished&category=pokemon&q="),
+    ("https://evil.example/shop-listings", "/shop-listings"),
+    ("/ebay-listings?x=1", "/shop-listings"),
+    (None, "/shop-listings"),
+])
+async def test_publish_returns_to_the_filtered_list_it_came_from(session, monkeypatch, previous, expected):
+    make_listing(session)
+    add_category_mapping(session)
+    monkeypatch.setattr(ebay_publish, "get_settings", _configured_settings)
+    monkeypatch.setattr(ebay_publish, "ebay_services", lambda settings: (object(), object()))
+    monkeypatch.setattr(ebay_publish, "valid_user_access_token", AsyncMock(return_value="tok"))
+    adapter = AsyncMock()
+    adapter.upsert_inventory_item = AsyncMock(return_value=None)
+    adapter.get_offers = AsyncMock(return_value=[])
+    adapter.create_offer = AsyncMock(return_value="offer-123")
+    adapter.publish_offer = AsyncMock(return_value="ebay-999")
+    monkeypatch.setattr(ebay_publish, "EbayWriteAdapter", lambda *a, **k: adapter)
+    params = {"_return_to": "/shop-listings/listing-1/ebay-preview"}
+    if previous is not None:
+        params["_return_prev"] = previous
+    request = SimpleNamespace(query_params=params)
+
+    result = await ebay_publish.publish_to_ebay(
+        "listing-1", confirmation="publish", user="testuser", session=session, request=request,
+    )
+    assert result.status_code == 303
+    assert result.headers["location"] == expected
+
+
+def test_publish_route_over_http_keeps_the_list_filters(client, session, monkeypatch):
+    make_listing(session)
+    add_category_mapping(session)
+    monkeypatch.setattr(ebay_publish, "get_settings", _configured_settings)
+    monkeypatch.setattr(ebay_publish, "ebay_services", lambda settings: (object(), object()))
+    monkeypatch.setattr(ebay_publish, "valid_user_access_token", AsyncMock(return_value="tok"))
+    adapter = AsyncMock()
+    adapter.upsert_inventory_item = AsyncMock(return_value=None)
+    adapter.get_offers = AsyncMock(return_value=[])
+    adapter.create_offer = AsyncMock(return_value="offer-123")
+    adapter.publish_offer = AsyncMock(return_value="ebay-999")
+    monkeypatch.setattr(ebay_publish, "EbayWriteAdapter", lambda *a, **k: adapter)
+    filtered = "/shop-listings?status=all&ebay=unpublished&category=pokemon&q="
+
+    resp = client.post("/shop-listings/listing-1/publish-to-ebay",
+                       params={"_return_to": "/shop-listings/listing-1/ebay-preview", "_return_prev": filtered},
+                       data={"confirmation": "publish"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == filtered

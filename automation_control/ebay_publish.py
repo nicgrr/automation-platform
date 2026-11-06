@@ -19,7 +19,7 @@ from decimal import Decimal
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -87,7 +87,7 @@ from .models import (
 )
 
 from . import parcel_studio
-from .navigation import redirect_back
+from .navigation import redirect_back, safe_return_path
 from .pricing_safety import assess_listing_price
 from .selling_channels import ebay_channel_block_reason
 from .vinted_fallback import (
@@ -1511,13 +1511,22 @@ async def publish_to_ebay(
     pricing_override: str = Form(""),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
+    request: Request = None,
 ):
     if get_settings().ebay_bulk_upload_only:
         return RedirectResponse("/ebay-export?notice=Direct+eBay+publishing+is+disabled.+Use+Bulk+Upload.", status_code=303)
-    return await publish_listing_to_ebay(
+    response = await publish_listing_to_ebay(
         listing_id, confirmation=confirmation, user=user, session=session,
         allow_pricing_safety_override=pricing_override == listing_id,
     )
+    # Publishing is posted from Listing Studio, so the list the operator
+    # opened the listing from is `_return_prev`. Without this the filters
+    # (category, eBay state, search) reset to the full list after every publish.
+    if request is not None and response.headers.get("location") == "/shop-listings":
+        origin = safe_return_path(request.query_params.get("_return_prev"))
+        if origin and urlsplit(origin).path == "/shop-listings":
+            return RedirectResponse(origin, status_code=303)
+    return response
 
 
 @router.post("/shop-listings/{listing_id}/revise-on-ebay")

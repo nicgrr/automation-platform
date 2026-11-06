@@ -1,5 +1,17 @@
 # Handoff
 
+## Listing filter lost after publish — Claude Code, 2026-11-06
+
+Owner: Shop listings Pokémon filter "doesn't stay" and collectibles show up. Request log showed
+the flow list(category=pokemon) -> Listing Studio -> publish-to-ebay -> bare /shop-listings.
+Fixed: the publish route returns to `_return_prev` when it is a /shop-listings URL (same-site
+only). Tests: test_ebay_publish + collectible policy + navigation 97 passed, plus a new HTTP-level
+test. Needs ezbay.service restart to go live (owner action).
+Open (asked owner): English titles for Japanese cards — official `jp-*` catalogue entries hold
+Japanese names/set names only, so titles become Japanese (e.g. ヒトカゲ … ポケモンカード151);
+which is also why owner-created `local-*` entries exist. Don't move cards onto `jp-*` entries.
+Chinese cards "looked at better" — scope unclear, asked.
+
 ## Photo-confirm corrections (owner-approved) — Claude Code, 2026-11-06
 
 Owner answers: Zeraora sv7 109/102 = 2 copies; Eevee V CBB2C 0113 = 2; Nymble 096/094 = 2;
