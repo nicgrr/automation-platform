@@ -1,5 +1,18 @@
 # Handoff
 
+## Codex progress — 2026-11-06
+
+Deployment6f65777 successful: DB backup before migration, Alembic20261106_01, ezbay
+and traffic timer active. Analytics credential lacks scope: owner must reconnect /auth/ebay/start.
+Owner-approved Vaporeon/Charizard corrections applied atomically and read back; snapshot
+backups/printing-corrections-20261106.json, script scripts/correct_printings_20261106.py.
+Vaporeon now jp-sv8a-030 (030/187), Radiant Charizard svJL003/021, qty1 each, prices0,
+2photos each unchanged. Charizard reference official card45803.
+Next batch: repair unpublished multilingual draft names/set codes from already-reviewed photo
+facts; no catalogue ID merges. Preserve live records, quantity, price, photos. Then read remote
+descriptions and perform approved description-only shared-back notice revisions, one first.
+
+
 ## Codex deployment checkpoint — 2026-11-06
 
 Continuation implementation b8f70d8 / validation1a23203 in automation-card-display.
