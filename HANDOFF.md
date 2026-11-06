@@ -2,27 +2,40 @@
 
 ## eBay listing traffic analytics — Claude Code, 2026-11-06
 
-Owner approved: per-listing impressions/views/sales from eBay Sell Analytics on /analytics.
-Read-only against eBay. Plan: add `sell.analytics.readonly` to SELLER_SCOPE (existing token
-keeps its own scopes on refresh; owner must reconnect at /auth/ebay/start to grant it);
-new `automation_control/ebay_traffic.py` (traffic_report, LISTING dimension, 30 days, 200
-ids per call) storing the latest window in new table `ebay_listing_traffic` (migration
-20261106_01); `scripts/refresh_ebay_traffic.py` + run script + docs/systemd unit/timer;
-"eBay performance" panel on /analytics. Installing the timer, migrating the live DB and
-restarting ezbay.service are owner actions — ask.
+Last updated: Claude Code, 2026-11-06. Owner approved the feature; read-only against eBay.
+Done in `6725701`: `sell.analytics.readonly` added to SELLER_SCOPE (existing token keeps its
+own scopes on refresh); `automation_control/ebay_traffic.py` (traffic_report, LISTING
+dimension, 30-day window ending 2 days back, 200 ids/call, zeros for listings with no row);
+table `ebay_listing_traffic` + migration `20261106_01`; `scripts/refresh_ebay_traffic.py`,
+`scripts/run-ebay-traffic-refresh.sh`, `docs/systemd/ebay-traffic-refresh.{service,timer}`
+(daily 05:41, no name collision on host); "eBay performance" panel on /analytics.
+Validation: tests/test_ebay_traffic.py + analytics + phase1b + representative_backs 49 passed;
+migration upgrade/downgrade passed on a `.backup` copy of the live DB. Full suite: rerun
+running after an intermittent fixture OperationalError in test_vinted_fallback (file passed
+3/3 alone); see the next entry for the result.
+NOT done (owner actions, ask first): `alembic upgrade head` on the live DB + restart
+ezbay.service; install/enable the timer; owner reconnects eBay at /auth/ebay/start (the eBay
+developer keyset must allow sell.analytics.readonly — unverified); first manual
+`scripts/run-ebay-traffic-refresh.sh` run to confirm the live API response shape.
 
 ## Stock-back notice + resume Pokemon front uploads — Claude Code, 2026-11-06
 
-Branch `nl-vault-label-design` (services run it), base `d211fea`; tree clean at start.
-Owner asks: continue the three front-only batches below, make sure the right backs show,
-and every description must say the back photo is a stock photo and to message for a real one.
-Checked: representative backs are correct images (EN/intl blue, JP modern); six recognized
-cards are English with the EN back. Anthropic 1-token probe returned 200 (credits restored).
-Plan: (1) reword `representative_backs.NOTICE` and make `with_notice` replace the old wording
-so CRM + outgoing eBay descriptions all carry the new text; tests. (2) Retry the 83 failed
-pairs in 7a7b1c8a/3fd7a5b0/d51f20d2 via the existing retry path; no new uploads/batches,
-no auto-apply, no stock or quantity changes. Restart of ezbay.service and revising the 23 live
-eBay listings with shared backs are owner decisions — ask, don't do.
+Owner asked: continue the three front-only batches, right backs, and every description
+must say the back is a stock photo and to message for a real one.
+Done: `d89b6a8` rewords `representative_backs.NOTICE` and `with_notice` swaps the old
+wording in place, so CRM drafts and outgoing eBay text (`outgoing_ebay_description`) carry
+the new text once ezbay.service runs this code. Backs checked visually: EN/intl blue, JP
+modern, One Piece blue standard / red leader — all correct images.
+Retry of 7a7b1c8a/3fd7a5b0/d51f20d2 ran as nic (DB-only writes, no auto-apply): 0 failed;
+6 READY, 81 NEEDS_REVIEW (mostly no catalogue match for JP/Chinese cards, plus no CRM listing
+for new stock), 2 APPLIED by the owner in the UI meanwhile. Unmatched pairs get a back only
+once identity is resolved. Some proposed descriptions written by the running (old) service
+still hold the old wording; with_notice replaces it on output after restart.
+Open owner decisions: (1) restart ezbay.service to deploy; (2) revise the 23 live eBay
+listings with shared backs so their descriptions show the new wording — external write, not
+done; (3) 6 active + 1 sold Chinese / Simplified Chinese listings and 5 new Simplified Chinese
+fronts use or will use the EN back — confirm whether S-Chinese needs its own back image;
+(4) review the 81 pairs and new-stock quantities in the batch pages.
 
 ## Pokemon front uploads — Codex, 2026-11-06
 
