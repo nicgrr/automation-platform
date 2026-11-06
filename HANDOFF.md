@@ -1,5 +1,21 @@
 # Handoff
 
+## eBay revenue complete — Codex, 2026-11-07
+
+Deployed fc10c0e (source9717e8d);43focused tests passed; ezbay restarted.
+Read-only eBaygetOrders returned32orders,allalreadyimported; refreshed37existingfinancial
+snapshots with auditedbackup backups/revenue-order-snapshots-20261107.json (0600,localonly).
+No eBaywrites, no inventorychanges, no neworders created. Initialinline scriptSyntaxError
+occurred beforeexecution; correctedrun completed. Two cancelled/unpaid nowexcluded;
+30includedpaidorders,AUD911.65grossimportedhistory since24Aug; November6orders176.66;
+combinedmonth201.16includingVinted24.50; today0. Figures beforefees/refunds,includepostage.
+HTML eBayrevenuepanel attop withhistorycoverage andlinktoorders. Existingprofitcards
+labelledpartial/excludingimportedeBay; no profitmanufactured. Futureorderpollupdates
+financialsnapshot evenifstockalreadyapplied; regressionprovesno seconddecrement.
+ProductionHTTPS verified200 with176.66,201.16,911.65,coverage andtopposition.
+ExistingbackupJSON remainsuntracked; no needfurtherwork onrequestedrevenue.
+
+
 ## Deploy eBay revenue — Codex, 2026-11-07
 
 Isolatedautomation-revenue implementationpassed43tests. Copy sixownedsource/testfiles
