@@ -1,5 +1,15 @@
 # Handoff
 
+## NL Vault new-items feed for the Discord bot — Claude Code, 2026-11-06
+
+Branch `nl-vault-label-design` (also what the services run), base `bb8c2dd`; tree clean at start.
+Owner wants an #nl-vault-shop Discord feed of new figurines. Adding one read-only route,
+`GET /feed/new.json`, to `storefront/vinted_showcase.py` (same router, no app.py change):
+live Vinted figurines only, same data the Collectables page shows, no internal fields.
+The TCG Sniper bot (`~/tcg-sniper`) reads it as a source. Storefront restart is the owner's;
+nothing deployed by this task. Codex's Sonny queue and sleeve work are complete; untouched.
+
+
 Sonny queue implementation16e4b28 validated:83 tests passed, two existing Vinted mock warnings. Next deploy only shop_listings_admin.py and its test from isolated worktree, restart CRM and verify nine Sonny records excluded with eight active timers preserved. No database mutations.
 
 Completed Sonny queue separation — Codex2026-11-06: deployed61cc94e, CRM restarted. Live authenticated Studio200 and zero Sonny rows; Vinted200 shows preserved countdowns. Correct final count is NINE active Sonny timers plus ONE sold Dalmatian (initial manual count eight was incorrect). All ten absent from main queue; unchanged inventory, prices, posted_at and fallback data. 83 tests passed. View /collectibles/vinted/live via new Studio link. No external marketplace writes.
