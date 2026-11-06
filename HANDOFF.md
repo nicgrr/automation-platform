@@ -1,5 +1,14 @@
 # Handoff
 
+## Shared-back revision first verified — Codex, 2026-11-06
+
+Yanma267805604307 description-only update succeeded. Offer Get/readback non-description
+fields identical; Trading GetItem confirms notice and identical photos. Snapshot backups/shared-back-267805604307-20261106.json.
+Next run scripts/revise_shared_back_notices_20261106.py --apply forremaining25; script skips
+already-current offers, rechecks state, snapshots before, verifies buyer-facing GetItem after.
+CRM /shop-listings?category=pokemon and /analytics return200. Pendingphoto counts
+remain 7English (6ready,1review),2Japanese,4thirdbatch; do not markreviewcompleted onownerbehalf.
+
 ## Codex progress — 2026-11-06
 
 Deployment6f65777 successful: DB backup before migration, Alembic20261106_01, ezbay
