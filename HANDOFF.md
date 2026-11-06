@@ -1,5 +1,21 @@
 # Handoff
 
+## Reconnect recovery complete — Codex, 2026-11-07
+
+Deployed f3c0ab1 (isolated source507c16e), restarted ezbay successfully. 46focused
+auth/traffic tests passed. LiveHTTPS verified: unsignedHTML /auth/ebay/start ->303login
+withpreservednext; loginpage200; APIunsigned401; signedOAuth302auth.ebay.com withanalytics
+scope. /analytics200 withtraffic panel. IMPORTANT owneralreadyreconnected: credentials
+nowincludeanalyticsscope,344trafficrowsloaded. No furtherreconnectrequired.
+Initial smoke assertedReconnectbutton presence andfailedbecauseactualtraffic nowrenders;
+followup verified200panel,DBscopeandrows. Not a deploymentfailure.
+All26original shared-back revisions: snapshotremoteoffer+GetItemverification passed,
+26/26localnoticesconfirmed. Prices/quantity/photospreserved. Newownerpublishing occurred
+sincepreviousday; old13pendingcount anddraftstatusnotesareSTALE; re-readbeforefurtherwork.
+No remainingimplementation for this request. Localoperational JSONbackups intentionally
+untracked; production trackedfilesclean afterthiscommit.
+
+
 ## Deploy reconnect recovery — Codex, 2026-11-07
 
 Worktree /home/nic/automation-reconnect validated:46auth/traffictests passed.
