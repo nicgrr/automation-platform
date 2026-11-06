@@ -1,5 +1,13 @@
 # Handoff
 
+## Deploy reconnect recovery — Codex, 2026-11-07
+
+Worktree /home/nic/automation-reconnect validated:46auth/traffictests passed.
+Production trackedfilesclean at7db63d9, operationalJSONbackups untrackedpreserved.
+Next copyownedapi.py, analytics.py, tests/test_auth.py, commit andrestartezbay;
+verifyloginredirect andOAuthanalyticsrequested onactualhost. No tokenorcookiepolicychanges.
+
+
 ## Reconnect login recovery — Codex, 2026-11-07
 
 All26 original shared-back revisions completed: snapshotreadbacks verify descriptions,
