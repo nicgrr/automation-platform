@@ -134,3 +134,24 @@ def test_analytics_requires_login():
     client = TestClient(app)
     response = client.get("/analytics", follow_redirects=False)
     assert response.status_code in (302, 303, 401)
+
+
+def test_ebay_order_revenue_is_visible_and_not_duplicated_by_lines_or_manual_sales(client,session):
+    from automation_control.models import EbayImportedOrder
+    now=datetime.now(UTC)
+    session.add(Marketplace(id='ebay',name='eBay'))
+    session.add(Marketplace(id='vinted',name='Vinted'))
+    session.add(Sale(marketplace_id='ebay',gross_amount=Decimal('100'),sold_at=now))
+    session.add(Sale(marketplace_id='vinted',gross_amount=Decimal('24.50'),sold_at=now))
+    snapshot={'creationDate':now.isoformat(),'orderPaymentStatus':'PAID',
+              'pricingSummary':{'total':{'value':'100.00','currency':'AUD'}}}
+    for sku in ['one','two']:
+        session.add(EbayImportedOrder(ebay_order_id='order1',sku=sku,quantity=1,
+                                     marketplace_id='EBAY_AU',raw_snapshot=snapshot))
+    session.commit()
+    text=client.get('/analytics').text
+    assert 'eBay revenue' in text and 'eBay this month' in text
+    assert '$124.50' in text
+    assert '$224.50' not in text
+    assert '1 paid orders imported since' in text
+    assert 'before fees and refunds' in text

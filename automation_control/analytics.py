@@ -25,10 +25,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import require_dashboard_user
+from .ebay_revenue import order_revenue, SYDNEY
 from .database import get_session
 from .inventory_review import _aud, _latest_prices
 from .models import (
-    EbayListing, EbayListingTraffic, InventoryItem, InventoryStatus, MarketListing, Marketplace,
+    EbayImportedOrder, EbayListing, EbayListingTraffic, InventoryItem, InventoryStatus, MarketListing, Marketplace,
     PotentialPurchaseStatus, PurchaseLot, PurchaseLotStatus, Sale, SaleStatus,
 )
 from .ui import brand_header, page
@@ -49,7 +50,7 @@ TIED_UP_STATUSES = {InventoryStatus.AVAILABLE, InventoryStatus.LISTED, Inventory
 
 @router.get("/analytics", response_class=HTMLResponse)
 def analytics_page(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)) -> HTMLResponse:
-    now = datetime.now(UTC)
+    now = datetime.now(SYDNEY)
     items = session.scalars(select(InventoryItem)).all()
     prices = _latest_prices(session, {i.catalog_item_id for i in items})
 
@@ -84,17 +85,24 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
     def naive(dt: datetime) -> datetime:
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
-    today_sales = sum(float(s.gross_amount) for s in all_sales if naive(s.sold_at) >= today_start)
+    marketplaces = {m.id: m.name for m in session.scalars(select(Marketplace)).all()}
+    imported = order_revenue(session.scalars(select(EbayImportedOrder)).all(), now)
+    # Imports are the authoritative eBay source. Sale has no external order ID
+    # with which to safely deduplicate manually entered eBay sales.
+    revenue_sales = [s for s in all_sales if not (imported['has_imports'] and
+                     marketplaces.get(s.marketplace_id, '').casefold() == 'ebay')]
+    today_sales = float(imported['today']) + sum(float(s.gross_amount + s.shipping_revenue) for s in revenue_sales if naive(s.sold_at) >= today_start)
     month_sales = [s for s in all_sales if naive(s.sold_at) >= month_start]
-    monthly_revenue = sum(float(s.gross_amount) for s in month_sales)
+    monthly_revenue = float(imported['month']) + sum(float(s.gross_amount + s.shipping_revenue) for s in revenue_sales if naive(s.sold_at) >= month_start)
     monthly_profit = sum(net_profit(s) for s in month_sales)
     realized_profit = sum(net_profit(s) for s in all_sales)
 
     channel_totals: dict[str, float] = {}
-    marketplaces = {m.id: m.name for m in session.scalars(select(Marketplace)).all()}
-    for s in all_sales:
+    for s in revenue_sales:
         name = marketplaces.get(s.marketplace_id, "Unrecorded")
-        channel_totals[name] = channel_totals.get(name, 0.0) + float(s.gross_amount)
+        channel_totals[name] = channel_totals.get(name, 0.0) + float(s.gross_amount + s.shipping_revenue)
+    if imported['has_imports']:
+        channel_totals['eBay'] = float(imported['total'])
     best_channel = max(channel_totals, key=channel_totals.get) if channel_totals else None
 
     purchase_candidates = session.scalars(select(MarketListing).where(
@@ -120,10 +128,10 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         + stat("Inventory market value", f"${market_value:,.2f}")
         + stat("Inventory cost basis", f"${cost_basis_total:,.2f}", "partial -- new field")
         + stat("Cash tied up", f"${cash_tied_up:,.2f}")
-        + stat("Today's sales", f"${today_sales:,.2f}")
-        + stat("Monthly revenue", f"${monthly_revenue:,.2f}")
-        + stat("Monthly profit", f"${monthly_profit:,.2f}")
-        + stat("Realized profit (all-time)", f"${realized_profit:,.2f}")
+        + stat("Today's revenue", f"${today_sales:,.2f}", "AUD · including postage")
+        + stat("Monthly revenue", f"${monthly_revenue:,.2f}", "gross · before fees and refunds")
+        + stat("Recorded monthly profit", f"${monthly_profit:,.2f}", "partial · excludes imported eBay orders")
+        + stat("Recorded profit (all-time)", f"${realized_profit:,.2f}", "partial · excludes imported eBay orders")
         + stat("Candidate landed cost", f"${candidate_landed_cost:,.2f}")
         + stat("Open offers", str(open_offers))
         + "</div>"
@@ -144,6 +152,18 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
 
     body = (
         brand_header("Business analytics")
+        + "<div class='panel' id='ebay-revenue'><h2>eBay revenue</h2>"
+        + "<p class='muted'>Paid orders in AUD, including postage, before fees and refunds. Cancelled and unpaid orders excluded. Dates use Sydney time.</p>"
+        + "<div class='stat-grid'>"
+        + stat("eBay today", f"${imported['today']:,.2f}")
+        + stat("eBay this month", f"${imported['month']:,.2f}")
+        + stat("Paid orders this month", str(imported['month_orders']))
+        + stat("eBay imported history", f"${imported['total']:,.2f}")
+        + "</div>"
+        + (f"<p class='muted'>{imported['orders']} paid orders imported since {imported['first_date']:%d %b %Y}. This is imported history, not lifetime revenue.</p>" if imported['first_date'] else "<p class='muted'>No paid AUD orders imported yet.</p>")
+        + (f"<p class='muted'>{imported['skipped']} orders omitted because currency, date or amount could not be included.</p>" if imported['skipped'] else "")
+        + "<p class='muted'>Imported orders provide the eBay revenue totals; manual eBay sales are excluded when imports exist to avoid counting them twice.</p>"
+        + "<a class='btn' href='/ebay-sales'>View eBay orders</a></div>"
         + top_cards
         + "<div class='panel'><h2>Inventory ageing</h2><div class='age-row'>" + ageing_html + "</div></div>"
         + f"<div class='panel'><h2>Dead stock (90+ days, still available)</h2><ul class='events'>{dead_stock_html}</ul></div>"

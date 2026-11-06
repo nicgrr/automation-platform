@@ -144,6 +144,10 @@ async def run(args) -> int:
             for sku, quantity in _line_items(order):
                 seen += 1
                 existing = session.scalar(select(EbayImportedOrder).where(EbayImportedOrder.ebay_order_id == ebay_order_id, EbayImportedOrder.sku == sku))
+                if existing is not None and not args.dry_run:
+                    # Refresh financial/cancellation evidence without repeating stock changes.
+                    existing.raw_snapshot = order
+                    existing.observed_at = datetime.now(UTC)
                 if existing and existing.applied_at is not None:
                     continue  # already applied on a previous run -- the idempotency guarantee
                 if existing is None and sku.startswith(UNLISTED_SKU_PREFIX) and session.scalar(

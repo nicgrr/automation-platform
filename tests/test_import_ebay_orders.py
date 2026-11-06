@@ -458,3 +458,20 @@ def test_a_sku_less_line_already_packed_by_a_bulk_checklist_is_not_recorded_twic
 
     with Session() as session:
         assert session.scalars(select(EbayImportedOrder)).all() == []
+
+
+def test_applied_order_financial_snapshot_refreshes_without_second_stock_change(monkeypatch, Session):
+    _seed_listing(Session,quantity=3)
+    order={'orderId':'ord-1','lineItems':[{'sku':'listing-1','quantity':2}],
+           'cancelStatus':{'cancelState':'NONE_REQUESTED'}}
+    _patch_common(monkeypatch,Session,{'orders':[order]})
+    script.main([])
+    revised={**order,'cancelStatus':{'cancelState':'CANCELED'}}
+    _patch_common(monkeypatch,Session,{'orders':[revised]})
+    script.main(['--dry-run'])
+    with Session() as s:
+        assert s.scalar(select(EbayImportedOrder)).raw_snapshot['cancelStatus']['cancelState']=='NONE_REQUESTED'
+    script.main([])
+    with Session() as s:
+        assert s.scalar(select(EbayImportedOrder)).raw_snapshot['cancelStatus']['cancelState']=='CANCELED'
+        assert s.get(ShopListing,'listing-1').quantity==1
