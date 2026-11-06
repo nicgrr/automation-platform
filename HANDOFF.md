@@ -1,5 +1,17 @@
 # Handoff
 
+## Analytics stale-page investigation — Codex, 2026-11-07
+
+Owner stillsees No eBay traffic. Re-read DB and liveHTML at both127.0.0.1:8080 and
+https://homeserver.tailefaa51.ts.net/analytics with uniquerefreshquery: both200,no-store,
+344active listings,32366impressions,1596views,2transactions for06Oct–04Nov.
+Traffic fetched2026-11-06T18:44:05UTC. OneCRMsystemdprocess confirmed.
+Likely retainedoldbrowserpage, not servermissingdata. Providefreshquery analyticslink
+to force navigation; no code/service/data changes warranted by currentevidence.
+Separately generic topSales cards useSale table(1row), not imported eBayorders(37rows);
+user explicitly clarified missingtraffic, so do not implement revenueanalytics unsolicited.
+
+
 ## Reconnect recovery complete — Codex, 2026-11-07
 
 Deployed f3c0ab1 (isolated source507c16e), restarted ezbay successfully. 46focused
