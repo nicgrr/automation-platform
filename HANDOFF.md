@@ -1,5 +1,17 @@
 # Handoff
 
+## Codex deployment checkpoint — 2026-11-06
+
+Continuation implementation b8f70d8 / validation1a23203 in automation-card-display.
+100 focused tests passed. Production tracked files unchanged from3928d35; inherited
+untracked species map preserved byte-for-byte. Next copy owned display/recognition/confirm
+files and tests; snapshot DB, migrate, restart, install analytics timer. Owner now explicitly
+approves correcting Vaporeon and Radiant Charizard to photographed printings. Snapshot and
+audit those exact records, preserve quantities/prices/photos; do not merge other catalogue IDs.
+Then clean unpublished titles and execute approved shared-back description-only revisions,
+one first with remote verification. Re-read all live states before any record changes.
+
+
 ## Resume Claude card display/deploy — Codex, 2026-11-06
 
 User explicitly says continue where Claude left off. Base50c3f72; production branch
