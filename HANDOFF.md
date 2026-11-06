@@ -29,7 +29,7 @@ dimension, 30-day window ending 2 days back, 200 ids/call, zeros for listings wi
 table `ebay_listing_traffic` + migration `20261106_01`; `scripts/refresh_ebay_traffic.py`,
 `scripts/run-ebay-traffic-refresh.sh`, `docs/systemd/ebay-traffic-refresh.{service,timer}`
 (daily 05:41, no name collision on host); "eBay performance" panel on /analytics.
-Validation: tests/test_ebay_traffic.py + analytics + phase1b + representative_backs 49 passed;
+Validation: full suite 2591 passed + 1 expected failure (alembic head pin, now updated; passes);
 migration upgrade/downgrade passed on a `.backup` copy of the live DB. Full suite: rerun
 running after an intermittent fixture OperationalError in test_vinted_fallback (file passed
 3/3 alone); see the next entry for the result.
