@@ -11,6 +11,8 @@ from automation_control.adapters.ebay_trading import EbayTradingReadAdapter
 from automation_control.representative_backs import is_representative,with_notice,NOTICE
 # eBay's official sell_inventory_v1_oas3.json / EbayOfferDetailsWithId.
 FIELDS={'availableQuantity','categoryId','charity','extendedProducerResponsibility','hideBuyerDetails','includeCatalogProductDetails','listingDescription','listingDuration','listingPolicies','listingStartDate','lotSize','merchantLocationKey','pricingSummary','quantityLimitPerBuyer','regulatory','secondaryCategoryId','storeCategoryNames','tax'}
+def normalized_text(value):
+ return (value or "").replace("\r\n","\n")
 def revise_text(value,paths):
  return with_notice(value or '',paths).replace('Photos show the actual card you will receive','The front photo shows the actual card you will receive')
 def without_description(offer):
@@ -40,7 +42,7 @@ async def run(apply=False,limit=0):
     desc=revise_text(offer.get('listingDescription'),l.ebay_photo_paths)
     if desc==offer.get('listingDescription'):
      live=await r.get_item_details(link.ebay_listing_id)
-     assert live.description==desc
+     assert normalized_text(live.description)==normalized_text(desc)
      if apply and revise_text(l.ebay_description,l.ebay_photo_paths)!=l.ebay_description:
       l.ebay_description=revise_text(l.ebay_description,l.ebay_photo_paths)
       cached=s.query(EbayListing).filter_by(ebay_listing_id=link.ebay_listing_id).first()
@@ -50,7 +52,7 @@ async def run(apply=False,limit=0):
       s.commit()
      print('Already current and verified',link.ebay_listing_id,flush=True);continue
     live=await r.get_item_details(link.ebay_listing_id)
-    assert live.description==offer.get('listingDescription'), 'Live description differs; inspect before overwrite'
+    assert normalized_text(live.description)==normalized_text(offer.get('listingDescription')), 'Live description differs; inspect before overwrite'
     payload={k:copy.deepcopy(v) for k,v in offer.items() if k in FIELDS}
     payload['listingDescription']=desc
     assert {k:v for k,v in payload.items() if k!='listingDescription'}=={k:v for k,v in offer.items() if k in FIELDS and k!='listingDescription'}
@@ -66,7 +68,7 @@ async def run(apply=False,limit=0):
      record.update(after_offer=after,after_live=asdict(after_live))
      path.write_text(json.dumps(record,indent=2))
      assert without_description(after)==without_description(offer), 'Unexpected non-description change; halt'
-     assert after['listingDescription']==desc and after_live.description==desc
+     assert normalized_text(after['listingDescription'])==normalized_text(desc) and normalized_text(after_live.description)==normalized_text(desc)
      assert after_live.picture_urls==live.picture_urls
      s.refresh(l)
      l.ebay_description=revise_text(l.ebay_description,l.ebay_photo_paths)

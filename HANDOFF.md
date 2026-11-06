@@ -1,5 +1,11 @@
 # Handoff
 
+## Remote read timeout — Codex, 2026-11-06
+
+Resume halted on GetItem read timeout before fourth write; three verified still complete.
+Next allow up to3 retries on read-only GetOffer/GetItem calls with45s timeout. Never blindly
+retry writes. Existing snapshot verification passed all3, local protectedfields passed39records.
+
 ## Shared-back response normalization — Codex, 2026-11-06
 
 Three revised and verified: Yanma, Zarude, Dudunsparce. Next Mamoswine halted beforewrite
