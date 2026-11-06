@@ -393,6 +393,22 @@ class EbayListing(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
+class EbayListingTraffic(Base):
+    """Latest eBay Sell Analytics window per listing (see ebay_traffic.py).
+    Replaced wholesale on each refresh; /analytics only shows the current
+    window, so no history is kept."""
+
+    __tablename__ = "ebay_listing_traffic"
+
+    ebay_listing_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    transactions: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class OAuthState(Base):
     __tablename__ = "oauth_states"
 

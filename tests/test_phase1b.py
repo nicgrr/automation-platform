@@ -14,7 +14,7 @@ from automation_control.audit import redact
 from automation_control.auth import create_session, hash_password, require_dashboard_user, verify_password, verify_session
 from automation_control.config import Settings
 from automation_control.database import get_session
-from automation_control.ebay_oauth import ACCOUNT_SCOPE, AUTH_URL, AUTH_URL_PRODUCTION, FULFILLMENT_READ_SCOPE, IDENTITY_READ_SCOPE, INVENTORY_WRITE_SCOPE, MARKET_SCOPE, SELLER_SCOPE, EbayOAuthClient, OAuthError, TokenCipher, authorization_url, configured_for_writes, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_runame, valid_user_access_token
+from automation_control.ebay_oauth import ACCOUNT_SCOPE, ANALYTICS_SCOPE, AUTH_URL, AUTH_URL_PRODUCTION, FULFILLMENT_READ_SCOPE, IDENTITY_READ_SCOPE, INVENTORY_WRITE_SCOPE, MARKET_SCOPE, SELLER_SCOPE, EbayOAuthClient, OAuthError, TokenCipher, authorization_url, configured_for_writes, consume_oauth_state, new_oauth_state, store_user_tokens, valid_production_client_id, valid_production_runame, valid_sandbox_runame, valid_user_access_token
 
 
 def test_oauth_state_validation_is_single_use_and_rejects_missing(session):
@@ -83,7 +83,7 @@ def test_sandbox_authorization_request_uses_runame_and_seller_scope():
         "response_type": ["code"],
         "scope": [
             f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} "
-            f"{IDENTITY_READ_SCOPE} {ACCOUNT_SCOPE}"
+            f"{IDENTITY_READ_SCOPE} {ACCOUNT_SCOPE} {ANALYTICS_SCOPE}"
         ],
         "state": ["opaque-state"],
     }

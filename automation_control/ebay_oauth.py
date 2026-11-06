@@ -30,6 +30,9 @@ INVENTORY_WRITE_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.inventory"
 FULFILLMENT_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
 IDENTITY_READ_SCOPE = "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly"
 ACCOUNT_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.account"
+# Read-only listing traffic for /analytics (see ebay_traffic.py). Same
+# reconnect rule as above: an older token keeps its own scopes on refresh.
+ANALYTICS_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly"
 MARKET_SCOPE = "https://api.ebay.com/oauth/api_scope"
 # The base scope has to be requested alongside the specific ones -- a
 # real first attempt at this exact flow (2026-09-13) got "invalid_request"
@@ -37,7 +40,7 @@ MARKET_SCOPE = "https://api.ebay.com/oauth/api_scope"
 # was already granted to the app in the Developer Portal.
 SELLER_SCOPE = (
     f"{MARKET_SCOPE} {INVENTORY_WRITE_SCOPE} {FULFILLMENT_READ_SCOPE} "
-    f"{IDENTITY_READ_SCOPE} {ACCOUNT_SCOPE}"
+    f"{IDENTITY_READ_SCOPE} {ACCOUNT_SCOPE} {ANALYTICS_SCOPE}"
 )
 AUTH_URL = "https://auth.sandbox.ebay.com/oauth2/authorize"
 TOKEN_URL = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"

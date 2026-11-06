@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh eBay listing traffic for /analytics daily
+
+[Timer]
+# eBay finalises a day's traffic a day or two late (see ebay_traffic.py),
+# so once a day is as fresh as the numbers get.
+OnCalendar=*-*-* 05:41:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -28,7 +28,7 @@ from .auth import require_dashboard_user
 from .database import get_session
 from .inventory_review import _aud, _latest_prices
 from .models import (
-    InventoryItem, InventoryStatus, MarketListing, Marketplace,
+    EbayListing, EbayListingTraffic, InventoryItem, InventoryStatus, MarketListing, Marketplace,
     PotentialPurchaseStatus, PurchaseLot, PurchaseLotStatus, Sale, SaleStatus,
 )
 from .ui import brand_header, page
@@ -36,6 +36,10 @@ from .ui import brand_header, page
 router = APIRouter(tags=["analytics"])
 
 DEAD_STOCK_DAYS = 90
+# "Viewed but not selling" only means something once a listing has had a
+# real look; a couple of views is noise.
+VIEWED_NOT_SELLING_MIN_VIEWS = 10
+EBAY_PANEL_ROWS = 10
 OPEN_POTENTIAL_STATUSES = {
     PotentialPurchaseStatus.WATCHING, PotentialPurchaseStatus.CONTACT_SELLER,
     PotentialPurchaseStatus.OFFER_SENT, PotentialPurchaseStatus.COUNTER_OFFER,
@@ -143,11 +147,73 @@ def analytics_page(user: str = Depends(require_dashboard_user), session: Session
         + top_cards
         + "<div class='panel'><h2>Inventory ageing</h2><div class='age-row'>" + ageing_html + "</div></div>"
         + f"<div class='panel'><h2>Dead stock (90+ days, still available)</h2><ul class='events'>{dead_stock_html}</ul></div>"
+        + _ebay_performance_html(session)
         + (f"<div class='panel'><h2>Best sales channel</h2><p>{escape(best_channel)} — "
            f"${channel_totals[best_channel]:,.2f}</p></div>" if best_channel else "")
         + _STYLE
     )
     return HTMLResponse(page("EzBay — Analytics", body))
+
+
+def _rate(part: int, whole: int) -> str:
+    return f"{part / whole:.1%}" if whole else "—"
+
+
+def _ebay_performance_html(session: Session) -> str:
+    """Panel for the latest eBay traffic window (see ebay_traffic.py)."""
+    rows = session.execute(
+        select(EbayListingTraffic, EbayListing.title)
+        .join(EbayListing, EbayListing.ebay_listing_id == EbayListingTraffic.ebay_listing_id)
+        .where(EbayListing.listing_status == "Active")
+    ).all()
+    if not rows:
+        return ("<div class='panel'><h2>eBay performance</h2><p class='muted'>No eBay traffic yet. "
+                "Reconnect eBay at <a href='/auth/ebay/start'>/auth/ebay/start</a> to allow analytics; "
+                "listing views and impressions then refresh daily.</p></div>")
+
+    traffic = [row[0] for row in rows]
+    titles = {row[0].ebay_listing_id: row[1] for row in rows}
+    impressions = sum(t.impressions for t in traffic)
+    views = sum(t.views for t in traffic)
+    sales = sum(t.transactions for t in traffic)
+    first = traffic[0]
+
+    def listing_list(items, detail) -> str:
+        if not items:
+            return "<li class='muted'>None.</li>"
+        return "".join(
+            f"<li><a href='https://www.ebay.com.au/itm/{escape(t.ebay_listing_id)}' target='_blank' rel='noopener'>"
+            f"{escape(titles[t.ebay_listing_id])}</a> <span class='muted'>— {detail(t)}</span></li>"
+            for t in items[:EBAY_PANEL_ROWS]
+        )
+
+    not_selling = sorted((t for t in traffic if t.transactions == 0 and t.views >= VIEWED_NOT_SELLING_MIN_VIEWS),
+                         key=lambda t: -t.views)
+    unseen = sorted(traffic, key=lambda t: (t.impressions, t.views))
+    best = sorted((t for t in traffic if t.transactions), key=lambda t: (-t.transactions, -t.views))
+    stats = "".join(
+        f"<div class='stat-card'><div class='label'>{label}</div><div class='value'>{value}</div></div>"
+        for label, value in (
+            ("Impressions", f"{impressions:,}"),
+            ("Listing views", f"{views:,}"),
+            ("Views per impression", _rate(views, impressions)),
+            ("Items sold", f"{sales:,}"),
+            ("Sales per view", _rate(sales, views)),
+        )
+    )
+    return (
+        "<div class='panel'><h2>eBay performance</h2>"
+        f"<p class='muted'>{first.period_start:%d %b} – {first.period_end:%d %b %Y} · {len(traffic)} active listings · "
+        f"updated {first.fetched_at:%d %b}</p>"
+        f"<div class='stat-grid'>{stats}</div>"
+        f"<h3>Viewed but not selling</h3><p class='muted'>{VIEWED_NOT_SELLING_MIN_VIEWS}+ views, no sales — check price and photos.</p>"
+        f"<ul class='events'>{listing_list(not_selling, lambda t: f'{t.views} views, {t.impressions:,} impressions')}</ul>"
+        "<h3>Rarely seen</h3><p class='muted'>Fewest impressions — check title, category and item specifics.</p>"
+        f"<ul class='events'>{listing_list(unseen, lambda t: f'{t.impressions:,} impressions, {t.views} views')}</ul>"
+        "<h3>Best sellers</h3>"
+        f"<ul class='events'>{listing_list(best, lambda t: f'{t.transactions} sold from {t.views} views')}</ul>"
+        "</div>"
+    )
 
 
 _STYLE = """<style>
