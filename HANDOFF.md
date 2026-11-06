@@ -1,5 +1,16 @@
 # Handoff
 
+## English titles for JP cards, Chinese card handling, deploy — Claude Code, 2026-11-06
+
+Owner approved ("yes and do what you need to do"): (1) titles/CRM names for Japanese cards in
+English (English card + set name, keep "Japanese"), via a JP->EN species name list and JP set-code
+English names; drafts/future only, live titles untouched. (2) Simplified Chinese: recognition
+prompt for CBB2C-style set codes/4-digit numbers, matching without a Chinese catalogue, fuller
+titles. (3) Deploy: alembic upgrade + restart ezbay.service, install ebay-traffic timer
+(sudo NOPASSWD root available), then revise the 23 live shared-back listings' descriptions
+(owner originally asked for every description; one listing first, then the rest).
+Plan order: code 1 -> 2 with tests, commit, deploy, verify, then eBay revisions.
+
 ## Listing filter lost after publish — Claude Code, 2026-11-06
 
 Owner: Shop listings Pokémon filter "doesn't stay" and collectibles show up. Request log showed
