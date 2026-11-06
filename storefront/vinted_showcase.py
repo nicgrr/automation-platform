@@ -7,8 +7,8 @@ once it isn't: a sold figure drops off when the owner marks it sold.
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,6 +55,23 @@ def _photo_source(session: Session, listing_id: str) -> Path | None:
 
 def has_photo(session: Session, listing_id: str) -> bool:
     return _photo_source(session, listing_id) is not None
+
+
+@router.get("/feed/new.json")
+def new_items_feed(request: Request, session: Session = Depends(get_session)) -> JSONResponse:
+    """What the Collectables page shows, as data, for the NL Vault Discord bot.
+
+    Only what is already public on that page: title, price, the Vinted link and
+    the photo. A figure that sells or is removed drops out of the feed, as it
+    does from the page.
+    """
+    site = str(request.base_url).rstrip("/")
+    items = [{
+        "id": listing.id, "title": listing.title, "price": f"{listing.price:.2f}", "currency": listing.currency,
+        "url": listing.url,
+        "image": f"{site}/vinted-photo/{listing.id}" if has_photo(session, listing.id) else None,
+    } for listing in live_listings(session)]
+    return JSONResponse({"items": items}, headers={"Cache-Control": "public, max-age=300"})
 
 
 @router.get("/vinted-photo/{listing_id}")

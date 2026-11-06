@@ -112,3 +112,27 @@ def test_a_photo_outside_the_media_folder_is_refused(client, session, media):
 def test_a_non_https_link_is_never_shown(client, session):
     add_vinted(session, url="javascript:alert(1)")
     assert "javascript:alert" not in client.get("/shop/collectibles").text
+
+
+def test_the_feed_lists_live_figures_as_public_data(client, session, media):
+    add_vinted(session, paths=[media])
+    add_vinted(session, listing_id="v2", title="Sonny Angel Duck", price="24.99", url=URL + "5")
+    data = client.get("/feed/new.json").json()
+    owl = next(i for i in data["items"] if i["id"] == "v1")
+    assert owl == {"id": "v1", "title": "Sonny Angel Owl", "price": "24.99", "currency": "AUD", "url": URL,
+                   "image": "http://testserver/vinted-photo/v1"}
+    assert next(i for i in data["items"] if i["id"] == "v2")["image"] is None
+    assert set(owl) == {"id", "title", "price", "currency", "url", "image"}
+
+
+@pytest.mark.parametrize("status", [VintedListingStatus.SOLD, VintedListingStatus.REMOVED])
+def test_sold_and_removed_figures_leave_the_feed(client, session, status):
+    add_vinted(session, status=status)
+    assert client.get("/feed/new.json").json() == {"items": []}
+
+
+def test_the_feed_never_includes_hidden_listings_or_non_https_links(client, session):
+    add_card(session, "Charizard")
+    add_collectible(session, "Old Duck", price="38.13")
+    add_vinted(session, url="javascript:alert(1)")
+    assert client.get("/feed/new.json").json() == {"items": []}
