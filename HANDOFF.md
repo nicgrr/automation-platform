@@ -3,18 +3,22 @@
 ## Photo-confirm corrections (owner-approved) — Claude Code, 2026-11-06
 
 Owner answers: Zeraora sv7 109/102 = 2 copies; Eevee V CBB2C 0113 = 2; Nymble 096/094 = 2;
-Simplified Chinese cards use the EN back (keep). Owner approved fixing all JP-151-vs-EN
-mislinks. Planned via `scripts/fix_photo_confirm_conflicts_20261106.py` (dry-run first,
-DB `.backup` to backups/ first, audit events):
-- Charmander 168/165 (inv a3b67007, listing 566ddcbb) and Poliwhirl 176/165 (inv b3bfd9dc,
-  listing 44d3144d): move sv3pt5-* -> jp-sv2a-168/176, regenerate title/description, JP back.
-- Meowth (listing 16508e98, pair d51f #3): new jp-sv2a-052 MASTERBALL_PATTERN stock qty1 for the
-  listing; restore English inv a1f5e9e0 variant to REVERSE_HOLO (confirm changed it); owner
-  unsure the English Meowth physically exists — left AVAILABLE, flag for stocktake.
-- Zeraora inv 223cabf4 + listing c3fb97d4 quantity 1 -> 2.
-- Pending Dragonair (3fd7 #8): proposed catalog sv3pt5-148 -> jp-sv2a-148.
-Not in scope without a further OK: ~38 JP cards confirmed onto new `local-*` duplicate
-catalogue entries although official `jp-*` entries exist; garbled generated titles.
+Simplified Chinese cards use the EN back (keep). Owner approved fixing all JP-151-vs-EN mislinks.
+APPLIED 08:29Z via `scripts/fix_photo_confirm_conflicts_20261106.py` (audit actor
+"claude-code (owner-approved 2026-11-06)"): Charmander 168 + Poliwhirl 176 moved to
+jp-sv2a-168/176 (JP titles, JP back); Meowth listing 16508e98 on new jp-sv2a-052
+MASTERBALL_PATTERN stock 6b94e506 (owner unsure Poke Ball vs Master Ball — confirm); English
+Meowth inv a1f5e9e0 restored to REVERSE_HOLO and left AVAILABLE (owner unsure it exists —
+stocktake); Zeraora inv 223cabf4 + listing c3fb97d4 qty 2. Then: Nymble inv 3ae72892 + draft
+qty 2; pending Dragonair 3fd7#8 proposal -> jp-sv2a-148. All re-read and verified.
+INCIDENT: the first "dry run" committed, because `audit.record_event` calls session.commit().
+Script now queues events until --apply. `backups/automation-before-photo-confirm-fixes-20261106.db`
+was taken AFTER that commit, so it is not a pre-change copy.
+Owner is confirming/publishing in the UI concurrently — re-read rows before any write.
+Pending review: Nymble 7a7b#40 -> "Same card, new photo"; Eevee V d51f#8 -> Extra copy qty 2,
+d51f#9 -> "Same card, new photo"; Espeon CBB2C 0512, Flareon VMAX CBB2C 0414, Dragonair.
+Not in scope without a further OK: ~38 JP cards confirmed onto new `local-*` duplicate catalogue
+entries although official `jp-*` entries exist (title quality e.g. "Nexnszoroarkex").
 
 ## eBay listing traffic analytics — Claude Code, 2026-11-06
 
