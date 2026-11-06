@@ -14,7 +14,11 @@ FIELDS={'availableQuantity','categoryId','charity','extendedProducerResponsibili
 def revise_text(value,paths):
  return with_notice(value or '',paths).replace('Photos show the actual card you will receive','The front photo shows the actual card you will receive')
 def without_description(offer):
- return {k:v for k,v in offer.items() if k!='listingDescription'}
+ result=copy.deepcopy({k:v for k,v in offer.items() if k!='listingDescription'})
+ policies=result.get('listingPolicies',{})
+ if 'eBayPlusIfEligible' in policies:
+  policies['ebayPlusIfEligible']=policies.pop('eBayPlusIfEligible')
+ return result
 async def run(apply=False,limit=0):
  cfg=get_settings();done=0;checked=0
  with SessionLocal() as s:
@@ -35,7 +39,16 @@ async def run(apply=False,limit=0):
     checked+=1
     desc=revise_text(offer.get('listingDescription'),l.ebay_photo_paths)
     if desc==offer.get('listingDescription'):
-     print('Already current',link.ebay_listing_id,flush=True);continue
+     live=await r.get_item_details(link.ebay_listing_id)
+     assert live.description==desc
+     if apply and revise_text(l.ebay_description,l.ebay_photo_paths)!=l.ebay_description:
+      l.ebay_description=revise_text(l.ebay_description,l.ebay_photo_paths)
+      cached=s.query(EbayListing).filter_by(ebay_listing_id=link.ebay_listing_id).first()
+      if cached:
+       cached.raw_snapshot={**(cached.raw_snapshot or {}),'description':desc}
+      s.add(AuditEvent(actor_type='user',actor_id='Codex (approved shared-back descriptions)',action='ebay.reconcile_verified_shared_back_notice',resource_type='shop_listing',resource_id=lid,outcome='success',correlation_id=str(uuid.uuid4()),details={'ebay_listing_id':link.ebay_listing_id,'verified_live':True}))
+      s.commit()
+     print('Already current and verified',link.ebay_listing_id,flush=True);continue
     live=await r.get_item_details(link.ebay_listing_id)
     assert live.description==offer.get('listingDescription'), 'Live description differs; inspect before overwrite'
     payload={k:copy.deepcopy(v) for k,v in offer.items() if k in FIELDS}

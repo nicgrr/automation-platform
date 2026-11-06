@@ -1,5 +1,12 @@
 # Handoff
 
+## Shared-back response normalization — Codex, 2026-11-06
+
+Three revised and verified: Yanma, Zarude, Dudunsparce. Next Mamoswine halted beforewrite
+because offer description usesCRLF and Trading XML normalizes toLF. Contentidentical.
+Normalizeonly CRLF fordescription verification, keep price/quantity/policy/photo assertions.
+Resume remaining23. No live changes otherthanapproveddescription noticed.
+
 ## Shared-back verification pause — Codex, 2026-11-06
 
 Second remote write Zarude267805604365 succeeded and live description/photos verified.
