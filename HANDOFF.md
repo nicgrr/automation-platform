@@ -1,5 +1,21 @@
 # Handoff
 
+## Photo-confirm corrections (owner-approved) — Claude Code, 2026-11-06
+
+Owner answers: Zeraora sv7 109/102 = 2 copies; Eevee V CBB2C 0113 = 2; Nymble 096/094 = 2;
+Simplified Chinese cards use the EN back (keep). Owner approved fixing all JP-151-vs-EN
+mislinks. Planned via `scripts/fix_photo_confirm_conflicts_20261106.py` (dry-run first,
+DB `.backup` to backups/ first, audit events):
+- Charmander 168/165 (inv a3b67007, listing 566ddcbb) and Poliwhirl 176/165 (inv b3bfd9dc,
+  listing 44d3144d): move sv3pt5-* -> jp-sv2a-168/176, regenerate title/description, JP back.
+- Meowth (listing 16508e98, pair d51f #3): new jp-sv2a-052 MASTERBALL_PATTERN stock qty1 for the
+  listing; restore English inv a1f5e9e0 variant to REVERSE_HOLO (confirm changed it); owner
+  unsure the English Meowth physically exists — left AVAILABLE, flag for stocktake.
+- Zeraora inv 223cabf4 + listing c3fb97d4 quantity 1 -> 2.
+- Pending Dragonair (3fd7 #8): proposed catalog sv3pt5-148 -> jp-sv2a-148.
+Not in scope without a further OK: ~38 JP cards confirmed onto new `local-*` duplicate
+catalogue entries although official `jp-*` entries exist; garbled generated titles.
+
 ## eBay listing traffic analytics — Claude Code, 2026-11-06
 
 Last updated: Claude Code, 2026-11-06. Owner approved the feature; read-only against eBay.
