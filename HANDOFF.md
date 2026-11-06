@@ -1,5 +1,19 @@
 # Handoff
 
+## Resume Claude card display/deploy — Codex, 2026-11-06
+
+User explicitly says continue where Claude left off. Base50c3f72; production branch
+nl-vault-label-design. Only dirty file is Claude's untracked data/pokemon_species_names.json;
+preserve original, use a copy in isolated continuation worktree. Plan deterministic Japanese
+English display names/set names without moving catalogue IDs, Chinese exact code/number
+handling, tests, then approved migration/service/timer deployment and description-only shared
+back eBay revisions. Re-read records: owner has been confirming/publishing concurrently.
+Codex visual pass of89 original photos is in /tmp/pokemon-review/{identities.txt,matches.json};
+DO NOT apply its now-stale matches over Claude/user confirmations. It found Pokeball pattern
+Meowth052 and Leafeon002; Meowth currently Master Ball remains owner review, no silent change.
+Repeated Nymble/Zeraora/Eevee confirmed separate physical copies by owner in this chat too.
+
+
 ## English titles for JP cards, Chinese card handling, deploy — Claude Code, 2026-11-06
 
 Owner approved ("yes and do what you need to do"): (1) titles/CRM names for Japanese cards in
