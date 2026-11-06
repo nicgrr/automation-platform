@@ -1,5 +1,14 @@
 # Handoff
 
+## Shared-back verification pause — Codex, 2026-11-06
+
+Second remote write Zarude267805604365 succeeded and live description/photos verified.
+Strict offer equality stopped batch because eBay changed key casing eBayPlusIfEligible ->
+ebayPlusIfEligible (both false), no policy ID/value change. Local notice not yet synchronized.
+Next normalize ONLY that known response alias, verify and recover already-current remote
+notice into local record with audit; then continue rest. Preserve backup JSONs as local
+untracked operational evidence (do not commit database snapshots).
+
 ## Shared-back revision first verified — Codex, 2026-11-06
 
 Yanma267805604307 description-only update succeeded. Offer Get/readback non-description
