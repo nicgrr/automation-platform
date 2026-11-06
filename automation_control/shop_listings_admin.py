@@ -33,6 +33,9 @@ from .database import get_session
 from .images import serve_image, serve_thumb
 from .models import (
     AuditEvent,
+    CollectibleProduct,
+    VintedListing,
+    VintedListingStatus,
     CardSet,
     CatalogItem,
     CatalogItemType,
@@ -225,6 +228,18 @@ def _ebay_state_clauses():
 
 def _filtered(status: str, q: str, category: str = "all", ebay: str = "all"):
     stmt = select(ShopListing)
+    # Vinted owns the waiting queue; keep the same records for the fallback
+    # worker, which reuses them after 14 days. Never hide eBay errors or live offers.
+    sonny = select(CollectibleProduct.catalog_item_id).where(
+        CollectibleProduct.catalog_item_id == ShopListing.catalog_item_id,
+        CollectibleProduct.brand == "Sonny Angel",
+    ).exists()
+    on_vinted = select(VintedListing.id).where(
+        VintedListing.inventory_item_id == ShopListing.inventory_item_id,
+        VintedListing.status.in_((VintedListingStatus.ACTIVE, VintedListingStatus.SOLD)),
+    ).exists()
+    if status not in ("sold_out", "withdrawn"):
+        stmt = stmt.where(~and_(sonny, on_vinted, _ebay_state_clauses()["not_listed"]))
     out_of_stock = or_(ShopListing.status == ShopListingStatus.SOLD_OUT, ShopListing.quantity <= 0)
     if status == "sold_out":
         stmt = stmt.where(out_of_stock)
@@ -599,6 +614,7 @@ def shop_listings_page(
         brand_header("Out of stock" if status == "sold_out" else "Listing Studio")
         + note
         + stock_section
+        + "<p><a class='btn small ghost' href='/collectibles/vinted/live'>Vinted listings &amp; eBay timers</a></p>"
         + "<p class='muted'>Live on eBay is confirmed by the latest eBay sync. EZBay enabled is an internal workflow status. Saved prices may include unpublished edits.</p>"
         + f"<nav aria-label='eBay publication status' class='filter-tabs listing-primary-tabs'>{ebay_bar}</nav>"
         + "<div class='listing-desktop-filters'>"

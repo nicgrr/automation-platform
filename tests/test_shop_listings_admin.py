@@ -709,3 +709,34 @@ def test_saving_the_edit_page_returns_to_where_it_was_opened_from(client, sessio
                        params={"_return_to": edit_page, "_return_prev": f"/shop-listings/{listing_id}/ebay-preview"},
                        data={"title": "Edited", "price": "5.00", "quantity": "1"}, follow_redirects=False)
     assert resp.headers["location"] == f"/shop-listings/{listing_id}/ebay-preview?_saved=Listing+saved"
+
+
+def test_sonny_vinted_queue_preserves_timer_and_ebay_attention(session):
+    from automation_control.models import CollectibleProduct, VintedListing, VintedListingStatus
+    from automation_control.shop_listings_admin import _filtered
+    listing_id = make_listing(session, "TimerSonny")
+    listing = session.get(ShopListing, listing_id)
+    session.add(CollectibleProduct(catalog_item_id=listing.catalog_item_id, brand="Sonny Angel"))
+    stock = InventoryItem(catalog_item_id=listing.catalog_item_id, quantity=1)
+    session.add(stock); session.flush()
+    listing.inventory_item_id = stock.id
+    vinted = VintedListing(inventory_item_id=stock.id, catalog_item_id=listing.catalog_item_id,
+        vinted_item_id="timer123", url="https://www.vinted.com/items/timer123", title="TimerSonny", price=10)
+    session.add(vinted); session.commit()
+    posted_at = vinted.posted_at
+    def visible():
+        return listing_id in {r.id for r in session.scalars(_filtered("all", "", "all", "all"))}
+    assert not visible()
+    assert vinted.posted_at == posted_at and listing.status == ShopListingStatus.DRAFT
+    vinted.status = VintedListingStatus.SOLD; session.commit()
+    assert not visible()
+    vinted.status = VintedListingStatus.REMOVED; session.commit()
+    assert visible()
+    vinted.status = VintedListingStatus.ACTIVE
+    link = EbayListingLink(shop_listing_id=listing.id, sku=listing.id, marketplace_id="EBAY_AU",
+        status=EbayListingLinkStatus.FAILED)
+    session.add(link); session.commit()
+    assert visible()
+    link.status = EbayListingLinkStatus.ACTIVE; link.ebay_listing_id = "timer-live"
+    session.commit()
+    assert visible()
