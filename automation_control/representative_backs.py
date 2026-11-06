@@ -2,8 +2,11 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / 'scan_ingest_data/media/listing_photos/representative-backs'
-NOTICE = ('The front photograph shows the card offered. The back photograph is a shared '
-          'representative image, not a photograph of this individual card, and does not show its back condition.')
+NOTICE = ('The front photo shows the actual card you will receive. The back photo is a stock photo, '
+          'not this exact card. Please message us if you would like a photo of the actual back.')
+# Earlier wording, swapped for NOTICE wherever it was already written into a description.
+LEGACY_NOTICES = ('The front photograph shows the card offered. The back photograph is a shared '
+                  'representative image, not a photograph of this individual card, and does not show its back condition.',)
 
 
 def is_representative(path):
@@ -27,6 +30,8 @@ def select_back(game, language, rarity=''):
 
 def with_notice(description, paths):
     if any(is_representative(p) for p in paths or []):
+        for legacy in LEGACY_NOTICES:
+            description = description.replace(legacy, NOTICE)
         return description if NOTICE in description else description.rstrip() + '\n\n' + NOTICE
     return description
 
