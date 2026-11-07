@@ -11,6 +11,12 @@ three-product photo composition in HTML/CSS, keeping existing franchise filters.
 Implemented curated promo placement and real-photo sealed cover. 53 focused
 department/projection tests passed. Files: departments.py, app.py, ui.py and tests. Deploy nl-vault.service
 after tests, verify home and filtered pages. No marketplace/stock writes.
+DONE 619b6dd deployed: nl-vault.service restarted. Live home, Pokemon, Sealed,
+and all three franchise filters returned200; promo display present in Pokemon,
+Other absent from home/navigation. Headless Chromium screenshot visually checked:
+/tmp/nl-vault-categories.png, all three real deck photos load in new cover.
+Initial immediate post-restart curl raced startup (000); subsequent six HTTP
+checks all passed. No inventory or marketplace changes.
 Previous audit complete: 354 photo sets refreshed, 98 changed, 0 failures;43tests
 passed for quantity fix, remaining Newgate1 and bulk9 verified rendered. Owner
 says newer photographed stock must stay separate from old scanner quantities;
