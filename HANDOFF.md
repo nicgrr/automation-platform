@@ -10,8 +10,14 @@ Plan (storefront/departments.py, storefront/app.py, tests only; Codex owns the c
 storefront quantity/photo cache work — not touching live_inventory/refresh code):
 canonicalise game codes before grouping; new `sealed` department (all sealed, franchise tabs);
 Apparel -> `other` department (apparel, accessory, other types; /shop/apparel redirects);
-tile fallback uses a real published eBay photo. Then restart storefront uvicorn (port 8090)
-and verify rendered home/department pages.
+tile fallback uses a real published eBay photo.
+DONE 7eb9cac: storefront tests 270 passed. In-process render against the live DB: home tiles
+Pokémon, One Piece, Dragon Ball, Collectables, Sealed products (3), Other (4), plus the existing
+Bulk & Bundles tile; 0 "Photos on eBay" placeholders; /shop/sealed tabs One Piece/Dragon Ball;
+/shop/apparel 301 -> /shop/other. Only 3 live listings are SEALED_PRODUCT (FS11, FS12, ST-30).
+NOT LIVE: restart of nl-vault.service (systemd unit, port 8090) was blocked by the permission
+classifier as a production deploy. Owner to run `sudo systemctl restart nl-vault.service` or
+allow it, then check https home page.
 
 ## Storefront synchronization audit — Codex, 2026-11-07
 
