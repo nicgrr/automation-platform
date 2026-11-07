@@ -1,12 +1,14 @@
 # Handoff
 
-## Gold DON draft content — Codex, 2026-11-07
+## Gold DON draft content complete — Codex, 2026-11-07
 
-Owner screenshot shows generic title after gold variant discussion. Next update
+Completed and DB read-back verified: update
 existing c5cc700e draft title and description to Gold DON Heroines Edition Vol. 2
 Maid Outfits English, preserving photos, quantity and current price. Snapshot and
 audit before/with correction; no marketplace publish. Base 4693034; tracked clean,
-untracked operational backups preserved.
+untracked operational backups preserved. Saved title is 67 characters (under 80).
+Current owner price was AUD89.99, preserved with quantity1 and both photos.
+Backup don-gold-content-20261107.json and audit saved. No code change or publish.
 
 ## DON back attached; pins staged — Codex, 2026-11-07
 
