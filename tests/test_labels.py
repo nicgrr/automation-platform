@@ -203,3 +203,10 @@ def test_the_label_is_one_bit_at_the_printers_size():
 
     image = render_label_image(["Alex Example", "1 Sample Road"])
     assert (image.size, image.mode) == ((800, 1200), "1")
+
+
+def test_website_sits_lower_than_the_sender_name_in_the_header():
+    from automation_control.labels import SENDER_NAME, WEBSITE
+
+    positions = {text: xy for xy, text, _width in _text_rows(["Alex Example", "1 Sample Road"])}
+    assert positions[WEBSITE][1] == positions[SENDER_NAME][1] + 14

@@ -13,6 +13,12 @@ Existing dirty storefront files (`storefront/app.py`, `storefront/departments.py
 concurrent storefront work and must remain untouched. Existing untracked backup
 JSON files are operational evidence and must remain untouched. No print job,
 service restart, or other external action is authorized by this code change.
+DONE: website offset changed from `y + 6` to `y + 14`; globe moved by the
+same eight pixels. Sender, recipient block, and both divider positions remain
+unchanged. Preview `/tmp/ezbay-label-after.png` visually inspected with clear
+header-rule clearance. Validation: `.venv/bin/pytest -q tests/test_labels.py`
+passed 18 tests. No print job or service restart performed. The running CRM
+will pick this up at its next authorized restart.
 
 ## Storefront department tiles — Claude Code, 2026-11-07
 

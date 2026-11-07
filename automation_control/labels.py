@@ -110,9 +110,13 @@ def _draw_header(draw: ImageDraw.ImageDraw, x: int, y: int, right: int) -> None:
     draw.text((x, y), SENDER_NAME, font=sender, fill=0)
     site = _font(True, 28)
     site_x = right - int(draw.textlength(WEBSITE, font=site))
-    draw.text((site_x, y + 6), WEBSITE, font=site, fill=0)
+    # Keep the website slightly lower than the sender name.  On the physical
+    # label this gives the URL the same balanced baseline as the globe instead
+    # of making the right side of the header look top-heavy.
+    site_y = y + 14
+    draw.text((site_x, site_y), WEBSITE, font=site, fill=0)
     # Globe, then the divider between sender and website.
-    cx, cy, r = site_x - 34, y + 22, 21
+    cx, cy, r = site_x - 34, y + 30, 21
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=0, width=3)
     draw.ellipse((cx - 9, cy - r, cx + 9, cy + r), outline=0, width=2)
     draw.line((cx - r, cy, cx + r, cy), fill=0, width=2)
