@@ -1,5 +1,18 @@
 # Handoff
 
+## Storefront department tiles — Claude Code, 2026-11-07
+
+Owner (screenshot of NL Vault home): extra tiles without photos (Apparel, "Dragon Ball Super
+Fusion World", second "One Piece"); wants only Sealed products and Other in that row, all sealed
+together with a game filter, photos on tiles. Cause of stray tiles: SealedProduct.game stores
+display text ("One Piece", "Dragon Ball Super Fusion World") so `_group_of` misses them.
+Plan (storefront/departments.py, storefront/app.py, tests only; Codex owns the concurrent
+storefront quantity/photo cache work — not touching live_inventory/refresh code):
+canonicalise game codes before grouping; new `sealed` department (all sealed, franchise tabs);
+Apparel -> `other` department (apparel, accessory, other types; /shop/apparel redirects);
+tile fallback uses a real published eBay photo. Then restart storefront uvicorn (port 8090)
+and verify rendered home/department pages.
+
 ## Storefront synchronization audit — Codex, 2026-11-07
 
 Owner reports outdated cards and quantities. Base 6d863d6, tracked clean.
