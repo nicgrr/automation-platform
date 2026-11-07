@@ -43,6 +43,9 @@ from automation_control.models import (
 # ("Pokémon"). A game not in here falls back to a title-cased version of
 # its own code, so a new game still gets a readable name with no edit
 # needed here -- this dict is cosmetic, never a gate on what can appear.
+# Owner-curated placement of a multi-card display; retain its real product type.
+_POKEMON_DISPLAY_IDS = ("pokemon-promo-display-svp079-081",)
+
 GAME_LABELS = {"pokemon": "Pokémon", "one_piece": "One Piece", "dragon_ball": "Dragon Ball"}
 
 # Sealed products entered through Listing Studio store the game as display
@@ -169,7 +172,11 @@ def _active_games(session: Session) -> list[str]:
         select(BulkLot.game).distinct()
         .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
     ).all()
-    return sorted({g for g in (*from_cards, *from_bulk) if g})
+    games = {g for g in (*from_cards, *from_bulk) if g}
+    if session.scalar(select(ShopListing.id).where(
+            live_inventory.available(), ShopListing.catalog_item_id.in_(_POKEMON_DISPLAY_IDS)).limit(1)):
+        games.add("pokemon")
+    return sorted(games)
 
 
 def department_list(session: Session) -> list[Department]:
@@ -206,6 +213,8 @@ def department_for_item(session: Session, item: CatalogItem | None) -> Departmen
     disagree with which grid it actually shows up in."""
     if item is None:
         return None
+    if item.id in _POKEMON_DISPLAY_IDS:
+        return find(session, "game-pokemon")
     is_sleeve_pack = item.item_type == CatalogItemType.ACCESSORY and session.scalar(
         select(func.count()).select_from(CatalogItem)
         .where(CatalogItem.id == item.id, CatalogItem.id.in_(sealed_supply_ids())))
@@ -239,14 +248,19 @@ def listing_filter(department: Department):
         condition = condition | CatalogItem.id.in_(sealed_supply_ids())
     elif department.sealed_supplies == "exclude":
         condition = condition & CatalogItem.id.not_in(sealed_supply_ids())
+    if department.slug == "other":
+        condition = condition & CatalogItem.id.not_in(_POKEMON_DISPLAY_IDS)
     codes = department.game_codes
     if not codes:
         return condition
-    return condition & (
+    scoped = condition & (
         CatalogItem.id.in_(select(TcgCard.catalog_item_id).where(TcgCard.game.in_(codes)))
         | CatalogItem.id.in_(select(SealedProduct.catalog_item_id).where(SealedProduct.game.in_(codes)))
         | CatalogItem.id.in_(select(AccessoryProduct.catalog_item_id).where(AccessoryProduct.brand.in_(codes)))
     )
+    if department.game == "pokemon" and "pokemon" in codes:
+        scoped = scoped | CatalogItem.id.in_(_POKEMON_DISPLAY_IDS)
+    return scoped
 
 
 def _bulk_filter(department: Department):

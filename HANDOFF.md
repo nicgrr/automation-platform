@@ -8,7 +8,8 @@ department changes already deployed and preserved. Plan storefront-only curated
 placement for pokemon-promo-display-svp079-081, no catalog type falsification.
 Empty Other will disappear; retain route for compatibility. Sealed tile uses a
 three-product photo composition in HTML/CSS, keeping existing franchise filters.
-Files: departments.py, app.py, ui.py and focused tests. Deploy nl-vault.service
+Implemented curated promo placement and real-photo sealed cover. 53 focused
+department/projection tests passed. Files: departments.py, app.py, ui.py and tests. Deploy nl-vault.service
 after tests, verify home and filtered pages. No marketplace/stock writes.
 Previous audit complete: 354 photo sets refreshed, 98 changed, 0 failures;43tests
 passed for quantity fix, remaining Newgate1 and bulk9 verified rendered. Owner

@@ -273,6 +273,12 @@ body.nav-open .sidenav{transform:none;visibility:visible}
 .dept-hero img{width:100%;height:100%;object-fit:contain}
 .dept-hero img.dept-logo{padding:7% 9%;box-sizing:border-box}
 .dept-hero img.dept-art{object-fit:cover}
+.sealed-cover{width:100%;height:100%;box-sizing:border-box;padding:18px 16px 12px;background:linear-gradient(135deg,#133b3c,#256464);display:flex;flex-direction:column;gap:12px;overflow:hidden}
+.sealed-cover-label{font-size:10px;font-weight:800;letter-spacing:1.5px;color:#f5e6bb;text-align:center}
+.sealed-cover-products{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-height:0}
+.dept-hero .sealed-cover-products img{width:30%;height:90%;object-fit:contain;background:#fff;border-radius:8px;padding:4px;box-sizing:border-box;box-shadow:0 6px 14px #0003}
+.sealed-cover-products img:first-child{transform:rotate(-7deg)}
+.sealed-cover-products img:last-child{transform:rotate(7deg)}
 .dept-hero .art-tag{left:12px;bottom:12px}
 .dept-hero-mark{width:100%;height:100%;display:grid;place-items:center;color:var(--rule)}
 .dept-card-body{display:flex;flex-direction:column;gap:8px;padding:20px;flex:1}

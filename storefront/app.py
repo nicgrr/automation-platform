@@ -158,6 +158,17 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
               departments.listing_filter(department))
         .order_by(ShopListing.price.desc()).limit(25)
     ).all()
+    if department.slug == "sealed" and live_inventory.enabled():
+        # Actual products arranged as a category cover; no stock-art substitution.
+        covers = []
+        for listing, item in rows:
+            photos = live_inventory.published_photos(session, listing.id)
+            if photos:
+                covers.append(f"<img src='{escape(photos[0], quote=True)}' alt='{escape(listing.title, quote=True)}' loading='lazy'>")
+            if len(covers) == 3:
+                break
+        if covers:
+            return "<div class='sealed-cover'><span class='sealed-cover-label'>DECKS · SLEEVES · MORE</span><div class='sealed-cover-products'>" + "".join(covers) + "</div></div>"
     if rows and live_inventory.enabled():
         # Live mode has no local product photos, so the dearest listing's
         # art is just a "Photos on eBay" placeholder: use the first listing

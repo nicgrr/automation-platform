@@ -296,3 +296,34 @@ def test_bulk_master_shows_everything_with_no_game_filter(client, session):
     add_bulk_lot(session, game="one_piece", title="One Piece bulk")
     body = client.get("/bulk").text
     assert "Pokemon bulk" in body and "One Piece bulk" in body
+
+
+def test_three_card_promo_display_belongs_to_pokemon_not_other(session, monkeypatch):
+    from sqlalchemy import select
+    monkeypatch.setattr(departments.live_inventory, 'enabled', lambda: False)
+    cid = 'pokemon-promo-display-svp079-081'
+    item = CatalogItem(id=cid, item_type=CatalogItemType.OTHER, name='Pokemon three-card promo display')
+    session.add(item)
+    session.add(ShopListing(id='promo-display', catalog_item_id=cid, title=item.name,
+                           price=Decimal('4.99'), quantity=1, status=ShopListingStatus.ACTIVE))
+    session.commit()
+    pokemon = departments.find(session, 'game-pokemon')
+    assert pokemon is not None
+    assert departments.department_for_item(session, item).slug == 'game-pokemon'
+    assert departments.counts(session)['game-pokemon'] == 1
+    assert departments.counts(session)['other'] == 0
+    assert 'other' not in [d.slug for d, n in departments.in_stock(session)]
+    assert item.item_type == CatalogItemType.OTHER
+
+
+def test_sealed_tile_uses_actual_published_photos(session, monkeypatch):
+    from storefront.app import _dept_hero
+    add_sealed(session, 'Deck A')
+    add_sealed(session, 'Deck B')
+    monkeypatch.setattr(departments.live_inventory, 'available', lambda: ShopListing.status == ShopListingStatus.ACTIVE)
+    monkeypatch.setattr(departments.live_inventory, 'enabled', lambda: True)
+    monkeypatch.setattr(departments.live_inventory, 'published_photos', lambda s, lid: [f'https://example.com/{lid}.jpg'])
+    html = _dept_hero(session, departments.find(session, 'sealed'))
+    assert 'sealed-cover' in html
+    assert 'l-Deck A.jpg' in html and 'l-Deck B.jpg' in html
+    assert 'Photos on eBay' not in html
