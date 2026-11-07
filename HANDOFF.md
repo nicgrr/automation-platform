@@ -1,5 +1,20 @@
 # Handoff
 
+## Sealed tile and Pokemon promo placement — Codex, 2026-11-07
+
+Owner now wants the three-card promo display moved from Other to Pokemon and
+Other removed; improve Sealed category art. Base ce372f6; tracked clean, Claude
+department changes already deployed and preserved. Plan storefront-only curated
+placement for pokemon-promo-display-svp079-081, no catalog type falsification.
+Empty Other will disappear; retain route for compatibility. Sealed tile uses a
+three-product photo composition in HTML/CSS, keeping existing franchise filters.
+Files: departments.py, app.py, ui.py and focused tests. Deploy nl-vault.service
+after tests, verify home and filtered pages. No marketplace/stock writes.
+Previous audit complete: 354 photo sets refreshed, 98 changed, 0 failures;43tests
+passed for quantity fix, remaining Newgate1 and bulk9 verified rendered. Owner
+says newer photographed stock must stay separate from old scanner quantities;
+do not increase offered quantities using old scanner holdings.
+
 ## Postage-label website alignment — Codex, 2026-11-07
 
 Owner supplied a printed label reference and asked for the website in the sender
