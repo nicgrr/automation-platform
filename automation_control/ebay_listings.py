@@ -101,13 +101,17 @@ def _upsert(session: Session, listings: list[ActiveListing]) -> int:
             **((existing.raw_snapshot or {}) if existing else {}),
             "source": SOURCE,
             "quantity_sold": item.quantity_sold,
+            "quantity_total": item.quantity,
             "listing_type": item.listing_type,
             "view_item_url": item.view_item_url,
             "start_time": item.start_time.isoformat() if item.start_time else None,
         }
         values = dict(
             title=item.title, currency=item.currency or "AUD", current_price_minor=price_minor,
-            quantity=item.quantity, listing_status="Active", marketplace=None,
+            # Trading Quantity includes sold copies; shoppers need remaining stock.
+            quantity=(max(0, item.quantity - item.quantity_sold)
+                      if item.quantity is not None else None),
+            listing_status="Active", marketplace=None,
             raw_snapshot=snapshot,
             observed_at=now,
         )

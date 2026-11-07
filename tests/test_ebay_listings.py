@@ -428,3 +428,16 @@ def test_settings_links_to_the_page_when_checked(client, session):
         page = client.get("/settings").text
 
     assert "/ebay-listings" in page
+
+
+@pytest.mark.parametrize("total,sold,remaining", [(2, 1, 1), (10, 1, 9), (2, 2, 0), (1, 2, 0), (None, 0, None)])
+def test_refresh_caches_remaining_stock_without_repeated_subtraction(session, total, sold, remaining):
+    from dataclasses import replace
+    from automation_control.ebay_listings import _upsert
+    row = replace(_listing(), quantity=total, quantity_sold=sold)
+    for _ in range(2):
+        _upsert(session, [row])
+        saved = session.query(EbayListing).one()
+        assert saved.quantity == remaining
+        assert saved.raw_snapshot["quantity_total"] == total
+        assert saved.raw_snapshot["quantity_sold"] == sold

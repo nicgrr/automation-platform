@@ -12,6 +12,12 @@ Refresh all published photos/descriptions from eBay and active cache; preserve
 physical stock and seller draft content/prices. Four owned vs offered differences
 need review: Tapu Lele5/1, Mega Absol2/1, Charmeleon3/1, Charizard ex4/1.
 No eBay writes. Existing backups preserved.
+Implemented remaining-stock cache correction and five repeat-refresh regression
+cases; 38 listing/photo tests passed. Storefront projection tests running.
+Full eBay photo/details refresh running (log /tmp/ezbay-photo-refresh-20261107.log).
+Next deploy CRM restart so manual refresh uses corrected code, refresh cache,
+verify rendered storefront, and finish photo audit. Owner asked asynchronously
+whether all four excess inventory quantities should be listed or reserved.
 
 ## Gold DON draft content complete — Codex, 2026-11-07
 
