@@ -1,5 +1,13 @@
 # Handoff
 
+## Gold DON draft content — Codex, 2026-11-07
+
+Owner screenshot shows generic title after gold variant discussion. Next update
+existing c5cc700e draft title and description to Gold DON Heroines Edition Vol. 2
+Maid Outfits English, preserving photos, quantity and current price. Snapshot and
+audit before/with correction; no marketplace publish. Base 4693034; tracked clean,
+untracked operational backups preserved.
+
 ## DON back attached; pins staged — Codex, 2026-11-07
 
 Completed the checkpointed media intake on nl-vault-label-design after 9058085.
