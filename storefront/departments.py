@@ -129,6 +129,13 @@ FIXED_DEPARTMENTS: tuple[Department, ...] = (
 RENAMED_SLUGS = {"apparel": "other"}
 
 _TCG_ITEM_TYPES = (CatalogItemType.TCG_CARD, CatalogItemType.SEALED_PRODUCT, CatalogItemType.GRADED_CARD)
+# Sealed product lives only in the Sealed products department, all games
+# together (the owner's call); a game department holds its singles and bulk.
+_GAME_ITEM_TYPES = (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD)
+
+
+def _game_blurb(group: str) -> str:
+    return f"{_game_label(group)} singles and sorted bulk by set."
 
 
 def _game_label(game: str) -> str:
@@ -136,26 +143,20 @@ def _game_label(game: str) -> str:
 
 
 def _active_games(session: Session) -> list[str]:
-    """Every TCG game with at least one active single, sealed listing, or
-    bulk lot -- the set of games actually worth their own department."""
+    """Every TCG game with at least one active single or bulk lot -- the
+    set of games actually worth their own department. Sealed product isn't
+    counted: it has its own department (see FIXED_DEPARTMENTS)."""
     from_cards = session.scalars(
         select(TcgCard.game).distinct()
         .join(CatalogItem, CatalogItem.id == TcgCard.catalog_item_id)
         .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
         .where(live_inventory.available())
     ).all()
-    from_sealed = session.scalars(
-        select(SealedProduct.game).distinct()
-        .join(CatalogItem, CatalogItem.id == SealedProduct.catalog_item_id)
-        .join(ShopListing, ShopListing.catalog_item_id == CatalogItem.id)
-        .where(live_inventory.available(),
-              SealedProduct.game.isnot(None))
-    ).all()
     from_bulk = session.scalars(
         select(BulkLot.game).distinct()
         .where(BulkLot.status == ShopListingStatus.ACTIVE, BulkLot.quantity > 0)
     ).all()
-    return sorted({g for g in (*from_cards, *from_sealed, *from_bulk) if g})
+    return sorted({g for g in (*from_cards, *from_bulk) if g})
 
 
 def department_list(session: Session) -> list[Department]:
@@ -170,8 +171,8 @@ def department_list(session: Session) -> list[Department]:
         Department(
             slug=f"game-{group}",
             name=_game_label(group),
-            blurb=f"{_game_label(group)} singles, sealed product and sorted bulk by set.",
-            item_types=_TCG_ITEM_TYPES, game=group, includes_bulk=True, games=tuple(sorted(games)),
+            blurb=_game_blurb(group),
+            item_types=_GAME_ITEM_TYPES, game=group, includes_bulk=True, games=tuple(sorted(games)),
         )
         for group, games in grouped.items()
     ]
@@ -192,6 +193,8 @@ def department_for_item(session: Session, item: CatalogItem | None) -> Departmen
     disagree with which grid it actually shows up in."""
     if item is None:
         return None
+    if item.item_type == CatalogItemType.SEALED_PRODUCT:
+        return next(d for d in FIXED_DEPARTMENTS if d.slug == "sealed")
     if item.item_type in _TCG_ITEM_TYPES:
         game = session.scalar(select(TcgCard.game).where(TcgCard.catalog_item_id == item.id))
         if game is None:
@@ -201,8 +204,8 @@ def department_for_item(session: Session, item: CatalogItem | None) -> Departmen
         group = _group_of(game)
         return Department(
             slug=f"game-{group}", name=_game_label(group),
-            blurb=f"{_game_label(group)} singles, sealed product and sorted bulk by set.",
-            item_types=_TCG_ITEM_TYPES, game=group, includes_bulk=True, games=(game,),
+            blurb=_game_blurb(group),
+            item_types=_GAME_ITEM_TYPES, game=group, includes_bulk=True, games=(game,),
         )
     return next((d for d in FIXED_DEPARTMENTS if item.item_type in d.item_types), None)
 
@@ -340,12 +343,9 @@ def segment_filter(department: Department, segment: str):
 
 
 def has_sealed_stock(session: Session, department: Department) -> bool:
-    return bool(session.scalar(
-        select(func.count()).select_from(ShopListing)
-        .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id)
-        .where(live_inventory.available(),
-              listing_filter(department), CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT)
-    ))
+    """Whether this game's franchise has sealed product in the Sealed
+    products department, for the game page's link across to it."""
+    return any(_group_of(g) == department.game for g in _sealed_games(session))
 
 
 def has_premium_stock(session: Session, department: Department) -> bool:

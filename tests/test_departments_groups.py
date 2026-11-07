@@ -93,7 +93,7 @@ def test_segment_links_keep_the_chosen_sub_category(client, session):
     _stock(session)
     add_sealed(session, "Booster Box", game="dragon_ball_super")
     body = client.get("/shop/game-dragon_ball?sub=dragon_ball_super").text
-    assert "sub=dragon_ball_super" in body and "seg=sealed" in body
+    assert "sub=dragon_ball_super" in body and "/shop/sealed?sub=dragon_ball" in body
 
 
 def test_bulk_lots_count_toward_the_franchise(session):
@@ -109,16 +109,17 @@ def test_sealed_games_saved_as_display_text_join_their_franchise(session):
     add_sealed(session, "FW box", game="Dragon Ball Super Fusion World")
     by_slug = {d.slug: n for d, n in departments.in_stock(session)}
     assert set(by_slug) == {"game-pokemon", "game-one_piece", "game-dragon_ball", "collectibles", "sealed"}
-    assert by_slug["game-one_piece"] == 2 and by_slug["game-dragon_ball"] == 4
+    assert by_slug["game-one_piece"] == 1 and by_slug["game-dragon_ball"] == 3 and by_slug["sealed"] == 2
 
 
-def test_fusion_world_tab_includes_display_text_sealed(client, session):
+def test_game_pages_hold_no_sealed_but_link_to_it(client, session):
     _stock(session)
     add_sealed(session, "FW box", game="Dragon Ball Super Fusion World")
     body = client.get("/shop/game-dragon_ball").text
-    assert body.count(">Fusion World<") == 1
-    narrowed = client.get("/shop/game-dragon_ball?sub=dragon_ball_fusion_world").text
-    assert "FW box" in narrowed and "Gohan" in narrowed and "Goku" not in narrowed
+    assert "FW box" not in body and body.count(">Fusion World<") == 1
+    assert "href='/shop/sealed?sub=dragon_ball'" in body
+    old = client.get("/shop/game-dragon_ball?seg=sealed", follow_redirects=False)
+    assert old.status_code == 301 and old.headers["location"] == "/shop/sealed?sub=dragon_ball"
 
 
 def test_sealed_department_gathers_every_game_with_franchise_tabs(client, session):
@@ -133,8 +134,9 @@ def test_sealed_department_gathers_every_game_with_franchise_tabs(client, sessio
         assert label in body
     one_piece = client.get("/shop/sealed?sub=one_piece").text
     assert "OP box" in one_piece and "ETB" not in one_piece and "FW box" not in one_piece
-    # still under each game's own department too
-    assert "ETB" in client.get("/shop/game-pokemon?seg=sealed").text
+    # only here: not in each game's own department
+    assert "ETB" not in client.get("/shop/game-pokemon").text
+    assert "OP box" not in client.get("/shop/game-one_piece").text
 
 
 def test_other_replaces_apparel_and_old_links_redirect(client, session):

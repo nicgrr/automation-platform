@@ -387,6 +387,9 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
 
     query = q.strip()
     segment = seg if seg in departments.SEGMENTS else "all"
+    if segment == "sealed" and whole.game:
+        # Sealed product moved to its own department; keep old links working.
+        return RedirectResponse(f"/shop/sealed?sub={quote_plus(whole.game)}", status_code=301)
     sort_key = sort if sort in SORT_OPTIONS else DEFAULT_SORT
     sets = departments.sets_in_stock(session, department)
     set_id = set_id if set_id in {s for s, _ in sets} else ""
@@ -429,8 +432,9 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
             if key not in available:
                 continue
             active_class = " active" if key == segment else ""
+            href = f"/shop/sealed?sub={quote_plus(department.game)}" if key == "sealed" else _href(seg=key)
             pill_items.append(
-                f"<a class='seg-tab{active_class}' href='{_href(seg=key)}'>{escape(label)}</a>"
+                f"<a class='seg-tab{active_class}' href='{href}'>{escape(label)}</a>"
             )
         pills = "".join(pill_items)
         segment_bar = f"<div class='seg-tabs'>{pills}</div>"

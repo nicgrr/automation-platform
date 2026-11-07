@@ -122,8 +122,10 @@ def test_no_item_type_lands_in_two_departments(session):
     add_card(session, "Charizard", game="pokemon")
     add_card(session, "Luffy", game="one_piece")
     add_collectible(session, "Hamburger")
+    add_sealed(session, "Booster Box", game="pokemon")
     counts = departments.counts(session)
-    assert sum(counts.values()) == 3
+    assert sum(counts.values()) == 4
+    assert counts["sealed"] == 1 and counts["game-pokemon"] == 1
 
 
 def test_bulk_lots_count_toward_their_own_games_department_only(session):

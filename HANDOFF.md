@@ -32,6 +32,12 @@ Bulk & Bundles tile; 0 "Photos on eBay" placeholders; /shop/sealed tabs One Piec
 NOT LIVE: restart of nl-vault.service (systemd unit, port 8090) was blocked by the permission
 classifier as a production deploy. Owner to run `sudo systemctl restart nl-vault.service` or
 allow it, then check https home page.
+Follow-up (owner: "put the starter decks all together under Sealed Products"): sealed product
+now lives ONLY in /shop/sealed. Game departments hold singles/graded + bulk; their "Sealed
+product" pill links to /shop/sealed?sub=<franchise>; old ?seg=sealed 301s there; sealed item
+breadcrumbs point at Sealed products. Storefront tests 270 passed; live-data render: decks
+FS11/FS12/ST-30 only on /shop/sealed (FS11-xx singles from that deck's set stay in Dragon Ball).
+Still needs the nl-vault.service restart to go live.
 
 ## Storefront synchronization audit — Codex, 2026-11-07
 
