@@ -1,5 +1,17 @@
 # Handoff
 
+## DON back correction — Codex, 2026-11-07
+
+Owner flags DON whiteback vsPokemon. Visuallyverified frontphoto ofdraft
+c5cc700e-ec8a-44ae-ad1e-d7da1d743565: OnePiece DON!! goldborder YourTurn+1000.
+Misclassifiedlocalcatalogpokemon; noebaylink. SharedbacklibraryhasPokemonJP/EN and
+OnePieceblue/red, no whiteDON. Nextcorrectexactdraftgame/removeincorrectsharedback
+(anditsnotice),preservefront/price/qty. Add DON-specific sharedbackslot that returnsNone
+untilone-piece-don.jpg available; prevent DON!! manualcatalogue defaultingtopokemon.
+No fakewhitephoto; ownerwillneedupload. Isolatedbranch/tests, deployrestart.
+Trackedtreeclean; previouslocalbackups preserved.
+
+
 ## eBay revenue complete — Codex, 2026-11-07
 
 Deployed fc10c0e (source9717e8d);43focused tests passed; ezbay restarted.
