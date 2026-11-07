@@ -1,5 +1,12 @@
 # Handoff
 
+## Deploy DON fix — Codex, 2026-11-07
+
+Isolated798175f passed22tests. Nextcopy4ownedfiles,restartCRM, thenauditcorrect
+exactunpublisheddraftc5cc700e gameOnePiece/rarityDON!! andremovePokemonsharedback.
+NoapprovedwhiteDONphotoyet; preservefront,price,qty. SnapshotbeforeDBwrites.
+
+
 ## DON back correction — Codex, 2026-11-07
 
 Owner flags DON whiteback vsPokemon. Visuallyverified frontphoto ofdraft
