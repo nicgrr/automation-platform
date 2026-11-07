@@ -38,6 +38,9 @@ product" pill links to /shop/sealed?sub=<franchise>; old ?seg=sealed 301s there;
 breadcrumbs point at Sealed products. Storefront tests 270 passed; live-data render: decks
 FS11/FS12/ST-30 only on /shop/sealed (FS11-xx singles from that deck's set stay in Dragon Ball).
 Still needs the nl-vault.service restart to go live.
+Next (owner: sleeves are sealed too): storefront-only rule — accessories whose AccessoryProduct
+.product_type is "Card sleeves" show in Sealed products (franchise from brand) and not in Other.
+CatalogItem.item_type stays ACCESSORY (sleeve_studio/eBay category depend on it).
 
 ## Storefront synchronization audit — Codex, 2026-11-07
 
