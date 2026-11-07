@@ -1,5 +1,19 @@
 # Handoff
 
+## DON corrected; awaiting owner back photo — Codex, 2026-11-07
+
+Deployedcf76d18/source798175f;22tests passed,restartdone. Draftc5cc700e nowOnePiece
+DON!!,frontonly; removedwrongPokemonback+disclosure; price0qty1preserved.
+Backupbackups/don-correction-20261107.json andaudit saved; StudioHTTPS200 verified.
+User nowwillphotograph actualDONback. Attach tosameexistingdraft (no newinventory/listing)
+whenuploaded; no whiteplaceholderasset currently exists.
+Userreferences read throughTradingGetItem (publicweb403):227594843721 activeAUD85
+BandaiOnePieceDON!!YourTurn+1000NamiHoloFoilEnglish; frontvisuallymatch,backwhite/green.
+920087689365 activeGBP37.79 title EB05GoldDONHEROINES EDITIONVOL.2MaidOutfits.
+These are askingprices, notsoldcomparables. No priceschanged; no thirdpartyphotosreused.
+Referencephotos temporary /tmp/don-reference-{0,1}.jpg only. Ownerbackphotopending.
+
+
 ## Deploy DON fix — Codex, 2026-11-07
 
 Isolated798175f passed22tests. Nextcopy4ownedfiles,restartCRM, thenauditcorrect
