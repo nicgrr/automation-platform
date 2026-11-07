@@ -51,6 +51,9 @@ DONE: storefront tests 271 passed. Live-data render: Sealed products 6 (3 starte
 packs; tabs Pokémon/One Piece/Dragon Ball), Other 1 (SVP 079-081 promo lot with holder).
 Still needs `sudo systemctl restart nl-vault.service` (blocked for me; owner action).
 Owner: keep the Bulk & Bundles home tile as is.
+LIVE: owner asked to restart; nl-vault.service restarted 20:11 AEDT on f3e2300+. Home tiles verified
+Pokémon, One Piece, Dragon Ball, Collectables, Sealed products, Other, Bulk & Bundles; 0 placeholders;
+/shop/sealed, /shop/other 200; /shop/apparel 301 -> /shop/other.
 
 ## Storefront synchronization audit — Codex, 2026-11-07
 
