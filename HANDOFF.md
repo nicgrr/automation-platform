@@ -1,5 +1,23 @@
 # Handoff
 
+## DON back attached; pins staged — Codex, 2026-11-07
+
+Completed the checkpointed media intake on nl-vault-label-design after 9058085.
+DON draft c5cc700e-ec8a-44ae-ad1e-d7da1d743565 now has its original front and the
+owner's actual white/green back. Price and quantity unchanged; no publication.
+Actual image lives in listing_photos/owner-upload-b748aa4f/don-actual-back.jpg;
+shared future DON back asset also saved separately under representative-backs.
+Backup: backups/don-actual-back-20261107.json. Audit event recorded.
+Pins are one review record, not new inventory: pair
+fbb3593e-c3f5-5a6b-9c21-20fda7b333ce, batch bc7c74d7-b542-511a-8e55-691a8faab361.
+Both photos show the same five pins (Johto trio, Squirtle-style, Arceus, two Togepi);
+second photo is another front angle. Lot versus individual choice remains pending
+from asynchronous question; condition and price also need review. Collectibles
+remain Vinted-first. No duplicate stock or marketplace listings created.
+Authenticated production HTTPS verified 200 for actual DON back image and pin
+review page. Data/media-only work; no code tests or restart needed.
+Next: await owner's selling-format answer and prepare the appropriate draft(s).
+
 ## Actual DON back and Pokemon pins intake — Codex, 2026-11-07
 
 Owneruploaded B748AA4F photos:1actualwhite/greenDONback;2and3samefivepins (Johto
