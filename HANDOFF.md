@@ -1,5 +1,17 @@
 # Handoff
 
+## Actual DON back and Pokemon pins intake — Codex, 2026-11-07
+
+Owneruploaded B748AA4F photos:1actualwhite/greenDONback;2and3samefivepins (Johto
+startertrio1,Squirtle-style1,Arceus1,Togepi2). Askedlotvsindividual asynchronously.
+Planattachphoto1 toexistingDONdraftc5cc700e andoriginalpair; preservefront/price/qty.
+SavecopyinsharedDONbackslot forpreviouslyauthorizedfuturefront-only workflow, butthis
+listingusesactualbackpath,norepresentativeclaim. Stagepins asone collectiblephoto-review
+recordwith2images,5visiblepieces, sellingformat/condition/pricepending; no duplicate stock
+and no eBaypublication (collectibles previouslyVinted-first). Existingpinsearchfoundnone.
+Trackedtreeclean,previousbackups preserved.
+
+
 ## DON corrected; awaiting owner back photo — Codex, 2026-11-07
 
 Deployedcf76d18/source798175f;22tests passed,restartdone. Draftc5cc700e nowOnePiece
