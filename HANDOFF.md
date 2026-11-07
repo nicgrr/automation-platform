@@ -1,5 +1,18 @@
 # Handoff
 
+## Storefront synchronization audit — Codex, 2026-11-07
+
+Owner reports outdated cards and quantities. Base 6d863d6, tracked clean.
+Read-only live fetch: 354 active offers. DON now published by owner at75.99,
+correct title linked267836120198. Storefront projects cached live eBay data.
+Found refresh stores total Quantity without subtracting QuantitySold: Newgate
+2total/1sold and bulk10total/1sold incorrectly show2/10. Next correct remaining
+quantity in cache ingestion, regression test repeat refresh and sold-through.
+Refresh all published photos/descriptions from eBay and active cache; preserve
+physical stock and seller draft content/prices. Four owned vs offered differences
+need review: Tapu Lele5/1, Mega Absol2/1, Charmeleon3/1, Charizard ex4/1.
+No eBay writes. Existing backups preserved.
+
 ## Gold DON draft content complete — Codex, 2026-11-07
 
 Completed and DB read-back verified: update
