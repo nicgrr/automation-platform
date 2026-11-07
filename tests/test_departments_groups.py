@@ -99,3 +99,74 @@ def test_segment_links_keep_the_chosen_sub_category(client, session):
 def test_bulk_lots_count_toward_the_franchise(session):
     add_bulk_lot(session, game="dragon_ball_fusion_world")
     assert dict((d.slug, n) for d, n in departments.in_stock(session))["game-dragon_ball"] == 1
+
+
+def test_sealed_games_saved_as_display_text_join_their_franchise(session):
+    """Listing Studio saved sealed games as "One Piece" and "Dragon Ball Super
+    Fusion World", which made extra home tiles beside the real departments."""
+    _stock(session)
+    add_sealed(session, "OP box", game="One Piece")
+    add_sealed(session, "FW box", game="Dragon Ball Super Fusion World")
+    by_slug = {d.slug: n for d, n in departments.in_stock(session)}
+    assert set(by_slug) == {"game-pokemon", "game-one_piece", "game-dragon_ball", "collectibles", "sealed"}
+    assert by_slug["game-one_piece"] == 2 and by_slug["game-dragon_ball"] == 4
+
+
+def test_fusion_world_tab_includes_display_text_sealed(client, session):
+    _stock(session)
+    add_sealed(session, "FW box", game="Dragon Ball Super Fusion World")
+    body = client.get("/shop/game-dragon_ball").text
+    assert body.count(">Fusion World<") == 1
+    narrowed = client.get("/shop/game-dragon_ball?sub=dragon_ball_fusion_world").text
+    assert "FW box" in narrowed and "Gohan" in narrowed and "Goku" not in narrowed
+
+
+def test_sealed_department_gathers_every_game_with_franchise_tabs(client, session):
+    _stock(session)
+    add_sealed(session, "ETB", game="pokemon")
+    add_sealed(session, "OP box", game="One Piece")
+    add_sealed(session, "FW box", game="Dragon Ball Super Fusion World")
+    body = client.get("/shop/sealed").text
+    assert all(name in body for name in ("ETB", "OP box", "FW box"))
+    assert "Pika" not in body and "Luffy" not in body
+    for label in ("All Sealed products", ">Pokémon<", ">One Piece<", ">Dragon Ball<"):
+        assert label in body
+    one_piece = client.get("/shop/sealed?sub=one_piece").text
+    assert "OP box" in one_piece and "ETB" not in one_piece and "FW box" not in one_piece
+    # still under each game's own department too
+    assert "ETB" in client.get("/shop/game-pokemon?seg=sealed").text
+
+
+def test_other_replaces_apparel_and_old_links_redirect(client, session):
+    from decimal import Decimal
+    from automation_control.models import CatalogItem, CatalogItemType, ShopListing, ShopListingStatus
+
+    for item_id, kind in (("shirt", CatalogItemType.APPAREL), ("mat", CatalogItemType.ACCESSORY),
+                          ("misc", CatalogItemType.OTHER)):
+        session.add(CatalogItem(id=item_id, item_type=kind, name=item_id))
+        session.add(ShopListing(id=f"l-{item_id}", catalog_item_id=item_id, title=f"Item {item_id}",
+                                price=Decimal("5"), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE))
+    session.commit()
+    by_slug = {d.slug: (d.name, n) for d, n in departments.in_stock(session)}
+    assert by_slug["other"] == ("Other", 3) and "apparel" not in by_slug
+    resp = client.get("/shop/apparel", follow_redirects=False)
+    assert resp.status_code == 301 and resp.headers["location"] == "/shop/other"
+
+
+def test_tile_uses_a_published_ebay_photo_in_live_mode(session, monkeypatch):
+    """The dearest sealed item has no published photo, so the tile skips to
+    the next live listing that does instead of showing a placeholder."""
+    from automation_control.models import EbayListing, EbayListingLink, EbayListingLinkStatus
+    from storefront import app as storefront_app, live_inventory
+
+    for name, price, photos in (("Booster box", "300", []), ("ETB", "90", ["https://i.ebayimg.com/etb.jpg"])):
+        add_sealed(session, name, game="pokemon", price=price)
+        remote = f"r-{name}"
+        session.add(EbayListing(ebay_listing_id=remote, title=name, current_price_minor=int(price) * 100,
+                                currency="AUD", quantity=1, listing_status="Active", raw_snapshot={"image_urls": photos}))
+        session.add(EbayListingLink(shop_listing_id=f"l-{name}", sku=f"l-{name}", marketplace_id="EBAY_AU",
+                                    status=EbayListingLinkStatus.ACTIVE, ebay_listing_id=remote))
+    session.commit()
+    monkeypatch.setattr(live_inventory, "enabled", lambda: True)
+    tile = storefront_app._dept_hero(session, departments.find(session, "sealed"))
+    assert "src='https://i.ebayimg.com/etb.jpg'" in tile and "Photos on eBay" not in tile

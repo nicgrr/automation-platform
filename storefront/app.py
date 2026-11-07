@@ -151,15 +151,23 @@ def _dept_hero(session: Session, department: departments.Department) -> str:
     if art:
         return f"<img class='dept-art' src='{art}' alt='{escape(department.name)}' loading='lazy'>"
 
-    row = session.execute(
+    rows = session.execute(
         select(ShopListing, CatalogItem)
         .join(CatalogItem, CatalogItem.id == ShopListing.catalog_item_id, isouter=True)
         .where(live_inventory.available(),
               departments.listing_filter(department))
-        .order_by(ShopListing.price.desc()).limit(1)
-    ).first()
-    if row:
-        listing, item = row
+        .order_by(ShopListing.price.desc()).limit(25)
+    ).all()
+    if rows and live_inventory.enabled():
+        # Live mode has no local product photos, so the dearest listing's
+        # art is just a "Photos on eBay" placeholder: use the first listing
+        # that has a real published photo instead.
+        for listing, _item in rows:
+            photos = live_inventory.published_photos(session, listing.id)
+            if photos:
+                return f"<img class='dept-photo' src='{escape(photos[0], quote=True)}' alt='{escape(department.name)}' loading='lazy'>"
+    elif rows:
+        listing, item = rows[0]
         return _art(item, listing, session, show_tag=False)
 
     if department.includes_bulk:
@@ -351,6 +359,9 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
                     set_id: str = Query("", alias="set"), sort: str = Query(DEFAULT_SORT),
                     sub: str = Query(""), brand: str = Query(""),
                     session: Session = Depends(get_session)) -> HTMLResponse:
+    renamed = departments.RENAMED_SLUGS.get(slug.strip().lower())
+    if renamed:
+        return RedirectResponse(f"/shop/{renamed}", status_code=301)
     whole = departments.find(session, slug)
     if whole is None:
         # A bookmark to one range of a franchise ("game-dragon_ball_super")
@@ -370,7 +381,7 @@ def department_page(slug: str, request: Request, q: str = Query(""), seg: str = 
     # a real option is ignored rather than erroring.
     ranges = departments.subranges(session, whole)
     sub = sub if sub in {code for code, _ in ranges} else ""
-    department = departments.narrowed(whole, sub) if sub else whole
+    department = departments.narrowed(whole, sub, session) if sub else whole
     brands = departments.brands_in_stock(session) if whole.slug == "collectibles" else []
     brand = next((b for b in brands if b.lower() == brand.strip().lower()), "")
 

@@ -45,11 +45,23 @@ from automation_control.models import (
 # needed here -- this dict is cosmetic, never a gate on what can appear.
 GAME_LABELS = {"pokemon": "Pokémon", "one_piece": "One Piece", "dragon_ball": "Dragon Ball"}
 
+# Sealed products entered through Listing Studio store the game as display
+# text ("One Piece", "Dragon Ball Super Fusion World") rather than a code.
+# Without this they became departments of their own, next to the real ones.
+_GAME_ALIASES = {"dragon_ball_super_fusion_world": "dragon_ball_fusion_world"}
+
+
+def canonical_game(game: str) -> str:
+    code = "_".join((game or "").strip().lower().replace("-", " ").replace("é", "e").split())
+    return _GAME_ALIASES.get(code, code)
+
+
 # Several catalogue games are really ranges of one franchise, and a shopper
 # looks for "Dragon Ball", not "Dragon Ball Fusion World" vs "Dragon Ball
 # Super Divers". Games are grouped into one department by franchise, and the
 # ranges inside it become sub-categories (see `subranges`).
 def _group_of(game: str) -> str:
+    game = canonical_game(game)
     if "pokemon" in game:
         return "pokemon"
     if "dragon_ball" in game:
@@ -67,7 +79,7 @@ SUB_LABELS = {
 }
 
 # Navigation order. Anything not listed (a game scanned in later) follows.
-_ORDER = ("game-pokemon", "game-one_piece", "game-dragon_ball", "collectibles")
+_ORDER = ("game-pokemon", "game-one_piece", "game-dragon_ball", "collectibles", "sealed", "other")
 
 # Singles at or above this are shown in a game department's "Premium"
 # segment. A plain constant, not a config table: this is a browsing
@@ -84,6 +96,7 @@ class Department:
     game: str | None = None       # the franchise this department is (slug, logo, label)
     includes_bulk: bool = False   # BulkLot rows count too (scoped by `game` if set)
     games: tuple[str, ...] = ()   # the catalogue games it covers; empty means just `game`
+    by_franchise: bool = False    # spans every game; tabs narrow it to one franchise
 
     @property
     def game_codes(self) -> tuple[str, ...]:
@@ -98,12 +111,22 @@ FIXED_DEPARTMENTS: tuple[Department, ...] = (
         item_types=(CatalogItemType.COLLECTIBLE,),
     ),
     Department(
-        slug="apparel",
-        name="Apparel",
-        blurb="Shirts and wearables. Just getting started.",
-        item_types=(CatalogItemType.APPAREL, CatalogItemType.ACCESSORY),
+        slug="sealed",
+        name="Sealed products",
+        blurb="Booster boxes, bundles, tins and decks from every game.",
+        item_types=(CatalogItemType.SEALED_PRODUCT,),
+        by_franchise=True,
+    ),
+    Department(
+        slug="other",
+        name="Other",
+        blurb="Apparel, accessories and everything else.",
+        item_types=(CatalogItemType.APPAREL, CatalogItemType.ACCESSORY, CatalogItemType.OTHER),
     ),
 )
+
+# Old department slugs, kept working for bookmarks and search results.
+RENAMED_SLUGS = {"apparel": "other"}
 
 _TCG_ITEM_TYPES = (CatalogItemType.TCG_CARD, CatalogItemType.SEALED_PRODUCT, CatalogItemType.GRADED_CARD)
 
@@ -358,22 +381,41 @@ def _sub_label(game: str) -> str:
     return SUB_LABELS.get(game) or game.replace("_", " ").title()
 
 
-def narrowed(department: Department, sub: str) -> Department:
-    """The same department restricted to one range ("fusion_world"), or the
-    department unchanged when `sub` isn't one of its ranges."""
+def _sealed_games(session: Session) -> list[str]:
+    """Raw game values behind every sealed product in stock."""
+    return sorted({g for g in session.scalars(
+        select(SealedProduct.game).distinct()
+        .join(ShopListing, ShopListing.catalog_item_id == SealedProduct.catalog_item_id)
+        .join(CatalogItem, CatalogItem.id == SealedProduct.catalog_item_id)
+        .where(live_inventory.available(), CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT)
+    ).all() if g})
+
+
+def narrowed(department: Department, sub: str, session: Session | None = None) -> Department:
+    """The same department restricted to one range ("dragon_ball_fusion_world")
+    or, for an all-games department, one franchise ("pokemon"); unchanged when
+    `sub` isn't one of its options."""
     from dataclasses import replace
 
-    return replace(department, games=(sub,)) if sub in department.game_codes else department
+    if department.by_franchise and session is not None:
+        codes = tuple(g for g in _sealed_games(session) if _group_of(g) == sub)
+        return replace(department, games=codes) if codes else department
+    codes = tuple(g for g in department.game_codes if canonical_game(g) == sub)
+    return replace(department, games=codes) if codes else department
 
 
 def subranges(session: Session, department: Department) -> list[tuple[str, str]]:
-    """(game code, name) for each range of a franchise that has stock, e.g.
-    Dragon Ball -> Dragon Ball Super, Fusion World ... Only worth showing
-    when there is more than one."""
-    if len(department.game_codes) < 2:
-        return []
-    active = set(_active_games(session))
-    return [(g, _sub_label(g)) for g in department.game_codes if g in active]
+    """(code, name) tabs: each range of a franchise that has stock, e.g.
+    Dragon Ball -> Dragon Ball Super, Fusion World ..., or each franchise in an
+    all-games department. Only worth showing when there is more than one."""
+    if department.by_franchise:
+        groups = sorted({_group_of(g) for g in _sealed_games(session)},
+                        key=lambda g: (_ORDER.index(f"game-{g}") if f"game-{g}" in _ORDER else len(_ORDER), g))
+        return [(g, _game_label(g)) for g in groups] if len(groups) > 1 else []
+    active = {canonical_game(g) for g in _active_games(session)}
+    ranges = list(dict.fromkeys(canonical_game(g) for g in department.game_codes))
+    ranges = [(code, _sub_label(code)) for code in ranges if code in active]
+    return ranges if len(ranges) > 1 else []
 
 
 def brands_in_stock(session: Session) -> list[str]:
