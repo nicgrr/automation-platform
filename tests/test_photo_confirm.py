@@ -224,3 +224,14 @@ def test_bilingual_missing_name_preserves_word_boundaries(context):
     response = client.get(CONFIRM + '?skip=1,2')
     assert 'Zoroark ex' in response.text
     assert 'Zoroarkex' not in response.text
+
+
+def test_manual_don_catalogue_uses_one_piece_and_don_back_type(context):
+    s,client=context
+    response=client.post(f'{CONFIRM}/p3/catalogue',data={'name':'DON!! Your Turn +1000',
+        'number':'N/A','language':'English','set_name':'EB05'},follow_redirects=False)
+    assert response.status_code==303
+    s.expire_all()
+    p=s.get(ListingPhotoPair,'p3');card=s.get(TcgCard,p.proposed_catalog_item_id)
+    assert card.game=='one_piece' and card.rarity=='DON!!'
+    assert s.get(CardSet,card.set_id).game=='one_piece'

@@ -1,5 +1,15 @@
 from types import SimpleNamespace
+import pytest
 from automation_control.representative_backs import select_back, attach_to_pair, with_notice, NOTICE, LEGACY_NOTICES
+
+
+@pytest.fixture(autouse=True)
+def shared_back_files(tmp_path, monkeypatch):
+    import automation_control.representative_backs as backs
+    monkeypatch.setattr(backs, 'ROOT', tmp_path)
+    for file in ['pokemon-japanese.jpg', 'pokemon-english-chinese.jpg',
+                 'one-piece-standard.jpg', 'one-piece-leader.jpg']:
+        (tmp_path / file).touch()
 
 
 def test_language_and_game_select_the_correct_back():
@@ -42,3 +52,15 @@ def test_old_wording_is_replaced_not_duplicated():
     assert updated == 'Near Mint.\n\n' + NOTICE + '\n\nShipped in a toploader.'
     assert not any(legacy in updated for legacy in LEGACY_NOTICES)
     assert with_notice(updated, [path]) == updated
+
+
+def test_don_never_falls_back_to_blue_red_or_pokemon_back(tmp_path, monkeypatch):
+    import automation_control.representative_backs as backs
+    monkeypatch.setattr(backs,'ROOT',tmp_path)
+    for file in ['one-piece-standard.jpg','one-piece-leader.jpg','pokemon-english-chinese.jpg']:
+        (tmp_path/file).touch()
+    assert backs.select_back('one_piece','English','DON!!') is None
+    (tmp_path/'one-piece-don.jpg').touch()
+    assert backs.select_back('one_piece','English','DON!!').endswith('one-piece-don.jpg')
+    assert backs.is_don_card('DON!!! Your Turn +1000')
+    assert not backs.is_don_card('Groudon')

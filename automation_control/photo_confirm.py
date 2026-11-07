@@ -48,7 +48,7 @@ from .models import (
     ShopListingStatus,
     TcgCard,
 )
-from .representative_backs import attach_to_pair, with_notice
+from .representative_backs import attach_to_pair, with_notice, is_don_card
 from .ui import brand_header, page
 
 router = APIRouter(tags=["photo-confirm"])
@@ -323,12 +323,17 @@ def confirm_add_catalogue(
     name, number, language, rarity = name.strip(), number.strip(), language.strip(), rarity.strip()
     if not (name and number and language) or len(name) > 128 or len(number) > 32:
         raise HTTPException(status_code=400, detail="name, number and language are required")
+    game = "one_piece" if is_don_card(name) else "pokemon"
+    if is_don_card(name):
+        rarity = "DON!!"
     card_set = session.get(CardSet, set_id) if set_id else None
+    if is_don_card(name) and card_set and card_set.game != "one_piece":
+        raise HTTPException(status_code=400, detail="DON!! cards belong to One Piece; choose a One Piece set")
     if card_set is None:
         if not set_name.strip():
             raise HTTPException(status_code=400, detail="choose the card's set")
-        sid = "local-" + hashlib.sha256(("pokemon|" + language_family(language) + "|" + set_name.strip().lower()).encode()).hexdigest()[:24]
-        card_set = session.get(CardSet, sid) or CardSet(id=sid, name=set_name.strip(), game="pokemon")
+        sid = "local-" + hashlib.sha256((game + "|" + language_family(language) + "|" + set_name.strip().lower()).encode()).hexdigest()[:24]
+        card_set = session.get(CardSet, sid) or CardSet(id=sid, name=set_name.strip(), game=game)
         session.add(card_set)
         session.flush()
     cid = "local-" + hashlib.sha256("|".join((card_set.id, language_family(language), name.lower(), number.lower())).encode()).hexdigest()[:24]

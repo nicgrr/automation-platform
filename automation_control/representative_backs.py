@@ -1,5 +1,6 @@
 """Seller-authorized shared backs for front-only card photography."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1] / 'scan_ingest_data/media/listing_photos/representative-backs'
 NOTICE = ('The front photo shows the actual card you will receive. The back photo is a stock photo, '
@@ -13,6 +14,10 @@ def is_representative(path):
     return bool(path) and Path(path).resolve().parent == ROOT.resolve()
 
 
+def is_don_card(name):
+    return bool(re.search(r"\bdon(?:!{2,}|\s+card\b)", name or "", re.I))
+
+
 def select_back(game, language, rarity=''):
     game = (game or '').lower().strip()
     language = (language or '').lower().strip()
@@ -23,7 +28,8 @@ def select_back(game, language, rarity=''):
         elif language in ('english', 'en', 'chinese', 'zh', 'zh-cn', 'zh-tw', 'simplified chinese', 'traditional chinese', 'chinese (simplified)', 'chinese (traditional)'):
             filename = 'pokemon-english-chinese.jpg'
     elif game == 'one_piece':
-        filename = 'one-piece-leader.jpg' if (rarity or '').strip().lower() in ('l', 'leader') else 'one-piece-standard.jpg'
+        kind = (rarity or '').strip().lower().rstrip('!')
+        filename = 'one-piece-don.jpg' if kind in ('don', 'don card') else 'one-piece-leader.jpg' if kind in ('l', 'leader') else 'one-piece-standard.jpg'
     path = ROOT / filename if filename else None
     return str(path) if path and path.is_file() else None
 
