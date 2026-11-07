@@ -47,6 +47,9 @@ Still needs the nl-vault.service restart to go live.
 Next (owner: sleeves are sealed too): storefront-only rule — accessories whose AccessoryProduct
 .product_type is "Card sleeves" show in Sealed products (franchise from brand) and not in Other.
 CatalogItem.item_type stays ACCESSORY (sleeve_studio/eBay category depend on it).
+DONE: storefront tests 271 passed. Live-data render: Sealed products 6 (3 starter decks + 3 sleeve
+packs; tabs Pokémon/One Piece/Dragon Ball), Other 1 (SVP 079-081 promo lot with holder).
+Still needs `sudo systemctl restart nl-vault.service` (blocked for me; owner action).
 
 ## Storefront synchronization audit — Codex, 2026-11-07
 

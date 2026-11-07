@@ -97,6 +97,7 @@ class Department:
     includes_bulk: bool = False   # BulkLot rows count too (scoped by `game` if set)
     games: tuple[str, ...] = ()   # the catalogue games it covers; empty means just `game`
     by_franchise: bool = False    # spans every game; tabs narrow it to one franchise
+    sealed_supplies: str = ""     # "include" / "exclude" sealed sleeve packs (see sealed_supply_ids)
 
     @property
     def game_codes(self) -> tuple[str, ...]:
@@ -115,13 +116,14 @@ FIXED_DEPARTMENTS: tuple[Department, ...] = (
         name="Sealed products",
         blurb="Booster boxes, bundles, tins and decks from every game.",
         item_types=(CatalogItemType.SEALED_PRODUCT,),
-        by_franchise=True,
+        by_franchise=True, sealed_supplies="include",
     ),
     Department(
         slug="other",
         name="Other",
         blurb="Apparel, accessories and everything else.",
         item_types=(CatalogItemType.APPAREL, CatalogItemType.ACCESSORY, CatalogItemType.OTHER),
+        sealed_supplies="exclude",
     ),
 )
 
@@ -132,6 +134,17 @@ _TCG_ITEM_TYPES = (CatalogItemType.TCG_CARD, CatalogItemType.SEALED_PRODUCT, Cat
 # Sealed product lives only in the Sealed products department, all games
 # together (the owner's call); a game department holds its singles and bulk.
 _GAME_ITEM_TYPES = (CatalogItemType.TCG_CARD, CatalogItemType.GRADED_CARD)
+
+
+def sealed_supply_ids():
+    """Card-sleeve packs. They're catalogued as accessories (the eBay
+    category and Sleeve Studio rely on that), but they're sold sealed, so
+    the shop lists them with sealed product. Their brand stands in for a
+    game when narrowing by franchise."""
+    from automation_control.models import AccessoryProduct
+
+    return select(AccessoryProduct.catalog_item_id).where(
+        func.lower(AccessoryProduct.product_type) == "card sleeves")
 
 
 def _game_blurb(group: str) -> str:
@@ -193,7 +206,10 @@ def department_for_item(session: Session, item: CatalogItem | None) -> Departmen
     disagree with which grid it actually shows up in."""
     if item is None:
         return None
-    if item.item_type == CatalogItemType.SEALED_PRODUCT:
+    is_sleeve_pack = item.item_type == CatalogItemType.ACCESSORY and session.scalar(
+        select(func.count()).select_from(CatalogItem)
+        .where(CatalogItem.id == item.id, CatalogItem.id.in_(sealed_supply_ids())))
+    if item.item_type == CatalogItemType.SEALED_PRODUCT or is_sleeve_pack:
         return next(d for d in FIXED_DEPARTMENTS if d.slug == "sealed")
     if item.item_type in _TCG_ITEM_TYPES:
         game = session.scalar(select(TcgCard.game).where(TcgCard.catalog_item_id == item.id))
@@ -216,13 +232,20 @@ def listing_filter(department: Department):
     is missing resolves to no department and simply doesn't appear,
     rather than defaulting into one and being mislabelled.
     """
+    from automation_control.models import AccessoryProduct
+
     condition = CatalogItem.item_type.in_(department.item_types)
+    if department.sealed_supplies == "include":
+        condition = condition | CatalogItem.id.in_(sealed_supply_ids())
+    elif department.sealed_supplies == "exclude":
+        condition = condition & CatalogItem.id.not_in(sealed_supply_ids())
     codes = department.game_codes
     if not codes:
         return condition
     return condition & (
         CatalogItem.id.in_(select(TcgCard.catalog_item_id).where(TcgCard.game.in_(codes)))
         | CatalogItem.id.in_(select(SealedProduct.catalog_item_id).where(SealedProduct.game.in_(codes)))
+        | CatalogItem.id.in_(select(AccessoryProduct.catalog_item_id).where(AccessoryProduct.brand.in_(codes)))
     )
 
 
@@ -382,13 +405,22 @@ def _sub_label(game: str) -> str:
 
 
 def _sealed_games(session: Session) -> list[str]:
-    """Raw game values behind every sealed product in stock."""
-    return sorted({g for g in session.scalars(
+    """Raw game values behind every sealed product in stock, plus the brand
+    of each sealed sleeve pack."""
+    from automation_control.models import AccessoryProduct
+
+    games = session.scalars(
         select(SealedProduct.game).distinct()
         .join(ShopListing, ShopListing.catalog_item_id == SealedProduct.catalog_item_id)
         .join(CatalogItem, CatalogItem.id == SealedProduct.catalog_item_id)
         .where(live_inventory.available(), CatalogItem.item_type == CatalogItemType.SEALED_PRODUCT)
-    ).all() if g})
+    ).all()
+    brands = session.scalars(
+        select(AccessoryProduct.brand).distinct()
+        .join(ShopListing, ShopListing.catalog_item_id == AccessoryProduct.catalog_item_id)
+        .where(live_inventory.available(), AccessoryProduct.catalog_item_id.in_(sealed_supply_ids()))
+    ).all()
+    return sorted({g for g in (*games, *brands) if g})
 
 
 def narrowed(department: Department, sub: str, session: Session | None = None) -> Department:

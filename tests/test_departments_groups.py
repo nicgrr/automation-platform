@@ -172,3 +172,32 @@ def test_tile_uses_a_published_ebay_photo_in_live_mode(session, monkeypatch):
     monkeypatch.setattr(live_inventory, "enabled", lambda: True)
     tile = storefront_app._dept_hero(session, departments.find(session, "sealed"))
     assert "src='https://i.ebayimg.com/etb.jpg'" in tile and "Photos on eBay" not in tile
+
+
+def test_sealed_sleeve_packs_sit_with_sealed_product_not_other(client, session):
+    from decimal import Decimal
+    from automation_control.models import (
+        AccessoryProduct, CatalogItem, CatalogItemType, ShopListing, ShopListingStatus,
+    )
+
+    _stock(session)
+    add_sealed(session, "OP box", game="One Piece")
+    for item_id, kind, product_type in (("sleeves", CatalogItemType.ACCESSORY, "Card sleeves"),
+                                        ("binder", CatalogItemType.ACCESSORY, "Binder")):
+        session.add(CatalogItem(id=item_id, item_type=kind, name=item_id))
+        session.add(AccessoryProduct(catalog_item_id=item_id, brand="Pokemon", product_type=product_type))
+        session.add(ShopListing(id=f"l-{item_id}", catalog_item_id=item_id, title=f"Item {item_id}",
+                                price=Decimal("9"), currency="AUD", quantity=1, status=ShopListingStatus.ACTIVE))
+    session.commit()
+
+    by_slug = {d.slug: n for d, n in departments.in_stock(session)}
+    assert by_slug["sealed"] == 2 and by_slug["other"] == 1
+    sealed = client.get("/shop/sealed").text
+    assert "Item sleeves" in sealed and "Item binder" not in sealed and ">Pokémon<" in sealed
+    pokemon = client.get("/shop/sealed?sub=pokemon").text
+    assert "Item sleeves" in pokemon and "OP box" not in pokemon
+    assert "Item sleeves" not in client.get("/shop/other").text
+    assert "href='/shop/sealed?sub=pokemon'" in client.get("/shop/game-pokemon").text
+    item = session.get(CatalogItem, "sleeves")
+    assert departments.department_for_item(session, item).slug == "sealed"
+    assert departments.department_for_item(session, session.get(CatalogItem, "binder")).slug == "other"
