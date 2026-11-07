@@ -1,5 +1,19 @@
 # Handoff
 
+## Postage-label website alignment — Codex, 2026-11-07
+
+Owner supplied a printed label reference and asked for the website in the sender
+header to sit lower. Current `_draw_header` places the website at `y + 6`.
+Plan: lower the website and globe together within the existing header clearance,
+leave the sender/address/dividers unchanged, add a focused position regression,
+render a preview, and run `tests/test_labels.py`. Files owned for this batch:
+`automation_control/labels.py`, `tests/test_labels.py`, and this handoff only.
+Existing dirty storefront files (`storefront/app.py`, `storefront/departments.py`,
+`tests/test_departments.py`, `tests/test_departments_groups.py`) belong to the
+concurrent storefront work and must remain untouched. Existing untracked backup
+JSON files are operational evidence and must remain untouched. No print job,
+service restart, or other external action is authorized by this code change.
+
 ## Storefront department tiles — Claude Code, 2026-11-07
 
 Owner (screenshot of NL Vault home): extra tiles without photos (Apparel, "Dragon Ball Super
