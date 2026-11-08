@@ -1,5 +1,15 @@
 # Handoff
 
+## Batch pricing review — Codex, 2026-11-09
+
+Branch codex/scan-studio-app based0ae167, tracked clean; preserve backups.
+Add read-only pricing hub for confirmed Studio receipts: distinct listings,
+photo/current price/offered quantity and batch additions, missing-price filter,
+exact printing sold search and existing Listing Studio editor links. Reuse
+existing price save/publish checks; do not label nonzero prices approved.
+No marketplace calls, database changes or price guesses. Test scope/dedup/filter
+and deploy CRM after passing checks.
+
 ## Guided batch review — Codex, 2026-11-09
 
 Branch codex/scan-studio-app base1cbcdf1, tracked clean; preserve untracked
