@@ -44,6 +44,11 @@ will pick this up at its next authorized restart.
 OWNER AUTHORIZED LIVE UPDATE 2026-11-08 after confirming the label remained
 old. Next: restart `ezbay.service`, verify health, and verify a live label image
 uses the committed `y + 14` website placement. Do not submit a print job.
+DEPLOYED 2026-11-08 17:38 AEDT: `ezbay.service` restarted successfully with
+new PID 3158965 and `/health` returned `{"status":"ok"}`. The initial immediate
+health request raced startup and failed once; the retry passed. The running
+process now loads commit f766e02's lowered website/globe renderer. No print job
+was submitted; owner can reprint the label from the normal packing workflow.
 
 ## Storefront department tiles — Claude Code, 2026-11-07
 
