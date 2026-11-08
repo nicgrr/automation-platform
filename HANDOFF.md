@@ -12,8 +12,8 @@ and deploy CRM after passing checks.
 Implemented authenticated batch pricing page and links from workspace/review.
 22 focused tests passed (15.09s); JS syntax and diff checks passed. Hub is
 read-only, price edits use existing Listing Studio in separate tab; refresh hub
-after editing. No independent reviewed-price status added. Next restart CRM
-and verify delivery. Mobile visual browser check not run for this stage.
+after editing. No independent reviewed-price status added. Deployed040ab19; CRM restarted. Authenticated Studio, data
+and updated JS returned200. Mobile visual browser check not run for this stage.
 
 ## Guided batch review — Codex, 2026-11-09
 
