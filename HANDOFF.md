@@ -1,5 +1,19 @@
 # Handoff
 
+## Scan Studio first app slice — Codex, 2026-11-08
+
+Owner authorized beginning SortSwift-style scanner rebuild and more app-like UI.
+Native versus home-screen clarification pending; implement reusable authenticated
+JSON plus home-screen compatible Scan Studio first. Base3558b43; tracked clean.
+Plan new /scan-studio capture/batch workspace with local previews, XHR upload
+progress, JSON response negotiation on existing upload, live polling without
+reload and review/storage links. Keep existing recognition/review/publish logic.
+No automatic stock increases, marketplace writes or schema changes. Separate
+new-copy/photo-update transaction design remains next phase, explicitly not
+claimed complete. Add navigation and manifest shortcut. Tests upload negotiation,
+authentication, safe summaries and browser flow. Deploy CRM after verification.
+Existing untracked backups preserved.
+
 ## Sealed tile and Pokemon promo placement — Codex, 2026-11-07
 
 Owner now wants the three-card promo display moved from Other to Pokemon and
