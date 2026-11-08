@@ -1,5 +1,14 @@
 # Handoff
 
+## eBay comparison panel — Codex, 2026-11-09
+
+Branch codex/scan-studio-app base002cc94 tracked clean; preserve backups.
+Add read-only saved vs cached eBay price/quantity/title panel to Listing Studio
+and batch pricing. Resolve explicit link or confirmed export, never fuzzy name.
+Show observation time and missing evidence; photos/description not verified.
+No live reads/writes or inferred synchronization. Test differences/missing/stale
+evidence then deploy CRM.
+
 ## Batch pricing review — Codex, 2026-11-09
 
 Branch codex/scan-studio-app based0ae167, tracked clean; preserve backups.
