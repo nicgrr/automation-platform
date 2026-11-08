@@ -1,5 +1,23 @@
 # Handoff
 
+## Intake stage live — Codex, 2026-11-09
+
+Deployed9061311 after57focused tests passed in isolated basetemp. Migration
+20261108_01 applied and CRM restarted. SQL before/after verified inventory rows/
+quantity sum, listing rows/quantity sum and batch count unchanged. All21existing
+batches remain legacy; zero intake receipts before first real new upload.
+Authenticated production /scan-studio and /scan-studio/data returned200; three
+intake actions visible. Existing marketplace prices/listings not changed.
+Atomic SQLite confirmation serializes requests, unique photo receipt prevents
+replay increments. Source receipt stores prior aggregate and confirmed additions;
+it does not implement remaining-per-lot sale allocation. Additional copies keep
+existing listing photos/price; photo update adds0 and removes redundant new slot.
+Current intake confirmation supports raw cards; collectibles/slabs remain in
+existing Add stock workflow. Next stages: exact-printing visual comparison,
+per-source stock availability/allocation and live-channel difference verification.
+Final tiny UI clarification: label raw-card scope and link existing Add stock
+for collectibles/slabs so they do not enter the new guarded raw-card path.
+
 ## Intake deployment checkpoint — Codex, 2026-11-09
 
 Implemented9061311; first55 tests passed and10 dedicated stock/migration/HTTP
