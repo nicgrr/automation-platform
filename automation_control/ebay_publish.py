@@ -1091,6 +1091,7 @@ def ebay_publish_preview(
                 f"I understand this will create or resume a live listing on eBay {escape(environment)}.</label>"
                 "<button class='btn'>Publish live to eBay</button></form>"
             )
+    from .listing_comparison import comparison_html
     workflow_label = "Existing eBay listing revision" if is_live_revision else "Direct Inventory API"
     body = (
         brand_header("eBay Listing Studio")
@@ -1100,6 +1101,7 @@ def ebay_publish_preview(
         + f"<a class='btn ghost' href='{escape(australian_sold_listings_url(outgoing_title), quote=True)}' target='_blank' rel='noopener noreferrer'>Sold listings · Australia</a> "
         + "<a class='btn ghost' href='/shop-listings'>Back to Listing Studio</a></p>"
         + flash
+        + comparison_html(session, listing, outgoing_title)
         + checks_html
         + (
             f"<form method='post' action='/shop-listings/{escape(listing.id)}/ebay-ai-suggest' class='panel ai-suggest'>"

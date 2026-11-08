@@ -189,6 +189,7 @@ def batch_pricing(batch_id: str, missing: bool = False,
                   user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     from html import escape as e
     from .models import ShopListing, CatalogItem, TcgCard
+    from .listing_comparison import comparison_html
     from .listing_quality import australian_sold_listings_url, australian_active_listings_url
     from .listing_finishes import FINISHES
     batch = session.get(ListingPhotoBatch, batch_id)
@@ -219,7 +220,8 @@ def batch_pricing(batch_id: str, missing: bool = False,
             card.language if card else '', card.parallel if card else '', finish] if v)
         price_label = f"{e(listing.currency)} ${listing.price:.2f} · price set" if listing.price > 0 else 'Price needed'
         body += f"<article class='printing-candidate'><img loading='lazy' src='/ebay-listing-bulk-photos/{e(batch_id)}/image/{e(pair.id)}/front?thumb=true' alt='Your photo'><h2>{e(listing.title)}</h2><p>{e(identity)}</p><strong>{price_label}</strong><p>{listing.quantity} offered · +{entry['added']} copies from this batch</p>"
-        body += f"<p><a href='{e(australian_sold_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Sold listings · Australia</a></p><p><a href='{e(australian_active_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Active listings · Australia</a></p><a class='btn' href='/shop-listings/{e(listing.id)}/ebay-preview' target='_blank' rel='noopener'>Review price &amp; listing</a></article>"
+        body += f"<p><a href='{e(australian_sold_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Sold listings · Australia</a></p><p><a href='{e(australian_active_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Active listings · Australia</a></p><a class='btn' href='/shop-listings/{e(listing.id)}/ebay-preview' target='_blank' rel='noopener'>Review price &amp; listing</a>"
+        body += comparison_html(session, listing, listing.ebay_title) + "</article>"
     if not shown:
         body += '<p>No missing prices in confirmed listings.</p>' if grouped else '<p>Confirm cards in this batch first. They will appear here after intake is saved.</p>'
     body += '</div>'

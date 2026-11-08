@@ -8,6 +8,11 @@ and batch pricing. Resolve explicit link or confirmed export, never fuzzy name.
 Show observation time and missing evidence; photos/description not verified.
 No live reads/writes or inferred synchronization. Test differences/missing/stale
 evidence then deploy CRM.
+Implemented listing_comparison.py in full Listing Studio and batch pricing.
+19 initial focused tests passed; 3 comparison tests passed including export
+fallback and explicit-link precedence; 59 publish tests passed (35.87s).
+No photos/description equivalence claimed. No live API polling added. Next
+restart CRM and verify authenticated page delivery; browser visual not checked.
 
 ## Batch pricing review — Codex, 2026-11-09
 
