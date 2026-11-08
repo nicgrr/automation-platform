@@ -1,5 +1,17 @@
 # Handoff
 
+## Intake deployment checkpoint — Codex, 2026-11-09
+
+Implemented9061311; first55 tests passed and10 dedicated stock/migration/HTTP
+retry tests passed. Full SQLite backup completed at
+backups/pre-stock-intake-20261109.sqlite3 (0600). Parallel pytest runs collided
+in shared retention directory (35passed/21setup errors, disk I/O/missing temp
+dir); rerun all focused tests in isolated basetemp before deployment.
+Next upgrade20261108_01, compare stock/listing totals before and after, restart
+CRM and verify actual authenticated Studio. Existing records remain legacy.
+Source receipts record historical batch intake counts, not current per-lot
+availability; canonical inventory still aggregates copies. No marketplace writes.
+
 ## Explicit stock intake transactions — Codex, 2026-11-08
 
 Owner authorized next Scan Studio stage. Branch codex/scan-studio-app basebb04317,
