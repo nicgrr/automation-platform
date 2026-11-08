@@ -17,8 +17,11 @@ Implemented on codex/scan-studio-app: new authenticated /scan-studio + /data,
 static JS/CSS, template, upload JSON negotiation (legacy redirect unchanged),
 nav entry and manifest shortcuts. Thumbnails avoid downloading full photos.
 20 focused intake/workspace tests passed; node syntax and diff checks passed.
-Next deploy CRM and verify real desktop/mobile browser, polling and no-stock-write
-behavior. Old scanner stock separation remains a future phase, not implemented.
+Deployed4197cf8; authenticated page/data200 (local5ms/109ms). 19additional
+UI/PWA tests passed. Mobile browser verified connected, no horizontal overflow,
+mock upload sent CSRF and photo, switched to batches without real server mutation.
+Browser caught inherited form max-width/gaps; next small CSS correction removes
+that limit, and hides storage-label action for batches with no reserved slots. Old scanner stock separation remains a future phase, not implemented.
 
 ## Sealed tile and Pokemon promo placement — Codex, 2026-11-07
 
