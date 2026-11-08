@@ -253,6 +253,7 @@ ADMIN_NAV = [
         ("/analytics", "Analytics"),
     ], False),
     ("Add stock", [
+        ("/scan-studio", "Scan Studio"),
         ("/scan-add", "Add stock"),
     ], False),
     ("Review", [

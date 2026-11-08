@@ -1,0 +1,17 @@
+<div id="scan-studio">
+<header class="ss-heading"><div><p class="ss-eyebrow">YOUR CARD WORKSPACE</p><h1>Scan Studio</h1><p>Capture, review and put away your next batch.</p></div><span id="ss-connection" role="status">Connecting…</span></header>
+<nav class="ss-tabs" aria-label="Scan Studio"><button type="button" data-tab="capture" aria-pressed="true">Capture</button><button type="button" data-tab="batches" aria-pressed="false">My batches</button><a href="/shop-listings">Listing Studio ↗</a></nav>
+<section id="ss-capture">
+<form id="ss-form" class="panel" method="post" action="/ebay-listing-bulk-photos" enctype="multipart/form-data">
+<h2>Add your photos</h2><p>Keep photos in card order. You’ll review matches and quantities before applying changes.</p>
+<div class="ss-fields"><label>Card family<select name="game_hint"><option value="auto">Mixed / auto-detect</option><option value="pokemon">Pokémon</option><option value="one_piece">One Piece</option><option value="dragon_ball">Dragon Ball</option></select></label><label>Photos<select name="has_backs" id="ss-mode"><option value="no">Fronts only</option><option value="yes">Front, back, front, back</option></select></label></div>
+<div class="ss-picker"><label class="btn">Choose photos<input id="ss-files" type="file" accept="image/*" multiple hidden></label><label class="btn ghost">Take photo<input id="ss-camera" type="file" accept="image/*" capture="environment" hidden></label><button type="button" id="ss-clear" class="btn ghost">Clear selection</button></div>
+<p id="ss-count">No photos selected · up to 40 per batch</p><div id="ss-previews" class="ss-previews"></div>
+<details><summary>Storage tray (optional)</summary><div class="ss-fields"><label>Tray code<input name="storage_tray" placeholder="PK-01" autocomplete="off"></label><label>Starting slot<input name="starting_slot" type="number" min="1" placeholder="Next free slot"></label></div><p>Keep the physical cards in upload order. Slots are reserved until you confirm they’re stored.</p></details>
+<div id="ss-upload" hidden><progress id="ss-progress" max="100" value="0"></progress><p id="ss-upload-text" role="status"></p></div>
+<p id="ss-error" role="alert"></p><button type="submit" id="ss-submit" class="btn">Identify photos</button>
+</form><p class="ss-links"><a href="/scan-ingest">Flatbed scanner status</a> · <a href="/feed">Earlier scanner batches</a></p>
+</section>
+<section id="ss-batches" hidden><div class="ss-fields"><label>Batch<select id="ss-batch"></select></label><label>Show<select id="ss-filter"><option value="all">All cards</option><option value="attention">Needs review</option><option value="ready">Ready to review</option><option value="stored">Stored</option></select></label></div><p id="ss-summary" aria-live="polite"></p><div class="ss-actions"><a id="ss-review" class="btn" hidden>Review this batch</a><a id="ss-storage" class="btn ghost" hidden>Storage labels</a></div><div id="ss-cards" class="ss-cards"></div></section>
+<noscript><p>Use the <a href="/ebay-listing-bulk-photos">standard photo intake</a> when JavaScript is unavailable.</p></noscript>
+</div>

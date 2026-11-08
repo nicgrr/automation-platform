@@ -13,6 +13,12 @@ new-copy/photo-update transaction design remains next phase, explicitly not
 claimed complete. Add navigation and manifest shortcut. Tests upload negotiation,
 authentication, safe summaries and browser flow. Deploy CRM after verification.
 Existing untracked backups preserved.
+Implemented on codex/scan-studio-app: new authenticated /scan-studio + /data,
+static JS/CSS, template, upload JSON negotiation (legacy redirect unchanged),
+nav entry and manifest shortcuts. Thumbnails avoid downloading full photos.
+20 focused intake/workspace tests passed; node syntax and diff checks passed.
+Next deploy CRM and verify real desktop/mobile browser, polling and no-stock-write
+behavior. Old scanner stock separation remains a future phase, not implemented.
 
 ## Sealed tile and Pokemon promo placement — Codex, 2026-11-07
 

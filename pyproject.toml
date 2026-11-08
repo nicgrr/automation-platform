@@ -50,7 +50,7 @@ include = ["automation_control*"]
 # these in the source tree regardless, so a missing entry here only bites
 # on a real build -- which is exactly when it would be hardest to spot.
 [tool.setuptools.package-data]
-automation_control = ["data/*.csv", "listing_pipeline/templates/*.j2"]
+automation_control = ["data/*.csv", "listing_pipeline/templates/*.j2", "templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

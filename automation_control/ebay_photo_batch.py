@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -795,6 +795,9 @@ async def bulk_photo_submit(
         )
 
     background_tasks.add_task(_run_batch, batch.id, settings, user)
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"batch_id": batch.id, "review_url": f"/ebay-listing-bulk-photos/{batch.id}"},
+                            status_code=201, headers={"Cache-Control": "no-store"})
     return RedirectResponse(f"/ebay-listing-bulk-photos/{batch.id}", status_code=303)
 
 

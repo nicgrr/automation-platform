@@ -67,6 +67,7 @@ from .settings_page import router as settings_page_router
 from .shop_admin import router as shop_admin_router
 from .shop_listings_admin import router as shop_listings_router
 from .ebay_publish import router as ebay_publish_router
+from .scan_studio import router as scan_studio_router
 from .ebay_photo_batch import router as ebay_photo_batch_router
 from .bundle_singles import router as bundle_singles_router
 from .photo_confirm import router as photo_confirm_router
@@ -200,6 +201,7 @@ app.include_router(deal_check_router)
 app.include_router(shop_admin_router)
 app.include_router(shop_listings_router)
 app.include_router(ebay_publish_router)
+app.include_router(scan_studio_router)
 app.include_router(ebay_photo_batch_router)
 app.include_router(bundle_singles_router)
 app.include_router(photo_confirm_router)

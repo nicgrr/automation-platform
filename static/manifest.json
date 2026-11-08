@@ -10,10 +10,36 @@
     "action": "/market-watch/share",
     "method": "GET",
     "enctype": "application/x-www-form-urlencoded",
-    "params": { "title": "title", "text": "text", "url": "url" }
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
   },
   "icons": [
-    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Scan Studio",
+      "short_name": "Scan",
+      "url": "/scan-studio"
+    },
+    {
+      "name": "Listing Studio",
+      "short_name": "Listings",
+      "url": "/shop-listings"
+    }
   ]
 }
