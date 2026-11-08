@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .auth import require_dashboard_user
 from .database import get_session
-from .models import ListingPhotoBatch, ListingPhotoPair, InventoryPlacement, StorageLocation
+from .models import ListingPhotoBatch, ListingPhotoPair, InventoryPlacement, StorageLocation, StockIntakeReceipt
 from .ui import page
 
 router = APIRouter(tags=['scan-studio'])
@@ -28,22 +28,106 @@ def data(batch_id: str = '', user: str = Depends(require_dashboard_user), sessio
         batches.append(selected)
     cards = []
     if selected:
-        rows = session.execute(select(ListingPhotoPair, InventoryPlacement, StorageLocation)
+        rows = session.execute(select(ListingPhotoPair, InventoryPlacement, StorageLocation, StockIntakeReceipt)
             .outerjoin(InventoryPlacement, InventoryPlacement.listing_photo_pair_id == ListingPhotoPair.id)
             .outerjoin(StorageLocation, StorageLocation.id == InventoryPlacement.storage_location_id)
+            .outerjoin(StockIntakeReceipt, StockIntakeReceipt.pair_id == ListingPhotoPair.id)
             .where(ListingPhotoPair.batch_id == selected.id).order_by(ListingPhotoPair.position))
-        for pair, placement, location in rows:
+        for pair, placement, location, receipt in rows:
             facts = pair.extracted or {}
             cards.append({'id': pair.id, 'position': pair.position,
                 'name': str(facts.get('character') or 'Identifying card'),
                 'number': str(facts.get('card_number') or ''), 'status': pair.status.value,
                 'issue': pair.issue or '', 'slot': location.name if location else '',
                 'stored': bool(placement and placement.confirmed_at),
+                'receipt': {'mode':receipt.mode,'added':receipt.quantity_added,'previous':receipt.previous_quantity,'url':f'/scan-studio/cards/{pair.id}'} if receipt else None,
                 'image': f'/ebay-listing-bulk-photos/{selected.id}/image/{pair.id}/front?thumb=true',
-                'review_url': f'/photo-review/{pair.id}',
+                'review_url': (f'/scan-studio/cards/{pair.id}' if selected.intake_mode != 'legacy' else f'/photo-review/{pair.id}'),
                 'listing_url': f'/shop-listings/{pair.matched_shop_listing_id}/ebay-preview' if pair.matched_shop_listing_id else ''})
     return JSONResponse({'selected': selected.id if selected else None, 'cards': cards,
         'batches': [{'id': b.id, 'date': b.started_at.isoformat(), 'total': b.total_pairs,
                      'processed': b.processed_pairs, 'status': b.status.value,
-                     'review': b.review_pairs, 'failed': b.failed_pairs} for b in batches]},
+                     'intake_mode': b.intake_mode, 'review': b.review_pairs, 'failed': b.failed_pairs} for b in batches]},
         headers={'Cache-Control': 'no-store'})
+
+
+@router.get('/scan-studio/cards/{pair_id}', response_class=HTMLResponse)
+def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
+                user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    from html import escape as e
+    from sqlalchemy import or_
+    from .models import CatalogItem, TcgCard, CardSet, ShopListing, ShopListingStatus, StockIntakeReceipt, InventoryItem
+    from .listing_finishes import FINISHES
+    from .stock_intake import MODES, is_studio
+    pair = session.get(ListingPhotoPair,pair_id)
+    if not pair: raise HTTPException(404,'Photo not found')
+    if not is_studio(session,pair): raise HTTPException(400,'Use the existing batch review for this older upload.')
+    batch=session.get(ListingPhotoBatch,pair.batch_id)
+    receipt=session.get(StockIntakeReceipt,pair.id)
+    back=f"<p><a href='/scan-studio?batch={batch.id}'>← Back to this batch</a></p>"
+    if receipt:
+        body=back+f"<h1>Intake confirmed</h1><p>{e(MODES[receipt.mode])}: {receipt.quantity_added} copies added. Stock before this intake: {receipt.previous_quantity}.</p><p>This receipt records this batch only; it is not a current available-stock count.</p><a class='btn' href='/shop-listings/{receipt.shop_listing_id}/ebay-preview'>Review listing</a>"
+        return HTMLResponse(page('EzBay — Intake receipt',body),headers={'Cache-Control':'no-store'})
+    facts=pair.extracted or {}
+    term=q.strip() or str(facts.get('character') or '')
+    selected=catalog or pair.proposed_catalog_item_id or ''
+    results=[]
+    if term:
+        results=session.execute(select(CatalogItem,TcgCard).join(TcgCard,TcgCard.catalog_item_id==CatalogItem.id)
+            .where(or_(CatalogItem.name.ilike(f'%{term}%'),TcgCard.number.ilike(f'%{term}%'))).limit(40)).all()
+    selected_item=session.get(CatalogItem,selected) if selected else None
+    selected_card=session.get(TcgCard,selected) if selected else None
+    if selected_item and selected_card and all(item.id!=selected for item,_ in results):results.insert(0,(selected_item,selected_card))
+    options="<option value=''>Choose exact catalogue printing</option>"
+    for item,card in results:
+        cardset=session.get(CardSet,card.set_id) if card.set_id else None
+        label=f'{item.name} · {card.number or "?"} · {cardset.name if cardset else card.set_id or "?"} · {card.language or "?"} · {card.rarity or ""}'
+        options+=f"<option value='{e(item.id,quote=True)}' {'selected' if item.id==selected else ''}>{e(label)}</option>"
+    targets="<option value=''>No existing listing selected</option>"
+    listings=list(session.scalars(select(ShopListing).where(ShopListing.catalog_item_id==selected,ShopListing.status.in_([ShopListingStatus.ACTIVE,ShopListingStatus.DRAFT])))) if selected else []
+    for l in listings:
+        inv=session.get(InventoryItem,l.inventory_item_id) if l.inventory_item_id else None
+        targets+=f"<option value='{e(l.id)}'>{e(l.title)} · {e(l.finish or 'finish unconfirmed')} · offered {l.quantity}, owned {inv.quantity if inv else '?'}</option>"
+    finishes=''.join(f"<option value='{k}'>{e(v)}</option>" for k,v in FINISHES.items())
+    modes=''.join(f"<option value='{k}' {'selected' if k==batch.intake_mode else ''}>{e(v)}</option>" for k,v in MODES.items())
+    body=back+"<h1>Confirm this card</h1>"+(f"<p role='alert' style='color:#b42318'>{e(error)}</p>" if error else '')
+    body+=f"<div class='intake-grid'><img src='/ebay-listing-bulk-photos/{batch.id}/image/{pair.id}/front' alt='Your card'><div>"
+    body+=f"<form method='get'><label>Find card by name or number<input name='q' value='{e(term,quote=True)}'></label><button>Search catalogue</button></form>"
+    body+=f"<form method='get'><label>Exact printing<select name='catalog' required>{options}</select></label><button>Choose printing</button></form>"
+    if selected_card:
+        body+=f"""<form method='post' action='/scan-studio/cards/{pair.id}/confirm'>
+<input type='hidden' name='catalog_id' value='{e(selected,quote=True)}'>
+<label>Action<select name='mode'>{modes}</select></label>
+<p>New stock creates a draft only when this printing has no existing stock. Additional copies adds only the physical copies entered below. Photo update leaves all quantities and prices unchanged.</p>
+<label>Existing listing<select name='listing_id'>{targets}</select></label>
+<label>Finish<select name='finish' required><option value=''>Confirm finish</option>{finishes}</select></label>
+<label>New physical copies (ignored for photo updates)<input name='quantity' type='number' min='1' max='999' value='1' required></label>
+<label><input type='checkbox' name='confirmed' value='yes' required> I checked the printing and action against the physical card.</label>
+<button class='btn'>Confirm intake</button><p>This saves stock and a CRM draft. It does not publish or revise eBay.</p></form>"""
+    body+="</div></div><style>.intake-grid{display:grid;grid-template-columns:minmax(180px,320px) 1fr;gap:24px}.intake-grid>img{width:100%;max-height:480px;object-fit:contain}.intake-grid form{max-width:650px;margin-bottom:24px}.intake-grid select{max-width:100%;font-size:16px}.intake-grid input[type=checkbox]{width:auto}@media(max-width:650px){.intake-grid{grid-template-columns:1fr}.intake-grid>img{max-height:280px}}</style>"
+    return HTMLResponse(page('EzBay — Confirm intake',body),headers={'Cache-Control':'no-store'})
+
+
+from fastapi import Form
+from fastapi.responses import RedirectResponse
+@router.post('/scan-studio/cards/{pair_id}/confirm')
+def confirm_card(pair_id: str, mode: str = Form(...), catalog_id: str = Form(...), finish: str = Form(...),
+                 quantity: int = Form(1), listing_id: str = Form(''), confirmed: str = Form(''),
+                 user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    from sqlalchemy import text
+    from urllib.parse import urlencode
+    from .stock_intake import confirm
+    if confirmed!='yes':raise HTTPException(400,'Confirm the physical card and intake action.')
+    # SQLite writer lock serializes read/modify/write across workers and retries.
+    session.execute(text('BEGIN IMMEDIATE'))
+    try:
+        pair=session.get(ListingPhotoPair,pair_id)
+        if not pair:raise HTTPException(404,'Photo not found')
+        confirm(session,pair,mode=mode,catalog_id=catalog_id,finish=finish,quantity=quantity,listing_id=listing_id,user=user)
+        session.commit()
+    except HTTPException as exc:
+        session.rollback()
+        return RedirectResponse(f'/scan-studio/cards/{pair_id}?'+urlencode({'catalog':catalog_id,'error':exc.detail}),303)
+    except Exception:
+        session.rollback();raise
+    return RedirectResponse(f'/scan-studio/cards/{pair_id}',303)

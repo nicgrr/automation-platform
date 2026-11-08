@@ -136,6 +136,8 @@ def save_review(pair_id: str, catalog: str = Form(...), mode: str = Form(...), l
                 user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     with _REVIEW_LOCK:
         pair=_pair(session,pair_id)
+        from .stock_intake import guard_legacy
+        guard_legacy(session,pair)
         from .product_photo_review import is_graded
         if (pair.extracted or {}).get('item_kind') == 'collectible':
             raise HTTPException(409,'Use the collectible review form for this item.')

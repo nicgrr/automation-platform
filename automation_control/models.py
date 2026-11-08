@@ -803,6 +803,7 @@ class ListingPhotoBatch(Base):
         Enum(ListingPhotoBatchStatus), default=ListingPhotoBatchStatus.RUNNING, index=True
     )
     game_hint: Mapped[str | None] = mapped_column(String(64))
+    intake_mode: Mapped[str] = mapped_column(String(32), default="legacy", server_default="legacy")
     storage_tray: Mapped[str | None] = mapped_column(String(32))
     starting_slot: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -840,6 +841,19 @@ class ListingPhotoPair(Base):
     issue: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class StockIntakeReceipt(Base):
+    """One confirmed photo intake, preserving source quantity independently of old stock."""
+    __tablename__ = "stock_intake_receipts"
+    pair_id: Mapped[str] = mapped_column(ForeignKey("listing_photo_pairs.id"), primary_key=True)
+    inventory_item_id: Mapped[str] = mapped_column(ForeignKey("inventory_items.id"))
+    shop_listing_id: Mapped[str] = mapped_column(ForeignKey("shop_listings.id"))
+    mode: Mapped[str] = mapped_column(String(32))
+    quantity_added: Mapped[int] = mapped_column(Integer)
+    previous_quantity: Mapped[int] = mapped_column(Integer)
+    confirmed_by: Mapped[str] = mapped_column(String(128))
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class InventoryPlacement(Base):

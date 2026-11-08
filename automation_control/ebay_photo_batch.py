@@ -325,6 +325,11 @@ def _prepare_pair(pair_id: str, settings) -> None:
                 pair.issue = resolved
                 return
             item, card = resolved
+            if batch and batch.intake_mode != "legacy":
+                pair.proposed_catalog_item_id = item.id
+                pair.status = ListingPhotoPairStatus.NEEDS_REVIEW
+                pair.issue = "Confirm printing and intake action in Scan Studio before changing stock."
+                return
             attach_to_pair(pair, card.game, found.language, card.rarity)
             card_set = session.get(CardSet, card.set_id) if card.set_id else None
             inventory_matches = list(session.scalars(
@@ -518,6 +523,9 @@ def _quantity_issue(quantity: int) -> str | None:
 
 
 def _apply_pair(session: Session, pair: ListingPhotoPair, quantity: int | None = None) -> str | None:
+    from .stock_intake import is_studio
+    if is_studio(session, pair):
+        return f"Confirm stock intake in Scan Studio: /scan-studio/cards/{pair.id}"
     from .product_photo_review import is_graded
     if is_graded(pair.extracted):
         return "Graded cards require slab and certificate review; raw-card updates are disabled."
@@ -720,9 +728,13 @@ async def bulk_photo_submit(
     has_backs: str = Form(""),
     storage_tray: str = Form(""),
     starting_slot: str = Form(""),
+    intake_mode: str = Form("legacy"),
     user: str = Depends(require_dashboard_user),
     session: Session = Depends(get_session),
 ):
+    from .stock_intake import MODES
+    if intake_mode not in {*MODES, "legacy"}:
+        raise HTTPException(400, "Choose a valid intake action.")
     uploads = [photo for photo in photos if photo.filename]
     paired = has_backs == "yes"
     if not uploads:
@@ -738,7 +750,7 @@ async def bulk_photo_submit(
     if game_hint not in GAME_HINTS:
         game_hint = "auto"
     try:
-        tray = _tray_code(storage_tray)
+        tray = "" if intake_mode == "photo_update" else _tray_code(storage_tray)
         requested_start = int(starting_slot) if starting_slot.strip() else None
         if requested_start is not None and requested_start < 1:
             raise ValueError("Starting slot must be 1 or greater.")
@@ -753,6 +765,7 @@ async def bulk_photo_submit(
     batch = ListingPhotoBatch(
         total_pairs=len(uploads) // 2 if paired else len(uploads),
         game_hint=game_hint,
+        intake_mode=intake_mode,
         storage_tray=tray or None,
         started_by=user,
         status=ListingPhotoBatchStatus.RUNNING,

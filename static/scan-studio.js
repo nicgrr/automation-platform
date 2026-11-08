@@ -34,6 +34,7 @@
       const card = element('article', '', 'ss-card'), img = element('img'); img.src = c.image; img.alt = c.name; img.loading = 'lazy';
       card.append(img, element('h3', `${c.position}. ${c.name}${c.number ? ' #' + c.number : ''}`), element('span', labels[c.status] || c.status, 'ss-status'));
       if (c.issue) card.append(element('p', c.issue));
+      if (c.receipt) { const receipt = element('a', c.receipt.added ? `This batch: +${c.receipt.added} copies →` : 'Photo update · stock unchanged →'); receipt.href = c.receipt.url; card.append(receipt); }
       if (c.slot) card.append(element('p', `${c.stored ? 'Stored' : 'Reserved'}: ${c.slot}`));
       if (c.status !== 'processing') {
         const a = element('a', c.listing_url && ['applied','published'].includes(c.status) ? 'Open listing →' : 'Review card →');
@@ -61,7 +62,8 @@
         data.batches.forEach(b => { const o = element('option', `${new Date(b.date + (/[Z+]/.test(b.date) ? '' : 'Z')).toLocaleString()} · ${b.total} cards`); o.value = b.id; batchSelect.append(o); });
         batchSelect.value = selected;
         const b = data.batches.find(b => b.id === selected);
-        $('summary').textContent = b ? `${b.processed}/${b.total} identified · ${b.review} need review · ${b.failed} failed` : 'Your photo batches will appear here.';
+        const modeNames = {new_stock:'New stock',additional_copies:'Additional copies',photo_update:'Photo update',legacy:'Earlier workflow'};
+        $('summary').textContent = b ? `${modeNames[b.intake_mode] || "Batch"} · ${b.processed}/${b.total} identified · ${b.review} need review · ${b.failed} failed` : 'Your photo batches will appear here.';
         $('review').hidden = !selected;
         $('storage').hidden = !data.cards.some(c => c.slot);
         $('review').href = '/ebay-listing-bulk-photos/' + selected;

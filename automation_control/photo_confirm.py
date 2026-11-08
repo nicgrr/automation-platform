@@ -361,6 +361,8 @@ def confirm_card(
     pair = session.get(ListingPhotoPair, pair_id)
     if pair is None or pair.batch_id != batch_id:
         raise HTTPException(status_code=404, detail="photo not found")
+    from .stock_intake import guard_legacy
+    guard_legacy(session, pair)
     if pair.status != ListingPhotoPairStatus.NEEDS_REVIEW:
         # Already confirmed (double tap or a second device): just move on.
         return RedirectResponse(_confirm_url(batch_id, skipped), status_code=303)

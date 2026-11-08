@@ -83,6 +83,8 @@ def save(pair_id: str, kind: str = Form(...), name: str = Form(...), existing: s
          confirmed: str = Form(''), user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     with _LOCK:
         pair = _get(session,pair_id)
+        from .stock_intake import guard_legacy
+        guard_legacy(session,pair)
         if pair.status in (ListingPhotoPairStatus.APPLIED,ListingPhotoPairStatus.PUBLISHED) and pair.matched_shop_listing_id:
             return RedirectResponse(_saved_destination(session, session.get(ShopListing, pair.matched_shop_listing_id)),303)
         if confirmed != 'yes' or kind not in ('graded','collectible') or not name.strip() or not 1 <= quantity <= 999:

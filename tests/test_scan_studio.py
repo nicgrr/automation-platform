@@ -55,10 +55,11 @@ def test_async_upload_returns_batch_without_adding_stock(workspace):
     image = BytesIO();Image.new('RGB',(600,800),'white').save(image,'JPEG')
     with patch('automation_control.ebay_photo_batch._run_batch') as worker:
         r = client.post('/ebay-listing-bulk-photos',headers={'Accept':'application/json'},
-            data={'game_hint':'pokemon','has_backs':'no'},files={'photos':('front.jpg',image.getvalue(),'image/jpeg')})
+            data={'game_hint':'pokemon','has_backs':'no','intake_mode':'new_stock'},files={'photos':('front.jpg',image.getvalue(),'image/jpeg')})
     assert r.status_code == 201
     bid = r.json()['batch_id']
     assert db.get(ListingPhotoBatch,bid).total_pairs == 1
+    assert db.get(ListingPhotoBatch,bid).intake_mode == "new_stock"
     assert db.query(InventoryItem).count() == db.query(ShopListing).count() == 0
     assert worker.call_count == 1
     assert client.get('/scan-studio/data?batch_id='+bid).json()['selected'] == bid
