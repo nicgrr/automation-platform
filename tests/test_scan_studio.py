@@ -85,3 +85,22 @@ def test_visual_printing_review_is_read_only_and_escapes_metadata(workspace):
     r=client.get('/scan-studio/cards/visual-pair?catalog=missing&q=Pikachu')
     assert r.status_code==200
     assert db.query(InventoryItem).count()==db.query(ShopListing).count()==db.query(StockIntakeReceipt).count()==0
+
+def test_review_queue_wraps_and_does_not_mark_skipped_cards(workspace):
+    from automation_control.scan_studio import review_progress
+    client,db=workspace
+    b=ListingPhotoBatch(intake_mode='new_stock');other=ListingPhotoBatch(intake_mode='new_stock')
+    db.add_all([b,other]);db.flush()
+    pairs=[]
+    for pos,status in [(1,'needs_review'),(2,'processing'),(3,'ready'),(4,'failed')]:
+        p=ListingPhotoPair(batch_id=b.id,position=pos,front_image_path='front.jpg',status=ListingPhotoPairStatus(status))
+        db.add(p);pairs.append(p)
+    db.add(ListingPhotoPair(batch_id=other.id,position=1,front_image_path='other.jpg',status=ListingPhotoPairStatus.READY))
+    db.commit()
+    total,confirmed,nxt=review_progress(db,pairs[0])
+    assert (total,confirmed,nxt.id)==(4,0,pairs[2].id)
+    assert review_progress(db,pairs[2])[2].id==pairs[0].id
+    r=client.get(f'/scan-studio/cards/{pairs[2].id}')
+    assert '0 of 4 confirmed' in r.text and 'Review later' in r.text
+    assert db.query(InventoryItem).count()==0
+    assert pairs[0].status==ListingPhotoPairStatus.NEEDS_REVIEW

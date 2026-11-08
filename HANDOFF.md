@@ -9,6 +9,11 @@ retries retain idempotent intake, errors remain on current card. Processing/
 failed cards stay visible in batch but are not offered as ready review targets.
 Test queue boundaries, same-batch isolation and save/retry behavior; deploy CRM.
 No schema, inventory backfill, or marketplace writes.
+Implemented receipt-based same-batch queue/progress, wraparound review-later
+and Confirm & next after committed save. 21 focused tests passed (11.42s),
+including repeat POST and failed save staying on current card. Diff check clean.
+Next deploy CRM restart and verify authenticated page/assets. No browser visual
+check performed for this small navigation addition.
 
 ## Visual printing review checkpoint — Codex, 2026-11-09
 

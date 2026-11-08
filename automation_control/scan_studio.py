@@ -51,6 +51,20 @@ def data(batch_id: str = '', user: str = Depends(require_dashboard_user), sessio
         headers={'Cache-Control': 'no-store'})
 
 
+def review_progress(session: Session, pair: ListingPhotoPair):
+    """Read-only queue; receipts, not navigation, determine confirmation."""
+    from .models import ListingPhotoPairStatus
+    rows = session.execute(select(ListingPhotoPair, StockIntakeReceipt)
+        .outerjoin(StockIntakeReceipt, StockIntakeReceipt.pair_id == ListingPhotoPair.id)
+        .where(ListingPhotoPair.batch_id == pair.batch_id)
+        .order_by(ListingPhotoPair.position, ListingPhotoPair.id)).all()
+    eligible = [p for p, receipt in rows if not receipt and p.id != pair.id
+                and p.status in (ListingPhotoPairStatus.READY, ListingPhotoPairStatus.NEEDS_REVIEW)]
+    later = [p for p in eligible if (p.position, p.id) > (pair.position, pair.id)]
+    next_pair = (later or eligible or [None])[0]
+    return len(rows), sum(receipt is not None for _, receipt in rows), next_pair
+
+
 @router.get('/scan-studio/cards/{pair_id}', response_class=HTMLResponse)
 def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
                 user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
@@ -65,9 +79,19 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
     batch=session.get(ListingPhotoBatch,pair.batch_id)
     receipt=session.get(StockIntakeReceipt,pair.id)
     back=f"<p><a href='/scan-studio?batch={batch.id}'>← Back to this batch</a></p>"
+    total, confirmed_count, next_pair = review_progress(session, pair)
+    back += f"<nav class='review-progress' aria-label='Batch review'><strong>Card {pair.position} · {confirmed_count} of {total} confirmed</strong>"
+    if next_pair:
+        label = 'Next card' if receipt else 'Review later — next card'
+        back += f"<a class='btn' href='/scan-studio/cards/{next_pair.id}'>{label}</a>"
+    elif confirmed_count == total:
+        back += "<span>Batch intake complete · listings still need review.</span>"
+    else:
+        back += "<span>No other cards ready to review. Check the batch for processing or failed photos.</span>"
+    back += "</nav>"
     if receipt:
         body=back+f"<h1>Intake confirmed</h1><p>{e(MODES[receipt.mode])}: {receipt.quantity_added} copies added. Stock before this intake: {receipt.previous_quantity}.</p><p>This receipt records this batch only; it is not a current available-stock count.</p><a class='btn' href='/shop-listings/{receipt.shop_listing_id}/ebay-preview'>Review listing</a>"
-        return HTMLResponse(page('EzBay — Intake receipt',body),headers={'Cache-Control':'no-store'})
+        return HTMLResponse(page('EzBay — Intake receipt',body,head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"),headers={'Cache-Control':'no-store'})
     facts=pair.extracted or {}
     term=q.strip() or str(facts.get('character') or '')
     selected=catalog or pair.proposed_catalog_item_id or ''
@@ -124,9 +148,9 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
 <label>Finish<select name='finish' required><option value=''>Confirm finish</option>{finishes}</select></label>
 <label>New physical copies (ignored for photo updates)<input name='quantity' type='number' min='1' max='999' value='1' required></label>
 <label><input type='checkbox' name='confirmed' value='yes' required> I checked the printing and action against the physical card.</label>
-<button class='btn'>Confirm intake</button><p>This saves stock and a CRM draft. It does not publish or revise eBay.</p></form>"""
+<button class='btn' name='after' value='next'>Confirm &amp; next</button> <button name='after' value='receipt'>Confirm &amp; view receipt</button><p>This saves stock and a CRM draft. It does not publish or revise eBay.</p></form>"""
     body+="</div></div>"
-    body+="<link rel='stylesheet' href='/static/printing-review.css?v=1'>"
+    body+="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"
     return HTMLResponse(page('EzBay — Confirm intake',body),headers={'Cache-Control':'no-store'})
 
 
@@ -134,7 +158,7 @@ from fastapi import Form
 from fastapi.responses import RedirectResponse
 @router.post('/scan-studio/cards/{pair_id}/confirm')
 def confirm_card(pair_id: str, mode: str = Form(...), catalog_id: str = Form(...), finish: str = Form(...),
-                 quantity: int = Form(1), listing_id: str = Form(''), confirmed: str = Form(''),
+                 quantity: int = Form(1), listing_id: str = Form(''), confirmed: str = Form(''), after: str = Form('receipt'),
                  user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
     from sqlalchemy import text
     from urllib.parse import urlencode
@@ -152,4 +176,8 @@ def confirm_card(pair_id: str, mode: str = Form(...), catalog_id: str = Form(...
         return RedirectResponse(f'/scan-studio/cards/{pair_id}?'+urlencode({'catalog':catalog_id,'error':exc.detail}),303)
     except Exception:
         session.rollback();raise
+    if after == 'next':
+        _, _, next_pair = review_progress(session, pair)
+        if next_pair:
+            return RedirectResponse(f'/scan-studio/cards/{next_pair.id}',303)
     return RedirectResponse(f'/scan-studio/cards/{pair_id}',303)

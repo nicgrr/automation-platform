@@ -108,4 +108,18 @@ def test_http_confirmation_double_submit_is_not_double_stock(db):
             assert check.query(StockIntakeReceipt).count()==1
         r=client.get('/scan-studio/cards/pair')
         assert '2 copies added' in r.text
+        assert 'Batch intake complete' in r.text
+        with Session(engine) as setup:
+            original=setup.get(ListingPhotoPair,'pair')
+            setup.add(ListingPhotoPair(id='next-pair',batch_id=original.batch_id,position=2,
+                front_image_path='next.jpg',status=ListingPhotoPairStatus.NEEDS_REVIEW))
+            setup.commit()
+        r=client.post('/scan-studio/cards/pair/confirm',data={**data,'after':'next'},follow_redirects=False)
+        assert r.headers['location']=='/scan-studio/cards/next-pair'
+        with Session(engine) as check:
+            assert check.query(InventoryItem).one().quantity==2
+            assert check.query(StockIntakeReceipt).count()==1
+        r=client.post('/scan-studio/cards/next-pair/confirm',data={**data,'after':'next'},follow_redirects=False)
+        assert r.headers['location'].startswith('/scan-studio/cards/next-pair?')
+        assert 'error=' in r.headers['location']
     finally:app.dependency_overrides.clear()
