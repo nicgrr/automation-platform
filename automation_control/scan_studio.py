@@ -78,6 +78,22 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
     selected_item=session.get(CatalogItem,selected) if selected else None
     selected_card=session.get(TcgCard,selected) if selected else None
     if selected_item and selected_card and all(item.id!=selected for item,_ in results):results.insert(0,(selected_item,selected_card))
+    from urllib.parse import urlencode
+    def reference(item, card):
+        cardset = session.get(CardSet, card.set_id) if card.set_id else None
+        fields = [('Set', cardset.name if cardset else card.set_code or card.set_id),
+                  ('Number', card.number), ('Language', card.language), ('Rarity', card.rarity),
+                  ('Variant', card.variant), ('Parallel', card.parallel)]
+        details = ''.join(f"<dt>{label}</dt><dd>{e(str(value or 'Not recorded'))}</dd>" for label, value in fields)
+        photo = (f"<a href='/photo-review-reference/{e(item.id,quote=True)}' target='_blank' rel='noopener'><img loading='lazy' src='/photo-review-reference/{e(item.id,quote=True)}' alt='Catalogue reference: {e(item.name,quote=True)}'></a>"
+                 if item.image_url else "<p class='reference-missing'>Catalogue image unavailable — compare the printed details.</p>")
+        return f"<h3>{e(item.name)}</h3>{photo}<p>Catalogue reference · not your actual card</p><dl>{details}</dl>"
+
+    candidates = ''
+    for item, card in results:
+        url = '?' + urlencode({'q': term, 'catalog': item.id})
+        chosen = item.id == selected
+        candidates += f"<article class='printing-candidate {'chosen' if chosen else ''}'>{reference(item,card)}<a class='btn' href='{e(url,quote=True)}'>{'Selected printing' if chosen else 'Compare this printing'}</a></article>"
     options="<option value=''>Choose exact catalogue printing</option>"
     for item,card in results:
         cardset=session.get(CardSet,card.set_id) if card.set_id else None
@@ -91,10 +107,15 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
     finishes=''.join(f"<option value='{k}'>{e(v)}</option>" for k,v in FINISHES.items())
     modes=''.join(f"<option value='{k}' {'selected' if k==batch.intake_mode else ''}>{e(v)}</option>" for k,v in MODES.items())
     body=back+"<h1>Confirm this card</h1>"+(f"<p role='alert' style='color:#b42318'>{e(error)}</p>" if error else '')
-    body+=f"<div class='intake-grid'><img src='/ebay-listing-bulk-photos/{batch.id}/image/{pair.id}/front' alt='Your card'><div>"
+    actual=f'/ebay-listing-bulk-photos/{batch.id}/image/{pair.id}/front'
+    body+=f"<div class='printing-comparison'><section><h2>Your actual photo</h2><a href='{actual}' target='_blank' rel='noopener'><img src='{actual}' alt='Your actual card photo'></a><p>Tap either picture to inspect it at full size.</p></section>"
+    body+=(f"<section><h2>Selected catalogue printing</h2>{reference(selected_item,selected_card)}</section>" if selected_item and selected_card else "<section><h2>Choose a printing below</h2><p>Match the artwork, printed number, set and language with your photo.</p></section>")
+    body+="</div><p>Check special finishes on the physical card: Poké Ball, Master Ball, Cosmos and gold borders can affect value. A catalogue image alone does not confirm the finish.</p><div class='intake-grid'><div>"
     body+=f"<form method='get'><label>Find card by name or number<input name='q' value='{e(term,quote=True)}'></label><button>Search catalogue</button></form>"
-    body+=f"<form method='get'><label>Exact printing<select name='catalog' required>{options}</select></label><button>Choose printing</button></form>"
+    body+=f"<details><summary>Choose from text list</summary><form method='get'><label>Exact printing<select name='catalog' required>{options}</select></label><button>Choose printing</button></form></details>"
+    body+=f"<h2>Catalogue candidates</h2><div class='printing-candidates'>{candidates or '<p>No candidates found. Try the printed number or a shorter name.</p>'}</div></div><div>"
     if selected_card:
+        body+="<h2>Confirm stock action</h2>"
         body+=f"""<form method='post' action='/scan-studio/cards/{pair.id}/confirm'>
 <input type='hidden' name='catalog_id' value='{e(selected,quote=True)}'>
 <label>Action<select name='mode'>{modes}</select></label>
@@ -104,7 +125,8 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
 <label>New physical copies (ignored for photo updates)<input name='quantity' type='number' min='1' max='999' value='1' required></label>
 <label><input type='checkbox' name='confirmed' value='yes' required> I checked the printing and action against the physical card.</label>
 <button class='btn'>Confirm intake</button><p>This saves stock and a CRM draft. It does not publish or revise eBay.</p></form>"""
-    body+="</div></div><style>.intake-grid{display:grid;grid-template-columns:minmax(180px,320px) 1fr;gap:24px}.intake-grid>img{width:100%;max-height:480px;object-fit:contain}.intake-grid form{max-width:650px;margin-bottom:24px}.intake-grid select{max-width:100%;font-size:16px}.intake-grid input[type=checkbox]{width:auto}@media(max-width:650px){.intake-grid{grid-template-columns:1fr}.intake-grid>img{max-height:280px}}</style>"
+    body+="</div></div>"
+    body+="<link rel='stylesheet' href='/static/printing-review.css?v=1'>"
     return HTMLResponse(page('EzBay — Confirm intake',body),headers={'Cache-Control':'no-store'})
 
 

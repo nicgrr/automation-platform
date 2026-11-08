@@ -8,6 +8,11 @@ beside actual photo; display set/number/language/rarity/variant/parallel without
 inferring missing facts. Preserve explicit finish and atomic confirmation.
 Test escaped metadata, selection and read-only browsing; deploy CRM after tests.
 No database or marketplace changes.
+Implemented visual comparison in scan_studio.py and static/printing-review.css;
+actual/reference labels, zoom links, candidate cards and full printing metadata.
+20 focused Scan Studio/intake/photo-identification tests passed (14.56s), diff
+check clean. Next restart CRM and check authenticated page/static asset delivery.
+Mobile CSS supplied; new comparison has not been browser-verified yet.
 
 ## Intake stage live — Codex, 2026-11-09
 

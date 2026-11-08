@@ -63,3 +63,25 @@ def test_async_upload_returns_batch_without_adding_stock(workspace):
     assert db.query(InventoryItem).count() == db.query(ShopListing).count() == 0
     assert worker.call_count == 1
     assert client.get('/scan-studio/data?batch_id='+bid).json()['selected'] == bid
+
+def test_visual_printing_review_is_read_only_and_escapes_metadata(workspace):
+    from automation_control.models import CatalogItem,CatalogItemType,TcgCard,StockIntakeReceipt
+    client,db=workspace
+    b=ListingPhotoBatch(intake_mode='new_stock',total_pairs=1);db.add(b);db.flush()
+    db.add(ListingPhotoPair(id='visual-pair',batch_id=b.id,position=1,front_image_path='front.jpg',
+        status=ListingPhotoPairStatus.NEEDS_REVIEW,extracted={'character':'Pikachu'}))
+    for key,image in [('reference','https://example.com/card.jpg'),('missing',None)]:
+        db.add(CatalogItem(id=key,name='Pikachu <script>bad</script>',item_type=CatalogItemType.TCG_CARD,image_url=image))
+        db.add(TcgCard(catalog_item_id=key,game='pokemon',number='025/187',set_code='sv8a',language='Japanese',rarity='Rare',parallel='Master Ball'))
+    db.commit()
+    r=client.get('/scan-studio/cards/visual-pair?catalog=reference')
+    assert r.status_code==200
+    for text in ['Your actual photo','Selected catalogue printing','Catalogue reference · not your actual card',
+                 '025/187','sv8a','Japanese','Master Ball','Not recorded','Catalogue image unavailable',
+                 '/photo-review-reference/reference','Selected printing','Confirm finish']:
+        assert text in r.text
+    assert '<script>bad</script>' not in r.text
+    assert '&lt;script&gt;bad&lt;/script&gt;' in r.text
+    r=client.get('/scan-studio/cards/visual-pair?catalog=missing&q=Pikachu')
+    assert r.status_code==200
+    assert db.query(InventoryItem).count()==db.query(ShopListing).count()==db.query(StockIntakeReceipt).count()==0
