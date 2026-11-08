@@ -1,5 +1,19 @@
 # Handoff
 
+## Explicit stock intake transactions — Codex, 2026-11-08
+
+Owner authorized next Scan Studio stage. Branch codex/scan-studio-app basebb04317,
+tracked clean. Plan additive batch intake_mode (legacy default) and immutable
+per-photo receipt table via Alembic. New Studio uploads choose new_stock,
+additional_copies or photo_update. Recognition stages only. Dedicated card review
+confirms catalogue/finish/quantity/existing target; atomic and replay-safe receipt.
+Photo updates never alter quantity/price; additions increment only confirmed
+copies, retaining prior quantity and batch provenance. New-stock conflicts require
+explicit additional-copy choice; no duplicate listings. Guard legacy mutation
+paths for Studio batches. Preserve historical data; no backfill/reclassification
+of old holdings and no marketplace writes. Tests migration, duplicate submission,
+photo preservation, additions and bypass guards before CRM deployment.
+
 ## Scan Studio first app slice — Codex, 2026-11-08
 
 Owner authorized beginning SortSwift-style scanner rebuild and more app-like UI.
