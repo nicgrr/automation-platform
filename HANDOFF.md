@@ -1,5 +1,18 @@
 # Handoff
 
+## Complete scanner workflow — Codex, 2026-11-09
+
+User requested finishing all six remaining areas. Branch codex/scan-studio-app
+base d5fc100; tracked clean, preserve existing backups. Authorized implementation
+and CRM deployment, read-only eBay checks; no duplicate test publication or
+unreviewed price changes. Plan: consistent DB backup; fresh active/detail reads;
+per-item refresh and photo evidence; database quantity event ledger for all
+ORM/SQL paths with explicit new-photo sources and visible allocation policy;
+price review fingerprint/approval and single/bulk recommendation; continuous
+phone camera and browser tests; full isolated workflow with mocked marketplace.
+Do not claim physical allocation or image equivalence from insufficient evidence.
+Next inspect adapter/detail/image provenance then implement and test each stage.
+
 ## eBay comparison panel — Codex, 2026-11-09
 
 Branch codex/scan-studio-app base002cc94 tracked clean; preserve backups.
