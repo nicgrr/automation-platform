@@ -15,7 +15,7 @@ router = APIRouter(tags=['scan-studio'])
 def studio(user: str = Depends(require_dashboard_user)):
     body = (Path(__file__).parent / 'templates' / 'scan_studio.html').read_text()
     return HTMLResponse(page('EzBay — Scan Studio', body,
-        head_extra="<link rel='stylesheet' href='/static/scan-studio.css?v=1'><script defer src='/static/scan-studio.js?v=1'></script>"),
+        head_extra="<link rel='stylesheet' href='/static/scan-studio.css?v=1'><script defer src='/static/scan-studio.js?v=2'></script>"),
         headers={'Cache-Control': 'no-store'})
 
 @router.get('/scan-studio/data')
@@ -80,6 +80,7 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
     receipt=session.get(StockIntakeReceipt,pair.id)
     back=f"<p><a href='/scan-studio?batch={batch.id}'>← Back to this batch</a></p>"
     total, confirmed_count, next_pair = review_progress(session, pair)
+    back += f"<p><a class='btn' href='/scan-studio/batches/{batch.id}/pricing'>Review batch prices</a></p>"
     back += f"<nav class='review-progress' aria-label='Batch review'><strong>Card {pair.position} · {confirmed_count} of {total} confirmed</strong>"
     if next_pair:
         label = 'Next card' if receipt else 'Review later — next card'
@@ -181,3 +182,45 @@ def confirm_card(pair_id: str, mode: str = Form(...), catalog_id: str = Form(...
         if next_pair:
             return RedirectResponse(f'/scan-studio/cards/{next_pair.id}',303)
     return RedirectResponse(f'/scan-studio/cards/{pair_id}',303)
+
+
+@router.get('/scan-studio/batches/{batch_id}/pricing', response_class=HTMLResponse)
+def batch_pricing(batch_id: str, missing: bool = False,
+                  user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    from html import escape as e
+    from .models import ShopListing, CatalogItem, TcgCard
+    from .listing_quality import australian_sold_listings_url, australian_active_listings_url
+    from .listing_finishes import FINISHES
+    batch = session.get(ListingPhotoBatch, batch_id)
+    if not batch: raise HTTPException(404, 'Batch not found')
+    if batch.intake_mode == 'legacy': raise HTTPException(400, 'Use Listing Studio for this older batch.')
+    rows = session.execute(select(StockIntakeReceipt, ListingPhotoPair, ShopListing)
+        .join(ListingPhotoPair, ListingPhotoPair.id == StockIntakeReceipt.pair_id)
+        .join(ShopListing, ShopListing.id == StockIntakeReceipt.shop_listing_id)
+        .where(ListingPhotoPair.batch_id == batch_id).order_by(ListingPhotoPair.position)).all()
+    grouped = {}
+    for receipt, pair, listing in rows:
+        entry = grouped.setdefault(listing.id, {'listing': listing, 'pair': pair, 'added': 0})
+        entry['added'] += receipt.quantity_added
+    unpriced = sum(entry['listing'].price <= 0 for entry in grouped.values())
+    body = f"<p><a href='/scan-studio?batch={e(batch_id)}'>← Back to batch</a></p><h1>Review batch prices</h1><p>{len(grouped)} listings · {unpriced} missing prices</p>"
+    body += "<p>A price set is not approval to publish. Open Listing Studio to edit and review the full listing. Sold searches are research links, not a valuation; match the printing and condition and check postage.</p>"
+    body += f"<nav><a class='btn' href='?missing=false'>All confirmed listings</a> <a class='btn' href='?missing=true'>Missing prices</a></nav><div class='printing-candidates'>"
+    shown = 0
+    for entry in grouped.values():
+        listing, pair = entry['listing'], entry['pair']
+        if missing and listing.price > 0: continue
+        shown += 1
+        item = session.get(CatalogItem, listing.catalog_item_id)
+        card = session.get(TcgCard, listing.catalog_item_id)
+        finish = FINISHES.get(listing.finish, listing.finish or 'Finish not recorded')
+        identity = ' '.join(str(v) for v in [item.name if item else listing.title,
+            card.set_code or card.set_id if card else '', card.number if card else '',
+            card.language if card else '', card.parallel if card else '', finish] if v)
+        price_label = f"{e(listing.currency)} ${listing.price:.2f} · price set" if listing.price > 0 else 'Price needed'
+        body += f"<article class='printing-candidate'><img loading='lazy' src='/ebay-listing-bulk-photos/{e(batch_id)}/image/{e(pair.id)}/front?thumb=true' alt='Your photo'><h2>{e(listing.title)}</h2><p>{e(identity)}</p><strong>{price_label}</strong><p>{listing.quantity} offered · +{entry['added']} copies from this batch</p>"
+        body += f"<p><a href='{e(australian_sold_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Sold listings · Australia</a></p><p><a href='{e(australian_active_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Active listings · Australia</a></p><a class='btn' href='/shop-listings/{e(listing.id)}/ebay-preview' target='_blank' rel='noopener'>Review price &amp; listing</a></article>"
+    if not shown:
+        body += '<p>No missing prices in confirmed listings.</p>' if grouped else '<p>Confirm cards in this batch first. They will appear here after intake is saved.</p>'
+    body += '</div>'
+    return HTMLResponse(page('EzBay — Batch pricing', body, head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"),headers={'Cache-Control':'no-store'})

@@ -123,3 +123,23 @@ def test_http_confirmation_double_submit_is_not_double_stock(db):
         assert r.headers['location'].startswith('/scan-studio/cards/next-pair?')
         assert 'error=' in r.headers['location']
     finally:app.dependency_overrides.clear()
+
+def test_batch_pricing_scope_dedup_and_missing_filter(db):
+    from automation_control.scan_studio import batch_pricing
+    listing=apply(db,qty=2);db.commit()
+    batch_id=db.get(ListingPhotoPair,'pair').batch_id
+    html=batch_pricing(batch_id,False,'owner',db).body.decode()
+    assert '1 listings · 1 missing prices' in html
+    assert 'Sold listings · Australia' in html and 'LH_Sold=1' in html
+    assert '2 offered · +2 copies from this batch' in html
+    assert 'Price needed' in html
+    db.add(ListingPhotoPair(id='extra',batch_id=batch_id,position=2,front_image_path='extra.jpg',status=ListingPhotoPairStatus.NEEDS_REVIEW));db.commit()
+    confirm(db,db.get(ListingPhotoPair,'extra'),mode='photo_update',catalog_id='card',finish='normal',quantity=1,listing_id=listing.id,user='owner');db.commit()
+    listing.price=Decimal('8.99');db.commit()
+    html=batch_pricing(batch_id,False,'owner',db).body.decode()
+    assert '1 listings · 0 missing prices' in html
+    assert html.count('Review price &amp; listing')==1 and '$8.99' in html
+    assert 'No missing prices' in batch_pricing(batch_id,True,'owner',db).body.decode()
+    assert db.query(InventoryItem).one().quantity==2
+    other=ListingPhotoBatch(intake_mode='new_stock');db.add(other);db.commit()
+    assert 'Confirm cards' in batch_pricing(other.id,False,'owner',db).body.decode()

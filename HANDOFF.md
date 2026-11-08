@@ -9,6 +9,11 @@ exact printing sold search and existing Listing Studio editor links. Reuse
 existing price save/publish checks; do not label nonzero prices approved.
 No marketplace calls, database changes or price guesses. Test scope/dedup/filter
 and deploy CRM after passing checks.
+Implemented authenticated batch pricing page and links from workspace/review.
+22 focused tests passed (15.09s); JS syntax and diff checks passed. Hub is
+read-only, price edits use existing Listing Studio in separate tab; refresh hub
+after editing. No independent reviewed-price status added. Next restart CRM
+and verify delivery. Mobile visual browser check not run for this stage.
 
 ## Guided batch review — Codex, 2026-11-09
 

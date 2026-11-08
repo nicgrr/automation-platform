@@ -64,6 +64,8 @@
         const b = data.batches.find(b => b.id === selected);
         const modeNames = {new_stock:'New stock',additional_copies:'Additional copies',photo_update:'Photo update',legacy:'Earlier workflow'};
         $('summary').textContent = b ? `${modeNames[b.intake_mode] || "Batch"} · ${b.processed}/${b.total} identified · ${b.review} need review · ${b.failed} failed` : 'Your photo batches will appear here.';
+        $('pricing').hidden = !b || b.intake_mode === 'legacy';
+        $('pricing').href = '/scan-studio/batches/' + selected + '/pricing';
         $('review').hidden = !selected;
         $('storage').hidden = !data.cards.some(c => c.slot);
         $('review').href = '/ebay-listing-bulk-photos/' + selected;
