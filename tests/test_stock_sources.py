@@ -23,3 +23,20 @@ def test_rollback_and_duplicate_confirmation_leave_sources_unchanged(db):
     assert len(balances(db,inventory.id))==1
     db.execute(update(InventoryItem).where(InventoryItem.id==inventory.id).values(quantity=0));db.rollback()
     assert balances(db,inventory.id)[0]['remaining']==2
+
+def test_migration_seeds_existing_stock_and_captures_sql(tmp_path):
+    import importlib.util
+    from sqlalchemy import create_engine,text
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    spec=importlib.util.spec_from_file_location('source_migration','migrations/versions/20261109_01_inventory_sources.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    engine=create_engine(f'sqlite:///{tmp_path / "migration.db"}')
+    with engine.begin() as c:
+        c.execute(text('CREATE TABLE inventory_items (id TEXT PRIMARY KEY, quantity INTEGER NOT NULL)'))
+        c.execute(text("INSERT INTO inventory_items VALUES ('old',5)"))
+        with Operations.context(MigrationContext.configure(c)):module.upgrade()
+        c.execute(text("UPDATE inventory_items SET quantity=3 WHERE id='old'"))
+        assert c.execute(text('SELECT delta,source FROM inventory_quantity_events ORDER BY id')).all()==[(5,'baseline'),(-2,'unassigned')]
+        with Operations.context(MigrationContext.configure(c)):module.downgrade()
+        assert c.execute(text('SELECT quantity FROM inventory_items')).scalar()==3

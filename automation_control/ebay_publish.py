@@ -279,6 +279,8 @@ def publication_preflight(
         if INVENTORY_WRITE_SCOPE not in set((credential.scopes or "").split()):
             errors.append("The eBay connection lacks the sell.inventory write scope; reconnect it first.")
 
+    from .listing_price_approval import blockers as price_review_blockers
+    errors.extend(price_review_blockers(session,listing))
     catalog_item = session.get(CatalogItem, listing.catalog_item_id)
     tcg_card = session.get(TcgCard, listing.catalog_item_id)
     category_id = None
@@ -1092,6 +1094,7 @@ def ebay_publish_preview(
                 "<button class='btn'>Publish live to eBay</button></form>"
             )
     from .listing_comparison import comparison_html
+    from .listing_price_approval import panel as price_review_panel
     workflow_label = "Existing eBay listing revision" if is_live_revision else "Direct Inventory API"
     body = (
         brand_header("eBay Listing Studio")
@@ -1102,6 +1105,7 @@ def ebay_publish_preview(
         + "<a class='btn ghost' href='/shop-listings'>Back to Listing Studio</a></p>"
         + flash
         + comparison_html(session, listing, outgoing_title)
+        + price_review_panel(session,listing)
         + checks_html
         + (
             f"<form method='post' action='/shop-listings/{escape(listing.id)}/ebay-ai-suggest' class='panel ai-suggest'>"
@@ -1145,7 +1149,7 @@ def ebay_publish_preview(
         + f"<a class='btn small ghost' href='/shop-listings?status={escape(listing.status.value)}'>Back to listings</a></p>"
         + _LISTING_STUDIO_STYLE + _LISTING_STUDIO_SCRIPT
     )
-    return HTMLResponse(page("EzBay — eBay Listing Studio", body))
+    return HTMLResponse(page("EzBay — eBay Listing Studio", body,head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=3'>"))
 
 
 @router.post("/shop-listings/{listing_id}/ebay-studio")

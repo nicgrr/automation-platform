@@ -15,7 +15,7 @@ router = APIRouter(tags=['scan-studio'])
 def studio(user: str = Depends(require_dashboard_user)):
     body = (Path(__file__).parent / 'templates' / 'scan_studio.html').read_text()
     return HTMLResponse(page('EzBay — Scan Studio', body,
-        head_extra="<link rel='stylesheet' href='/static/scan-studio.css?v=1'><script defer src='/static/scan-studio.js?v=2'></script>"),
+        head_extra="<link rel='stylesheet' href='/static/scan-studio.css?v=3'><script defer src='/static/scan-studio.js?v=3'></script>"),
         headers={'Cache-Control': 'no-store'})
 
 @router.get('/scan-studio/data')
@@ -94,7 +94,7 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
         from .stock_sources import panel
         back += panel(session,receipt.inventory_item_id)
         body=back+f"<h1>Intake confirmed</h1><p>{e(MODES[receipt.mode])}: {receipt.quantity_added} copies added. Stock before this intake: {receipt.previous_quantity}.</p><p>This receipt records this batch only; it is not a current available-stock count.</p><a class='btn' href='/shop-listings/{receipt.shop_listing_id}/ebay-preview'>Review listing</a>"
-        return HTMLResponse(page('EzBay — Intake receipt',body,head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"),headers={'Cache-Control':'no-store'})
+        return HTMLResponse(page('EzBay — Intake receipt',body,head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=3'>"),headers={'Cache-Control':'no-store'})
     facts=pair.extracted or {}
     term=q.strip() or str(facts.get('character') or '')
     selected=catalog or pair.proposed_catalog_item_id or ''
@@ -114,7 +114,7 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
         details = ''.join(f"<dt>{label}</dt><dd>{e(str(value or 'Not recorded'))}</dd>" for label, value in fields)
         photo = (f"<a href='/photo-review-reference/{e(item.id,quote=True)}' target='_blank' rel='noopener'><img loading='lazy' src='/photo-review-reference/{e(item.id,quote=True)}' alt='Catalogue reference: {e(item.name,quote=True)}'></a>"
                  if item.image_url else "<p class='reference-missing'>Catalogue image unavailable — compare the printed details.</p>")
-        return f"<h3>{e(item.name)}</h3>{photo}<p>Catalogue reference · not your actual card</p><dl>{details}</dl>"
+        return f"{photo}<h3>{e(item.name)}</h3><p>Catalogue reference · not your actual card</p><dl>{details}</dl>"
 
     candidates = ''
     for item, card in results:
@@ -153,7 +153,7 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
 <label><input type='checkbox' name='confirmed' value='yes' required> I checked the printing and action against the physical card.</label>
 <button class='btn' name='after' value='next'>Confirm &amp; next</button> <button name='after' value='receipt'>Confirm &amp; view receipt</button><p>This saves stock and a CRM draft. It does not publish or revise eBay.</p></form>"""
     body+="</div></div>"
-    body+="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"
+    body+="<link rel='stylesheet' href='/static/printing-review.css?v=3'>"
     return HTMLResponse(page('EzBay — Confirm intake',body),headers={'Cache-Control':'no-store'})
 
 
@@ -208,7 +208,7 @@ def batch_pricing(batch_id: str, missing: bool = False,
     unpriced = sum(entry['listing'].price <= 0 for entry in grouped.values())
     body = f"<p><a href='/scan-studio?batch={e(batch_id)}'>← Back to batch</a></p><h1>Review batch prices</h1><p>{len(grouped)} listings · {unpriced} missing prices</p>"
     body += "<p>A price set is not approval to publish. Open Listing Studio to edit and review the full listing. Sold searches are research links, not a valuation; match the printing and condition and check postage.</p>"
-    body += f"<nav><a class='btn' href='?missing=false'>All confirmed listings</a> <a class='btn' href='?missing=true'>Missing prices</a></nav><div class='printing-candidates'>"
+    body += f"<nav><a class='btn' href='?missing=false'>All confirmed listings</a> <a class='btn' href='?missing=true'>Missing prices</a></nav><div class='printing-candidates pricing-grid'>"
     shown = 0
     for entry in grouped.values():
         listing, pair = entry['listing'], entry['pair']
@@ -223,13 +223,15 @@ def batch_pricing(batch_id: str, missing: bool = False,
         price_label = f"{e(listing.currency)} ${listing.price:.2f} · price set" if listing.price > 0 else 'Price needed'
         body += f"<article class='printing-candidate'><img loading='lazy' src='/ebay-listing-bulk-photos/{e(batch_id)}/image/{e(pair.id)}/front?thumb=true' alt='Your photo'><h2>{e(listing.title)}</h2><p>{e(identity)}</p><strong>{price_label}</strong><p>{listing.quantity} offered · +{entry['added']} copies from this batch</p>"
         body += f"<p><a href='{e(australian_sold_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Sold listings · Australia</a></p><p><a href='{e(australian_active_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Active listings · Australia</a></p><a class='btn' href='/shop-listings/{e(listing.id)}/ebay-preview' target='_blank' rel='noopener'>Review price &amp; listing</a>"
+        from .listing_price_approval import panel as price_panel
+        body += price_panel(session,listing)
         from .stock_sources import panel
         body += panel(session,listing.inventory_item_id)
         body += comparison_html(session, listing, listing.ebay_title) + "</article>"
     if not shown:
         body += '<p>No missing prices in confirmed listings.</p>' if grouped else '<p>Confirm cards in this batch first. They will appear here after intake is saved.</p>'
     body += '</div>'
-    return HTMLResponse(page('EzBay — Batch pricing', body, head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"),headers={'Cache-Control':'no-store'})
+    return HTMLResponse(page('EzBay — Batch pricing', body, head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=3'>"),headers={'Cache-Control':'no-store'})
 
 
 @router.post('/shop-listings/{listing_id}/check-ebay')
@@ -266,3 +268,50 @@ def verify_photos(listing_id: str, signature: str = Form(''), confirmed: str = F
     session.add(AuditEvent(actor_type='user',actor_id=user,action='listing.photos_reviewed',resource_type='shop_listing',resource_id=listing_id,outcome='success',correlation_id=str(uuid.uuid4()),details={'signature':signature}))
     session.commit()
     return RedirectResponse(f'/shop-listings/{listing_id}/ebay-preview',303)
+
+
+@router.post('/shop-listings/{listing_id}/review-price')
+def review_price(listing_id: str, price: str = Form(''), disposition: str = Form('single'), expected: str = Form(''),
+                 round99: str = Form(''), confirmed: str = Form(''), user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    from .models import ShopListing
+    from .listing_price_approval import approve
+    from sqlalchemy import text
+    from urllib.parse import urlencode
+    if confirmed!='yes':raise HTTPException(400,'Confirm you reviewed the printing and price.')
+    session.execute(text('BEGIN IMMEDIATE'))
+    listing=session.get(ShopListing,listing_id)
+    if not listing:raise HTTPException(404,'Listing not found')
+    try:
+        approve(session,listing,price,disposition,user,expected,round99=='yes');session.commit()
+        query={'notice':'Price review saved. eBay was not changed.'}
+    except ValueError as exc:
+        session.rollback();query={'error':str(exc)}
+    return RedirectResponse(f'/shop-listings/{listing_id}/ebay-preview?'+urlencode(query),303)
+
+
+@router.get('/scan-studio/channel-audit', response_class=HTMLResponse)
+def channel_audit(user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    from html import escape as e
+    from datetime import datetime,timezone,timedelta
+    from .models import ShopListing,ShopListingStatus,EbayListing
+    from .channel_verification import linked_id
+    rows=[];different=missing=stale=0
+    for listing in session.scalars(select(ShopListing).where(ShopListing.status.in_([ShopListingStatus.ACTIVE,ShopListingStatus.DRAFT])).order_by(ShopListing.title)):
+        item_id=linked_id(session,listing)
+        remote=session.scalar(select(EbayListing).where(EbayListing.ebay_listing_id==item_id)) if item_id else None
+        reasons=[]
+        if not remote:reasons.append('No linked eBay observation');missing+=1
+        else:
+            observed=remote.observed_at
+            if observed and observed.tzinfo is None:observed=observed.replace(tzinfo=timezone.utc)
+            if not observed or datetime.now(timezone.utc)-observed>timedelta(hours=24):reasons.append('Readback older than 24h');stale+=1
+            if remote.listing_status!='Active':reasons.append('eBay '+remote.listing_status)
+            if listing.currency!=remote.currency or int(listing.price*100)!=remote.current_price_minor:reasons.append('Price differs')
+            if remote.quantity is None:reasons.append('eBay quantity unknown')
+            elif listing.quantity!=remote.quantity:reasons.append('Quantity differs')
+            if listing.ebay_title and listing.ebay_title!=remote.title:reasons.append('Title differs')
+            if any('differs' in reason for reason in reasons):different+=1
+        status=' · '.join(reasons) or 'Saved price, quantity and explicit title match cached eBay values'
+        rows.append(f"<tr><td>{e(listing.title)}</td><td>{e(status)}</td><td><a href='/shop-listings/{listing.id}/ebay-preview'>Compare details &amp; photos</a></td></tr>")
+    body=f"<p><a href='/scan-studio'>← Scan Studio</a></p><h1>Channel audit</h1><p>{len(rows)} local listings · {different} with different saved values · {missing} without linked observations · {stale} stale readbacks</p><p>Differences can be intentional saved proposals. Open a listing and use Check eBay now for fresh evidence. Photos require their own comparison; matching numbers do not verify pictures.</p><div style='overflow-x:auto'><table><thead><tr><th>Listing</th><th>Evidence</th><th>Review</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    return HTMLResponse(page('EzBay — Channel audit',body),headers={'Cache-Control':'no-store'})

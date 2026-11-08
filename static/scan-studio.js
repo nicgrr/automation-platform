@@ -14,7 +14,9 @@
       const fig = document.createElement('figure'), img = document.createElement('img'), cap = document.createElement('figcaption');
       img.src = URL.createObjectURL(f); urls.push(img.src); img.alt = 'Selected photo ' + (i + 1);
       cap.textContent = $('mode').value === 'yes' ? `Card ${Math.floor(i / 2) + 1} · ${i % 2 ? 'back' : 'front'}` : `Card ${i + 1} · front`;
-      fig.append(img, cap); $('previews').append(fig);
+      const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove'; remove.disabled = busy;
+      remove.addEventListener('click', () => { if (!busy) { files.splice(i,1); previews(); } });
+      fig.append(img, cap, remove); $('previews').append(fig);
     });
     $('count').textContent = `${files.length} photos selected · up to 40 per batch`;
   }
@@ -24,6 +26,41 @@
     if (files.length + added.length > 40) { $('error').textContent = 'Choose no more than 40 photos per batch.'; e.target.value = ''; return; }
     files.push(...added); e.target.value = ''; $('error').textContent = ''; previews();
   }));
+  let stream = null, capturing = false;
+  function stopCamera() {
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null; $('video').srcObject = null; $('camera-view').hidden = true;
+    $('camera-start').hidden = false;
+  }
+  $('camera-start').addEventListener('click', async () => {
+    if (busy || stream) return;
+    if (!navigator.mediaDevices?.getUserMedia) { $('camera-message').textContent = 'Camera unavailable here. Use Take photo or Choose photos.'; return; }
+    $('camera-start').disabled = true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+      if (document.hidden) { stopCamera(); return; }
+      $('video').srcObject = stream; await $('video').play();
+      $('camera-view').hidden = false; $('camera-start').hidden = true;
+      $('camera-message').textContent = 'Frame one card, capture, then place the next card. Photos stay here until you press Identify photos.';
+    } catch (_) { stopCamera(); $('camera-message').textContent = 'Camera could not open. Allow camera access or use Take photo.'; }
+    finally { $('camera-start').disabled = false; }
+  });
+  $('camera-stop').addEventListener('click', stopCamera);
+  $('shutter').addEventListener('click', async () => {
+    if (busy || capturing || !stream) return;
+    if (files.length >= 40) { $('camera-message').textContent = 'Batch full: identify these 40 photos before taking more.'; return; }
+    const video = $('video'); if (!video.videoWidth) return;
+    capturing = true; $('shutter').disabled = true;
+    try {
+      const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video,0,0);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve,'image/jpeg',0.95));
+      if (!blob) throw new Error('Capture failed');
+      files.push(new File([blob],`card-${Date.now()}.jpg`,{type:'image/jpeg'})); previews();
+      $('camera-message').textContent = `Captured photo ${files.length}. Ready for the next ${$('mode').value === 'yes' ? (files.length % 2 ? 'back' : 'front') : 'card'}.`;
+    } catch (_) { $('camera-message').textContent = 'Could not capture. Try again or use Take photo.'; }
+    finally { capturing = false; $('shutter').disabled = false; }
+  });
   $('mode').addEventListener('change', previews);
   $('clear').addEventListener('click', () => { if (!busy) { files = []; previews(); } });
   function element(tag, text, cls) { const el = document.createElement(tag); if (text) el.textContent = text; if (cls) el.className = cls; return el; }
@@ -68,7 +105,8 @@
         $('pricing').href = '/scan-studio/batches/' + selected + '/pricing';
         $('review').hidden = !selected;
         $('storage').hidden = !data.cards.some(c => c.slot);
-        $('review').href = '/ebay-listing-bulk-photos/' + selected;
+        const next = data.cards.find(c => !c.receipt && ['ready','needs_review'].includes(c.status));
+        $('review').href = b && b.intake_mode !== 'legacy' && next ? next.review_url : '/ebay-listing-bulk-photos/' + selected;
         $('storage').href = '/ebay-listing-bulk-photos/' + selected + '/storage-labels';
         snapshot = data; renderCards();
       }
@@ -77,8 +115,9 @@
     timer = setTimeout(load, snapshot && snapshot.cards.some(c => c.status === 'processing') ? 2500 : 12000);
   }
   $('form').addEventListener('submit', e => {
-    e.preventDefault(); if (busy) return;
+    e.preventDefault(); if (busy || capturing) return;
     if (!files.length || ($('mode').value === 'yes' && files.length % 2)) { $('error').textContent = files.length ? 'Front/back mode needs an even number of photos.' : 'Choose at least one photo.'; return; }
+    stopCamera();
     const body = new FormData($('form')); files.forEach(f => body.append('photos', f));
     busy = true; $('error').textContent = ''; $('upload').hidden = false; $('progress').value = 0;
     $('form').querySelectorAll('button,input,select').forEach(x => x.disabled = true);
@@ -99,8 +138,8 @@
     xhr.addEventListener('error', () => { done(); $('error').textContent = 'Connection lost. Check My batches before retrying to avoid uploading twice.'; });
     xhr.send(body);
   });
-  document.addEventListener('visibilitychange', () => { clearTimeout(timer); if (!document.hidden) load(); });
-  window.addEventListener('pagehide', () => clearTimeout(timer));
-  window.addEventListener('beforeunload', e => { if (busy) { e.preventDefault(); e.returnValue = ''; } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopCamera(); clearTimeout(timer); if (!document.hidden) load(); });
+  window.addEventListener('pagehide', () => { stopCamera(); clearTimeout(timer); });
+  window.addEventListener('beforeunload', e => { if (busy || files.length) { e.preventDefault(); e.returnValue = ''; } });
   if (selected) tab('batches'); load();
 })();

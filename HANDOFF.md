@@ -21,6 +21,17 @@ tests passed incl SQL reduction/rollback. Migration NOT yet applied. Backup
 backups/pre-scanner-completion-20261109.sqlite3 ready. Live active refresh351;
 full-photo refresh still running. Next price approval fingerprints and camera UI,
 then migration/whole workflow/browser tests and deployment. No live publication.
+Price approval is fingerprinted to printing/finish/condition/price; new Studio
+receipts gated for publish; bulk decisions block individual publication. Existing
+price_review.py preserved (new logic in listing_price_approval.py). 66 approval/
+publish tests passed. Continuous camera, remove-photo, privacy cleanup and
+batch next-review links built. Whole isolated upload/storage/approval/mockpublish/
+readback/storefront test passed with migration/source tests (4 total). Live full
+photo refresh351, 0changed, 0failed. Pixel-content triage audit running, no
+approval inferred. Browser fixture at18987 (8088 occupied, untouched), capture2/
+remove/close and CSRF upload transition passed; layout review led to single-column
+mobile pricing cards. Final browser rerun pending after CSS changes. Migration
+not yet deployed; next full focused sales-path regression + migrate/restart.
 
 ## eBay comparison panel — Codex, 2026-11-09
 
