@@ -62,7 +62,8 @@
         batchSelect.value = selected;
         const b = data.batches.find(b => b.id === selected);
         $('summary').textContent = b ? `${b.processed}/${b.total} identified · ${b.review} need review · ${b.failed} failed` : 'Your photo batches will appear here.';
-        $('review').hidden = $('storage').hidden = !selected;
+        $('review').hidden = !selected;
+        $('storage').hidden = !data.cards.some(c => c.slot);
         $('review').href = '/ebay-listing-bulk-photos/' + selected;
         $('storage').href = '/ebay-listing-bulk-photos/' + selected + '/storage-labels';
         snapshot = data; renderCards();
