@@ -15,7 +15,7 @@ existing listing photos/price; photo update adds0 and removes redundant new slot
 Current intake confirmation supports raw cards; collectibles/slabs remain in
 existing Add stock workflow. Next stages: exact-printing visual comparison,
 per-source stock availability/allocation and live-channel difference verification.
-Final tiny UI clarification: label raw-card scope and link existing Add stock
+Final UI clarification added: labelled raw-card scope and linked existing Add stock
 for collectibles/slabs so they do not enter the new guarded raw-card path.
 
 ## Intake deployment checkpoint — Codex, 2026-11-09
