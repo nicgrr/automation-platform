@@ -1,5 +1,14 @@
 # Handoff
 
+## Visual printing review checkpoint — Codex, 2026-11-09
+
+Branch codex/scan-studio-app base18740e0; tracked clean, existing untracked
+backups preserved. Build visual catalogue candidates and selected reference
+beside actual photo; display set/number/language/rarity/variant/parallel without
+inferring missing facts. Preserve explicit finish and atomic confirmation.
+Test escaped metadata, selection and read-only browsing; deploy CRM after tests.
+No database or marketplace changes.
+
 ## Intake stage live — Codex, 2026-11-09
 
 Deployed9061311 after57focused tests passed in isolated basetemp. Migration
