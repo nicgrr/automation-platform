@@ -16,7 +16,8 @@ def comparison_html(session, listing, title=None):
             EbayExportItem.ebay_listing_id.is_not(None))
             .order_by(EbayExportItem.exported_at.desc(), EbayExportItem.id.desc()).limit(1))
         item_id = export.ebay_listing_id if export else None
-    prefix = "<section class='panel'><h2>Saved details vs eBay</h2>"
+    prefix = f"<form method='post' action='/shop-listings/{listing.id}/check-ebay'><button>Check eBay now</button></form>"
+    prefix += "<section class='panel'><h2>Saved details vs eBay</h2>"
     if not item_id:
         return prefix + '<p>No verified eBay link recorded. This does not prove the item is absent from eBay.</p></section>'
     remote = session.scalar(select(EbayListing).where(EbayListing.ebay_listing_id == item_id))
@@ -38,4 +39,6 @@ def comparison_html(session, listing, title=None):
         verdict = 'Unverified' if equal is None else 'Matches cached value' if equal else 'Different'
         body += f'<tr><th>{label}</th><td>{escape(local)}</td><td>{escape(actual)}</td><td>{verdict}</td></tr>'
     body += '</tbody></table></div><p>Photos and description are not verified by this comparison. Saving a draft does not update eBay.</p>'
+    from .channel_verification import photo_panel
+    body += photo_panel(session,listing,remote)
     return body + link_html + '</section>'

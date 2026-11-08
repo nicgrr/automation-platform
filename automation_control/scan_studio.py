@@ -91,6 +91,8 @@ def card_review(pair_id: str, q: str = '', catalog: str = '', error: str = '',
         back += "<span>No other cards ready to review. Check the batch for processing or failed photos.</span>"
     back += "</nav>"
     if receipt:
+        from .stock_sources import panel
+        back += panel(session,receipt.inventory_item_id)
         body=back+f"<h1>Intake confirmed</h1><p>{e(MODES[receipt.mode])}: {receipt.quantity_added} copies added. Stock before this intake: {receipt.previous_quantity}.</p><p>This receipt records this batch only; it is not a current available-stock count.</p><a class='btn' href='/shop-listings/{receipt.shop_listing_id}/ebay-preview'>Review listing</a>"
         return HTMLResponse(page('EzBay — Intake receipt',body,head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"),headers={'Cache-Control':'no-store'})
     facts=pair.extracted or {}
@@ -221,8 +223,46 @@ def batch_pricing(batch_id: str, missing: bool = False,
         price_label = f"{e(listing.currency)} ${listing.price:.2f} · price set" if listing.price > 0 else 'Price needed'
         body += f"<article class='printing-candidate'><img loading='lazy' src='/ebay-listing-bulk-photos/{e(batch_id)}/image/{e(pair.id)}/front?thumb=true' alt='Your photo'><h2>{e(listing.title)}</h2><p>{e(identity)}</p><strong>{price_label}</strong><p>{listing.quantity} offered · +{entry['added']} copies from this batch</p>"
         body += f"<p><a href='{e(australian_sold_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Sold listings · Australia</a></p><p><a href='{e(australian_active_listings_url(identity),quote=True)}' target='_blank' rel='noopener'>Active listings · Australia</a></p><a class='btn' href='/shop-listings/{e(listing.id)}/ebay-preview' target='_blank' rel='noopener'>Review price &amp; listing</a>"
+        from .stock_sources import panel
+        body += panel(session,listing.inventory_item_id)
         body += comparison_html(session, listing, listing.ebay_title) + "</article>"
     if not shown:
         body += '<p>No missing prices in confirmed listings.</p>' if grouped else '<p>Confirm cards in this batch first. They will appear here after intake is saved.</p>'
     body += '</div>'
     return HTMLResponse(page('EzBay — Batch pricing', body, head_extra="<link rel='stylesheet' href='/static/printing-review.css?v=2'>"),headers={'Cache-Control':'no-store'})
+
+
+@router.post('/shop-listings/{listing_id}/check-ebay')
+async def check_ebay(listing_id: str, user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    from .models import ShopListing
+    from .channel_verification import refresh_one
+    from .config import get_settings
+    from .adapters.ebay import EbayApiError
+    from .ebay_oauth import OAuthError
+    from urllib.parse import urlencode
+    listing=session.get(ShopListing,listing_id)
+    if not listing:raise HTTPException(404,'Listing not found')
+    try:
+        await refresh_one(session,listing,get_settings())
+        query={'notice':'Fresh eBay readback saved. Compare details and photos below.'}
+    except (ValueError,EbayApiError,OAuthError):
+        session.rollback()
+        query={'error':'Could not verify eBay. Check the account connection and linked item; no listing was changed.'}
+    return RedirectResponse(f'/shop-listings/{listing_id}/ebay-preview?'+urlencode(query),303)
+
+
+@router.post('/shop-listings/{listing_id}/verify-photos')
+def verify_photos(listing_id: str, signature: str = Form(''), confirmed: str = Form(''),
+                  user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
+    import uuid
+    from .models import ShopListing,EbayListing,AuditEvent
+    from .channel_verification import linked_id,photo_evidence
+    listing=session.get(ShopListing,listing_id)
+    if not listing:raise HTTPException(404,'Listing not found')
+    row=session.scalar(select(EbayListing).where(EbayListing.ebay_listing_id==linked_id(session,listing)))
+    if not row or confirmed!='yes':raise HTTPException(400,'Review both photo sets first.')
+    sources,remote,current=photo_evidence(session,listing,row)
+    if not sources or not remote or signature!=current:raise HTTPException(409,'Photos changed. Reload and compare again.')
+    session.add(AuditEvent(actor_type='user',actor_id=user,action='listing.photos_reviewed',resource_type='shop_listing',resource_id=listing_id,outcome='success',correlation_id=str(uuid.uuid4()),details={'signature':signature}))
+    session.commit()
+    return RedirectResponse(f'/shop-listings/{listing_id}/ebay-preview',303)

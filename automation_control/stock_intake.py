@@ -76,6 +76,9 @@ def confirm(session, pair, *, mode, catalog_id, finish, quantity, listing_id, us
     elif added:
         inventory.quantity += added
         inventory.status = InventoryStatus.AVAILABLE
+    session.flush()
+    from .stock_sources import tag_intake
+    tag_intake(session,inventory.id,pair.id,added)
     if listing is None:
         listing=ShopListing(catalog_item_id=catalog_id,inventory_item_id=inventory.id,title=item.name,
             quantity=added,price=Decimal('0'),currency='AUD',status=ShopListingStatus.DRAFT,condition='Near Mint',finish=finish)

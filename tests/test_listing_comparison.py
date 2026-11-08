@@ -46,3 +46,24 @@ def test_confirmed_export_fallback_and_explicit_link_precedence(data):
     s.add(EbayListingLink(shop_listing_id=l.id,sku=l.id,marketplace_id='EBAY_AU',ebay_listing_id='222'));s.commit()
     html=comparison_html(s,l)
     assert '/itm/222' in html and '/itm/111' not in html
+
+def test_fresh_readback_updates_only_cache(data,monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    from automation_control import channel_verification as cv
+    from automation_control import ebay_oauth
+    from automation_control.adapters import ebay_trading
+    s,l=data
+    s.add(EbayListingLink(shop_listing_id=l.id,sku=l.id,marketplace_id='EBAY_AU',ebay_listing_id='123'));s.commit()
+    details=ebay_trading.ItemDetails(['https://i.ebayimg.com/front.jpg'],'description',title='Card',price=Decimal('5.99'),currency='AUD',quantity=1,status='Active')
+    adapter=SimpleNamespace(get_item_details=AsyncMock(return_value=details),client=SimpleNamespace(aclose=AsyncMock()))
+    monkeypatch.setattr(ebay_oauth,'ebay_services',lambda settings:(None,None))
+    monkeypatch.setattr(ebay_oauth,'valid_user_access_token',AsyncMock(return_value='test'))
+    monkeypatch.setattr(ebay_trading,'EbayTradingReadAdapter',lambda *a,**kw:adapter)
+    settings=SimpleNamespace(ebay_client_id='test',ebay_env='sandbox',ebay_marketplace_id='EBAY_AU')
+    row=asyncio.run(cv.refresh_one(s,l,settings))
+    assert row.current_price_minor==599 and row.quantity==1
+    assert l.price==Decimal('8.99') and l.quantity==2
+    assert row.raw_snapshot['image_urls']==details.picture_urls
+    assert 'Compare saved photos' in comparison_html(s,l)

@@ -2659,3 +2659,22 @@ class RetailerNotificationPreference(Base):
     becomes_affordable: Mapped[bool] = mapped_column(Boolean, default=True)
     high_priority_status_change: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class InventoryQuantityEvent(Base):
+    """Append-only quantity deltas captured by SQLite triggers, not ORM callbacks."""
+    __tablename__ = 'inventory_quantity_events'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    inventory_item_id: Mapped[str] = mapped_column(ForeignKey('inventory_items.id', ondelete='CASCADE'), index=True)
+    delta: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(32), default='unassigned')
+    pair_id: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# create_all is used by isolated tests; production schema is Alembic-managed.
+from sqlalchemy import event as _source_event
+@_source_event.listens_for(Base.metadata, 'after_create')
+def _install_quantity_event_triggers(target, connection, **kw):
+    from .stock_sources import install
+    install(connection)

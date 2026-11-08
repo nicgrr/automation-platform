@@ -191,6 +191,11 @@ class ItemDetails:
 
     picture_urls: list[str]
     description: str | None
+    title: str | None = None
+    price: Decimal | None = None
+    currency: str | None = None
+    quantity: int | None = None
+    status: str | None = None
 
 
 def parse_item_details(xml_text: str) -> ItemDetails:
@@ -207,7 +212,15 @@ def parse_item_details(xml_text: str) -> ItemDetails:
     item = root.find("eb:Item", _NS)
     urls = [el.text for el in item.findall("eb:PictureDetails/eb:PictureURL", _NS)] if item is not None else []
     description = _text(item, "eb:Description") if item is not None else None
-    return ItemDetails(picture_urls=[u for u in urls if u], description=description)
+    price_node = item.find("eb:SellingStatus/eb:CurrentPrice", _NS) if item is not None else None
+    total = _int(_text(item, "eb:Quantity")) if item is not None else None
+    sold = _int(_text(item, "eb:SellingStatus/eb:QuantitySold")) or 0 if item is not None else 0
+    return ItemDetails(picture_urls=[u for u in urls if u], description=description,
+        title=_text(item, "eb:Title") if item is not None else None,
+        price=_decimal(price_node.text) if price_node is not None else None,
+        currency=price_node.get("currencyID") if price_node is not None else None,
+        quantity=max(0, total-sold) if total is not None else None,
+        status=_text(item, "eb:SellingStatus/eb:ListingStatus") if item is not None else None)
 
 
 class EbayTradingReadAdapter:

@@ -11,7 +11,16 @@ ORM/SQL paths with explicit new-photo sources and visible allocation policy;
 price review fingerprint/approval and single/bulk recommendation; continuous
 phone camera and browser tests; full isolated workflow with mocked marketplace.
 Do not claim physical allocation or image equivalence from insufficient evidence.
-Next inspect adapter/detail/image provenance then implement and test each stage.
+Completed first implementation slices: readback endpoint parses title/price/qty/
+status/photos and preserves local proposals; photo gallery compares local/eBay/
+storefront with operator acknowledgement fingerprint. 83 adapter/publish/
+comparison tests passed. Quantity event migration20261109_01 + SQLite triggers
+capture direct SQL and ORM deltas; intake tags photo sources, balance panel
+shows allocation policy (newest photographed first). 29 stock/intake/workspace
+tests passed incl SQL reduction/rollback. Migration NOT yet applied. Backup
+backups/pre-scanner-completion-20261109.sqlite3 ready. Live active refresh351;
+full-photo refresh still running. Next price approval fingerprints and camera UI,
+then migration/whole workflow/browser tests and deployment. No live publication.
 
 ## eBay comparison panel — Codex, 2026-11-09
 
