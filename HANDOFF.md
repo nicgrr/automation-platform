@@ -41,6 +41,9 @@ unchanged. Preview `/tmp/ezbay-label-after.png` visually inspected with clear
 header-rule clearance. Validation: `.venv/bin/pytest -q tests/test_labels.py`
 passed 18 tests. No print job or service restart performed. The running CRM
 will pick this up at its next authorized restart.
+OWNER AUTHORIZED LIVE UPDATE 2026-11-08 after confirming the label remained
+old. Next: restart `ezbay.service`, verify health, and verify a live label image
+uses the committed `y + 14` website placement. Do not submit a print job.
 
 ## Storefront department tiles — Claude Code, 2026-11-07
 
