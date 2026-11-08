@@ -1,5 +1,15 @@
 # Handoff
 
+## Guided batch review — Codex, 2026-11-09
+
+Branch codex/scan-studio-app base1cbcdf1, tracked clean; preserve untracked
+backups. Build receipt-based progress, next eligible card with wraparound,
+review-later navigation and explicit Confirm & next. Advance only after commit;
+retries retain idempotent intake, errors remain on current card. Processing/
+failed cards stay visible in batch but are not offered as ready review targets.
+Test queue boundaries, same-batch isolation and save/retry behavior; deploy CRM.
+No schema, inventory backfill, or marketplace writes.
+
 ## Visual printing review checkpoint — Codex, 2026-11-09
 
 Branch codex/scan-studio-app base18740e0; tracked clean, existing untracked
