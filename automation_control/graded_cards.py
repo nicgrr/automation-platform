@@ -48,7 +48,9 @@ def graded_condition(stock):
     if stock is None:
         raise ValueError('A graded stock record is required.')
     company = (stock.grading_company or '').strip().casefold()
-    graders = {'cgc': '275015', 'vault': '2750123'}
+    # PSA and Beckett (BGS) read from getItemConditionPolicies EBAY_AU 183454 on 2026-11-09;
+    # Beckett's current slabs say "Beckett" for the service eBay lists as BGS.
+    graders = {'cgc': '275015', 'vault': '2750123', 'psa': '275010', 'beckett': '275013', 'bgs': '275013'}
     # These are the grades verified for this workflow; unknown labels fail closed.
     grades = {'10': '275020', 'pristine 10': '275020', 'gem mint 10': '275020',
               '9.5': '275021', 'gem mint 9.5': '275021', '9': '275022', 'mint 9': '275022'}

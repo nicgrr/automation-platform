@@ -1262,6 +1262,30 @@ def save_listing_studio(
     )
 
 
+def _reviewed_slab_facts(session: Session, listing: ShopListing) -> dict[str, str]:
+    """Identity facts from the confirmed photo behind a photo-added slab."""
+    from .card_display import english_name
+    from .models import ListingPhotoPair, ListingPhotoPairStatus
+
+    pair = session.scalar(
+        select(ListingPhotoPair).where(
+            ListingPhotoPair.matched_shop_listing_id == listing.id,
+            ListingPhotoPair.status.in_((ListingPhotoPairStatus.APPLIED, ListingPhotoPairStatus.PUBLISHED)),
+        ).order_by(ListingPhotoPair.updated_at.desc()).limit(1)
+    )
+    facts = (pair.extracted or {}) if pair else {}
+    name = english_name(str(facts.get("character") or "")).strip()
+    if not name:
+        return {}
+    return {
+        "card name": name,
+        "set": str(facts.get("set_name") or ""),
+        "card number": str(facts.get("card_number") or ""),
+        "rarity": str(facts.get("rarity") or ""),
+        "language": str(facts.get("language") or "English"),
+    }
+
+
 @router.post("/shop-listings/{listing_id}/ebay-ai-suggest")
 def suggest_listing_studio_copy(
     listing_id: str,
@@ -1284,7 +1308,11 @@ def suggest_listing_studio_copy(
     card = session.get(TcgCard, listing.catalog_item_id)
     card_set = session.get(CardSet, card.set_id) if card and card.set_id else None
     inventory = session.get(InventoryItem, listing.inventory_item_id) if listing.inventory_item_id else None
-    if catalog_item is None or card is None:
+    is_slab = bool(catalog_item and catalog_item.item_type == CatalogItemType.GRADED_CARD)
+    # A slab added from a photo has no catalogue card row; its owner-reviewed
+    # photo facts (identity read from the card and label) stand in for one.
+    slab_facts = _reviewed_slab_facts(session, listing) if is_slab and card is None else {}
+    if catalog_item is None or (card is None and not slab_facts):
         return RedirectResponse(
             f"/shop-listings/{listing_id}/ebay-preview?error={quote('Verified card identity is required before asking AI for listing copy.')}",
             status_code=303,
@@ -1302,9 +1330,9 @@ def suggest_listing_studio_copy(
     variant = ""
     if inventory and inventory.variant:
         variant = inventory.variant.value.replace("_", " ").title()
-    elif card.variant:
+    elif card and card.variant:
         variant = card.variant.replace("_", " ").title()
-    known_facts = {
+    known_facts = slab_facts or {
         "card name": catalog_item.name,
         "game": card.game,
         "set": card_set.name if card_set else "",
@@ -1320,9 +1348,20 @@ def suggest_listing_studio_copy(
         ),
         "current eBay title": listing.ebay_title or listing.title,
     }
+    if is_slab:
+        # The slab's own grade replaces raw condition, and an earlier title
+        # (which may say "NM") is left out so it can't be copied forward.
+        known_facts.pop("current eBay title", None)
+        known_facts.pop("finish", None)
+        known_facts.update({
+            "condition": "Professionally graded (slabbed)",
+            "grading company": inventory.grading_company if inventory else "",
+            "grade": inventory.grade if inventory else "",
+            "certification number": inventory.certification_number if inventory else "",
+        })
     try:
         suggestion = suggest_ebay_listing_copy(
-            local_paths, api_key=settings.anthropic_api_key, known_facts=known_facts,
+            local_paths, api_key=settings.anthropic_api_key, known_facts=known_facts, graded=is_slab,
         )
     except RecognitionError as exc:
         return RedirectResponse(

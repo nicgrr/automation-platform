@@ -482,8 +482,8 @@ def test_ai_suggestion_uses_local_photo_and_saves_reviewable_draft(client, sessi
     monkeypatch.setattr(ebay_publish, "get_settings", lambda: settings)
     seen = {}
 
-    def fake_suggestion(paths, *, api_key, known_facts):
-        seen.update(paths=paths, api_key=api_key, facts=known_facts)
+    def fake_suggestion(paths, *, api_key, known_facts, graded=False):
+        seen.update(paths=paths, api_key=api_key, facts=known_facts, graded=graded)
         return EbayListingCopySuggestion(
             title="Test Card 001 Scarlet Violet Rare Pokemon TCG English Near Mint",
             description="The actual card shown is the card you will receive. Please review the photographs for condition.",
@@ -1327,3 +1327,75 @@ def test_publish_route_over_http_keeps_the_list_filters(client, session, monkeyp
                        data={"confirmation": "publish"}, follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == filtered
+
+
+def test_ai_suggestion_for_a_photo_added_slab_uses_reviewed_facts_and_grade(client, session, monkeypatch, tmp_path):
+    from PIL import Image
+    from automation_control.card_recognition import EbayListingCopySuggestion
+    from automation_control.models import (
+        InventoryItem, InventoryStatus, ListingPhotoBatch, ListingPhotoPair, ListingPhotoPairStatus,
+    )
+
+    front, back = tmp_path / "front.jpg", tmp_path / "back.jpg"
+    for path in (front, back):
+        Image.new("RGB", (800, 1100), "grey").save(path, "JPEG")
+    session.add(CatalogItem(id="photo-product-slab", item_type=CatalogItemType.GRADED_CARD, name="Klawf PSA 9"))
+    stock = InventoryItem(id="slab-stock", catalog_item_id="photo-product-slab", quantity=1, condition="Graded",
+                          status=InventoryStatus.AVAILABLE, grading_company="PSA", grade="9",
+                          certification_number="117480459")
+    session.add(stock)
+    session.add(ShopListing(id="slab-listing", catalog_item_id="photo-product-slab", inventory_item_id="slab-stock",
+                            title="Klawf PSA 9", ebay_title="Klawf 217/198 SV01 - Pokemon Card - NM",
+                            price=Decimal("49.99"), currency="AUD", quantity=1, status=ShopListingStatus.DRAFT,
+                            condition="Graded", ebay_photo_paths=[str(front), str(back)]))
+    session.add(ListingPhotoBatch(id="b1", total_pairs=1))
+    session.add(ListingPhotoPair(id="p1", batch_id="b1", position=1, front_image_path=str(front),
+                                 back_image_path=str(back), status=ListingPhotoPairStatus.APPLIED,
+                                 matched_shop_listing_id="slab-listing",
+                                 extracted={"character": "Klawf", "set_name": "Scarlet & Violet (SVI)",
+                                            "card_number": "217/198", "rarity": "Illustration Rare",
+                                            "language": "English"}))
+    session.commit()
+    settings = _configured_settings().model_copy(update={"anthropic_api_key": "test-key"})
+    monkeypatch.setattr(ebay_publish, "get_settings", lambda: settings)
+    seen = {}
+
+    def fake_suggestion(paths, *, api_key, known_facts, graded=False):
+        seen.update(facts=known_facts, graded=graded)
+        return EbayListingCopySuggestion(
+            title="PSA 9 Klawf 217/198 Illustration Rare Scarlet & Violet Base Set Pokemon Card",
+            description="Graded PSA 9 Mint. Cert 117480459. Photos show the actual slab front and back.",
+        )
+
+    monkeypatch.setattr(ebay_publish, "suggest_ebay_listing_copy", fake_suggestion)
+    response = client.post("/shop-listings/slab-listing/ebay-ai-suggest", follow_redirects=False)
+
+    assert "AI%20suggestion%20saved" in response.headers["location"]
+    assert seen["graded"] is True
+    facts = seen["facts"]
+    assert facts["card name"] == "Klawf" and facts["card number"] == "217/198" and facts["rarity"] == "Illustration Rare"
+    assert facts["grading company"] == "PSA" and facts["grade"] == "9" and facts["certification number"] == "117480459"
+    assert "current eBay title" not in facts and "NM" not in " ".join(facts.values())
+    session.expire_all()
+    assert session.get(ShopListing, "slab-listing").ebay_title.startswith("PSA 9 Klawf")
+
+
+def test_graded_prompt_rules_are_added_only_for_slabs(monkeypatch, tmp_path):
+    from PIL import Image
+    from automation_control import card_recognition
+
+    photo = tmp_path / "p.jpg"
+    Image.new("RGB", (10, 10)).save(photo, "JPEG")
+    prompts = []
+
+    class Parsed:
+        parsed_output = card_recognition.EbayListingCopySuggestion(title="t", description="d")
+
+    def fake_parse(api_key, **kwargs):
+        prompts.append(kwargs["messages"][0]["content"][-1]["text"])
+        return Parsed()
+
+    monkeypatch.setattr(card_recognition, "_parse_message", fake_parse)
+    card_recognition.suggest_ebay_listing_copy([photo], api_key="k", known_facts={"card name": "A"})
+    card_recognition.suggest_ebay_listing_copy([photo], api_key="k", known_facts={"card name": "A"}, graded=True)
+    assert "slab" not in prompts[0] and "Never use raw-condition words" in prompts[1]

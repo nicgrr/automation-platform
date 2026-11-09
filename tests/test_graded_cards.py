@@ -85,8 +85,19 @@ def test_condition_uses_verified_descriptors(grade, value):
     ]
 
 
+@pytest.mark.parametrize("company,grade,grader_value,grade_value", [
+    ("PSA", "9", "275010", "275022"), ("PSA", "10", "275010", "275020"),
+    ("Beckett", "9.5", "275013", "275021"), ("BGS", "9.5", "275013", "275021"),
+])
+def test_psa_and_beckett_use_ebay_descriptors(company, grade, grader_value, grade_value):
+    fields = graded_condition(InventoryItem(grading_company=company, grade=grade, certification_number="0020112666"))
+    assert fields["conditionDescriptors"][:2] == [
+        {"name": "27501", "values": [grader_value]}, {"name": "27502", "values": [grade_value]},
+    ]
+
+
 @pytest.mark.parametrize("stock", [
-    {"grading_company": "PSA", "grade": "Mint 9", "certification_number": "1"},
+    {"grading_company": "SGC", "grade": "Mint 9", "certification_number": "1"},
     {"grading_company": "CGC", "grade": "Excellent 5", "certification_number": "1"},
     {"grading_company": "CGC", "grade": "Mint 9", "certification_number": "x" * 21},
     {"grading_company": "CGC", "grade": "Mint 9", "certification_number": ""},

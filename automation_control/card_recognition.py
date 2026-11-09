@@ -122,8 +122,22 @@ class EbayListingCopySuggestion(BaseModel):
     description: str
 
 
+GRADED_COPY_RULES = (
+    " This card is professionally graded and sealed in a slab. Start the title with the "
+    "grader's short name and the grade exactly as supplied, e.g. 'PSA 9', 'BGS 9.5', "
+    "'CGC Pristine 10' (write Beckett as BGS in the title). Never use raw-condition words "
+    "such as NM, Near Mint or LP. In the description, identify the exact card, state the "
+    "grader and grade, transcribe the slab label wording and any subgrades only where they "
+    "are legible in the photos, give the certification number and say it can be verified "
+    "on the grader's website, and say the photos show the actual slab front and back. Do "
+    "not judge the card's condition beyond its grade. Put key attributes printed on the "
+    "label (such as 1st Edition, Holo, Alt Art) in the title when they fit. Mention "
+    "packaging in one sentence without naming materials, boxes, tracking or postage."
+)
+
+
 def suggest_ebay_listing_copy(
-    photo_paths: list[Path], *, api_key: str, known_facts: dict[str, str],
+    photo_paths: list[Path], *, api_key: str, known_facts: dict[str, str], graded: bool = False,
 ) -> EbayListingCopySuggestion:
     """Suggest buyer-facing eBay copy from owned-card photos and known facts.
 
@@ -145,8 +159,9 @@ def suggest_ebay_listing_copy(
         "packaging. Treat the facts below as authoritative even if a photo is hard "
         "to read. Never invent a set, number, rarity, language, foil treatment, "
         "grade, autograph, print run, or guarantee. Do not call a raw card mint. "
-        "Use the photos only for conservative visible-condition wording.\n\n"
-        f"AUTHORITATIVE FACTS:\n{facts}"
+        "Use the photos only for conservative visible-condition wording."
+        + (GRADED_COPY_RULES if graded else "")
+        + f"\n\nAUTHORITATIVE FACTS:\n{facts}"
     )
     response = _parse_message(
         api_key,

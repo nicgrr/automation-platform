@@ -11,6 +11,12 @@ reviewed photo facts (character, set, number, rarity, language) and a graded-spe
 Also graded_condition() supports only CGC/Vault, so preflight blocks PSA (Klawf, Keldeo) and Beckett
 (Sanji). Add PSA/Beckett only from eBay's getItemConditionPolicies for EBAY_AU 183454 (read-only).
 No eBay writes; drafts' content is not changed by this code work.
+DONE: eBay metadata read 200: PSA 275010, BGS 275013 (Beckett mapped to BGS), grades 10/9.5/9
+unchanged. AI suggestion for GRADED_CARD uses reviewed photo facts when no TcgCard, adds grader/grade/
+cert, drops current title/finish, graded prompt rules (label wording, subgrades, cert, label attributes
+in title, one-line packaging without specifics). Tests: publish+graded 88, neighbours 62 passed.
+Real preview (not saved) for Klawf/Sanji/Keldeo looked correct. Needs ezbay.service restart.
+Owner then uses Listing Studio > Suggest title & description on each slab, reviews, saves.
 
 ## Scanner completion — Codex, 2026-11-09
 
