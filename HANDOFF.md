@@ -1,5 +1,16 @@
 # Handoff
 
+## Postage label upload: preview, margin, links — Claude Code, 2026-11-09
+
+Branch feat/postage-upload (worktree .claude/worktrees/postage-upload), base 5661d12 on
+codex/scan-studio-app. Owner asked for "upload a photo and it prints the label". That already exists
+at /labels/postage (labels.py: postage_label_image + send_job) but nothing links to it and it prints
+blind. Plan: (1) POST /labels/postage/preview returns the exact 1-bit PNG that would print; page shows
+it before a Print button, in the CRM shell; (2) postage_label_image keeps a ~3 mm margin so barcodes
+aren't clipped at the sticker edge (a Vinted screenshot printed by hand 2026-11-09 needed this);
+(3) "Print postage label" buttons on Pack Assistant and the pick run. No nav/ui.py change, no schema.
+Status: PLANNED. Deploy (fast-forward + ezbay.service restart) only on the owner's go-ahead.
+
 ## Graded copy self-service + PSA/Beckett grading — Claude Code, 2026-11-09
 
 Branch codex/scan-studio-app (services run it), base a79a228, tracked clean.
