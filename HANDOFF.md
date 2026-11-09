@@ -26,6 +26,10 @@ TcgCard for Klawf (sv1 SVI 217/198 IR 2023), Sanji (op-23496 PRB-01 PRB01-001 Le
 1st Edition, Japanese, 2016; existing jp-cp5 is named 冷酷の反逆者 — not linked), Keldeo item name ->
 "Keldeo". Additive, DB backup first, real dry run. Code: titles write Beckett as BGS. Root cause in the
 photo path (no game in facts) left for a follow-up — recommend graded slabs go through Graded cards.
+DONE: real dry run wrote nothing; backups/automation-before-slab-identity-20261109.db taken (no new rows);
+applied with 4 audit events (graded.card_identity_added); rows read back. Titles write Beckett as BGS
+(listing_quality). Tests graded+publish+titles 93 passed. Data is live now; BGS + AI slab rules
+still need ezbay.service restart (blocked for me as production deploy; owner action).
 
 ## Scanner completion — Codex, 2026-11-09
 

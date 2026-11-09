@@ -67,9 +67,9 @@ def generated_ebay_title(
     if catalog_item.item_type == CatalogItemType.GRADED_CARD and inventory is not None:
         # Reserve the exact label wording first: Pristine 10 and Gem Mint 10
         # describe different grades even when eBay's numeric value is 10.
-        grading = sanitize_title(" ".join(filter(None, (
-            inventory.grading_company, inventory.grade,
-        )))).strip()
+        # Buyers search "BGS"; Beckett's current slabs print "Beckett" for that service.
+        company = "BGS" if (inventory.grading_company or "").strip().casefold() == "beckett" else inventory.grading_company
+        grading = sanitize_title(" ".join(filter(None, (company, inventory.grade)))).strip()
         if grading:
             card_title = build_single_card_ebay_title(
                 catalog_item, card, card_set, title_inventory(listing, inventory),

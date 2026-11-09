@@ -146,6 +146,16 @@ def test_title_keeps_the_exact_label_grade(session):
     assert len(title) <= 80
 
 
+def test_beckett_slab_titles_say_bgs(session):
+    listing = make_slab(session)
+    stock = session.get(InventoryItem, listing.inventory_item_id)
+    stock.grading_company, stock.grade = "Beckett", "9.5"
+    title = generated_ebay_title(
+        listing, session.get(CatalogItem, "slab"), session.get(TcgCard, "slab"), session.get(CardSet, "bt18"), stock,
+    )
+    assert title.startswith("BGS 9.5 ") and "Beckett" not in title and len(title) <= 80
+
+
 def test_review_page_prefills_a_price_changed_after_confirmation(session):
     listing = make_slab(session)
     save_review_data(session, listing, {**review_data(session, listing), "suggested_price": "34.99"})
