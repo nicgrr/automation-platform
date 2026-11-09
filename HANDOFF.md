@@ -9,7 +9,14 @@ blind. Plan: (1) POST /labels/postage/preview returns the exact 1-bit PNG that w
 it before a Print button, in the CRM shell; (2) postage_label_image keeps a ~3 mm margin so barcodes
 aren't clipped at the sticker edge (a Vinted screenshot printed by hand 2026-11-09 needed this);
 (3) "Print postage label" buttons on Pack Assistant and the pick run. No nav/ui.py change, no schema.
-Status: PLANNED. Deploy (fast-forward + ezbay.service restart) only on the owner's go-ahead.
+Status: DONE (code, NOT deployed). Also fixes a real bug: the old bare page lacked ui.CSRF_SCRIPT,
+so every upload got 403 "missing or invalid CSRF token"; it now renders in ui.page(). Preview endpoint
+returns 422 for unreadable files. Owner's Vinted screenshot previewed correctly through the endpoint.
+Validation: tests/test_labels.py + pick_run + ebay_sales 53 passed (4 new tests; the fitted-label test
+now checks fill to the margin). Full suite in the worktree: 2677 passed, 2 failed, both pre-existing on
+the live code at 5661d12 and not from this change: test_nav drawer count (17 links, test says 16) and
+test_release_info expected head (20261106_01, repo head is 20261109_01). Deploy (fast-forward +
+ezbay.service restart) only on the owner's go-ahead; a restart also takes the graded-copy/BGS work live.
 
 ## Graded copy self-service + PSA/Beckett grading — Claude Code, 2026-11-09
 

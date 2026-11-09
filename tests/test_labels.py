@@ -94,14 +94,16 @@ def _a4_pdf_with_corner_label(path):
 
 
 def test_postage_label_is_cropped_and_fitted_to_the_sticker(tmp_path):
-    from automation_control.labels import LABEL_H, LABEL_W, postage_label_image
+    from automation_control.labels import LABEL_H, LABEL_W, POSTAGE_MARGIN, postage_label_image
 
     pdf = tmp_path / "label.pdf"
     _a4_pdf_with_corner_label(pdf)
     image = postage_label_image(pdf.read_bytes())
     assert image.size == (LABEL_W, LABEL_H) and image.mode == "1"
-    black = [(x, y) for x in range(0, LABEL_W, 8) for y in range(0, LABEL_H, 8) if image.getpixel((x, y)) == 0]
-    assert black and min(x for x, _ in black) < 30 and max(x for x, _ in black) > LABEL_W - 40
+    black = [(x, y) for x in range(LABEL_W) for y in range(0, LABEL_H, 8) if image.getpixel((x, y)) == 0]
+    # Fills the sticker out to its margin (within the label's own aspect ratio).
+    assert black and min(x for x, _ in black) < POSTAGE_MARGIN + 16
+    assert max(x for x, _ in black) > LABEL_W - POSTAGE_MARGIN - 16
 
 
 def test_postage_label_rejects_garbage_and_blank_pages():
@@ -131,6 +133,50 @@ def test_postage_upload_route_prints_and_reports_errors(client, tmp_path, monkey
     assert ok.status_code == 200 and sent and sent[0].startswith(b"SIZE 100 mm,150 mm")
     bad = client.post("/labels/postage/print", files={"file": ("l.txt", b"nope", "text/plain")})
     assert bad.status_code == 502 and "not a PDF" in bad.json()["detail"]
+
+
+def test_postage_label_keeps_a_margin_clear_of_the_sticker_edge(tmp_path):
+    from automation_control.labels import LABEL_H, LABEL_W, POSTAGE_MARGIN, postage_label_image
+
+    pdf = tmp_path / "label.pdf"
+    _a4_pdf_with_corner_label(pdf)
+    image = postage_label_image(pdf.read_bytes())
+    black = [(x, y) for x in range(LABEL_W) for y in range(0, LABEL_H, 4) if image.getpixel((x, y)) == 0]
+    assert min(x for x, _ in black) >= POSTAGE_MARGIN - 1
+    assert max(x for x, _ in black) <= LABEL_W - POSTAGE_MARGIN
+
+
+def test_postage_preview_returns_the_image_that_would_print_without_printing(client, tmp_path, monkeypatch):  # noqa: F811
+    from io import BytesIO
+
+    from PIL import Image
+
+    from automation_control.labels import LABEL_H, LABEL_W
+
+    sent = []
+    monkeypatch.setattr("automation_control.labels.send_job", lambda job: sent.append(job))
+    pdf = tmp_path / "label.pdf"
+    _a4_pdf_with_corner_label(pdf)
+    response = client.post("/labels/postage/preview", files={"file": ("l.pdf", pdf.read_bytes(), "application/pdf")})
+    assert response.status_code == 200 and response.headers["content-type"] == "image/png"
+    preview = Image.open(BytesIO(response.content))
+    assert preview.size == (LABEL_W, LABEL_H) and preview.mode == "1"
+    assert sent == []
+    bad = client.post("/labels/postage/preview", files={"file": ("l.txt", b"nope", "text/plain")})
+    assert bad.status_code == 422 and "not a PDF" in bad.json()["detail"]
+
+
+def test_postage_page_runs_in_the_crm_shell_so_uploads_carry_the_csrf_token(client):  # noqa: F811
+    from automation_control.ui import CSRF_SCRIPT
+
+    body = client.get("/labels/postage").text
+    assert CSRF_SCRIPT in body
+    assert "/labels/postage/preview" in body and "id='pl-print'" in body
+
+
+def test_packing_pages_link_to_the_postage_label_upload(client):  # noqa: F811
+    for path in ("/ebay-sales", "/ebay-sales/pick-run"):
+        assert "href='/labels/postage'" in client.get(path).text
 
 
 def test_ebay_label_lines_drop_ebays_own_reference_code():

@@ -327,7 +327,8 @@ def ebay_sales_page(
     body = (
         brand_header("eBay sales")
         + f"<p class='subtitle'>{len(shown)} order(s), {sum(len(g) for g in shown.values())} card(s). "
-          "<a class='btn small' href='/ebay-sales/pick-run'>Pick run: all open orders by drawer</a></p>"
+          "<a class='btn small' href='/ebay-sales/pick-run'>Pick run: all open orders by drawer</a> "
+          "<a class='btn small ghost' href='/labels/postage'>Print postage label</a></p>"
         + (f"<div class='notice error'>{escape(error)}</div>" if error else "")
         + f"<div class='filter-tabs'>{filter_bar}</div>"
         + orders_html

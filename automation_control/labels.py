@@ -10,7 +10,7 @@ from html import escape
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .database import get_session
 from .models import EbayImportedOrder, ShopOrder
+from .ui import brand_header, page
 
 router = APIRouter(tags=["labels"])
 
@@ -186,6 +187,9 @@ def tspl_for_image(image: Image.Image) -> bytes:
 
 
 MAX_UPLOAD = 8 * 1024 * 1024
+# ~3 mm at 203 dpi. A label fitted edge to edge loses the end of its barcode
+# to the printer's unprintable edge, so carriers' scanners can miss it.
+POSTAGE_MARGIN = 24
 
 
 def postage_label_image(data: bytes) -> Image.Image:
@@ -193,7 +197,8 @@ def postage_label_image(data: bytes) -> Image.Image:
 
     Only the first PDF page is used. Surrounding white space (an A4 sheet with
     the label in one corner) is cropped away, a landscape label is turned to
-    run along the feed, and the result is scaled to fill the sticker.
+    run along the feed, and the result is scaled to fill the sticker inside
+    a POSTAGE_MARGIN border.
     """
     if data[:5] == b"%PDF-":
         with tempfile.TemporaryDirectory() as tmp:
@@ -226,7 +231,7 @@ def postage_label_image(data: bytes) -> Image.Image:
     gray = gray.crop(box)
     if gray.width > gray.height:
         gray = gray.rotate(90, expand=True)
-    scale = min(LABEL_W / gray.width, LABEL_H / gray.height, 2.0)
+    scale = min((LABEL_W - 2 * POSTAGE_MARGIN) / gray.width, (LABEL_H - 2 * POSTAGE_MARGIN) / gray.height, 2.0)
     gray = gray.resize((max(1, round(gray.width * scale)), max(1, round(gray.height * scale))), Image.LANCZOS)
     canvas = Image.new("L", (LABEL_W, LABEL_H), 255)
     canvas.paste(gray, ((LABEL_W - gray.width) // 2, (LABEL_H - gray.height) // 2))
@@ -365,34 +370,82 @@ def _send(lines: list[str]) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-_POSTAGE_PAGE = (
-    "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>Print postage label</title>"
-    "<style>body{font:16px system-ui;max-width:520px;margin:24px auto;padding:0 16px}"
-    "input,button{font:inherit;margin:8px 0}button{padding:10px 18px}#msg{margin-top:12px}</style>"
-    "<h2>Print postage label</h2>"
-    "<p>Upload the label PDF (or a screenshot) from eBay. It is cropped to the label and printed "
-    "on the 4x6 printer. Only the first page is printed.</p>"
-    "<form id='f'><input type='file' name='file' accept='application/pdf,image/*' required><br>"
-    "<button class='btn'>Print</button></form><div id='msg'></div>"
-    "<script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();"
-    "const m=document.getElementById('msg');m.textContent='Printing...';"
-    "try{const r=await fetch('/labels/postage/print',{method:'POST',body:new FormData(e.target)});"
-    "const j=await r.json().catch(()=>({}));"
-    "m.textContent=r.ok?'Printed.':(j.detail||'Print failed');}catch(x){m.textContent='Print failed';}});</script>"
+_POSTAGE_STYLE = (
+    "<style>#pl-preview{display:block;width:100%;max-width:360px;margin:12px 0;border:1px solid #c9ccd1;"
+    "background:#fff}#pl-preview[hidden]{display:none}#pl-msg{margin:10px 0}</style>"
 )
+
+# Rendered inside ui.page(), whose CSRF_SCRIPT adds the _csrf token to these
+# fetch() uploads; a bare page without it gets every upload refused with 403.
+_POSTAGE_SCRIPT = """<script>
+(function(){
+  var file = document.getElementById('pl-file'), msg = document.getElementById('pl-msg'),
+      img = document.getElementById('pl-preview'), btn = document.getElementById('pl-print');
+  function upload(url){ var fd = new FormData(); fd.append('file', file.files[0]); return fetch(url, {method: 'POST', body: fd}); }
+  async function reason(r, fallback){ var j = await r.json().catch(function(){ return {}; }); return j.detail || fallback; }
+  file.addEventListener('change', async function(){
+    btn.disabled = true; img.hidden = true;
+    if (!file.files.length) { msg.textContent = ''; return; }
+    msg.textContent = 'Preparing preview...';
+    try {
+      var r = await upload('/labels/postage/preview');
+      if (!r.ok) { msg.textContent = await reason(r, 'Could not read that file'); return; }
+      if (img.src) URL.revokeObjectURL(img.src);
+      img.src = URL.createObjectURL(await r.blob()); img.hidden = false;
+      msg.textContent = 'This is exactly what will print. Check the address and barcode are clear.';
+      btn.disabled = false;
+    } catch (e) { msg.textContent = 'Preview failed'; }
+  });
+  btn.addEventListener('click', async function(){
+    btn.disabled = true; msg.textContent = 'Printing...';
+    try {
+      var r = await upload('/labels/postage/print');
+      if (r.ok) { msg.textContent = 'Printed. Choose another file for the next label.'; file.value = ''; }
+      else { msg.textContent = await reason(r, 'Print failed'); btn.disabled = false; }
+    } catch (e) { msg.textContent = 'Print failed'; btn.disabled = false; }
+  });
+})();
+</script>"""
+
+
+async def _read_postage_upload(file: UploadFile) -> bytes:
+    data = await file.read(MAX_UPLOAD + 1)
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(status_code=413, detail="file is too large")
+    return data
 
 
 @router.get("/labels/postage", response_class=HTMLResponse)
 def postage_label_page(user: str = Depends(require_dashboard_user)):
-    return HTMLResponse(_POSTAGE_PAGE)
+    body = (
+        brand_header("Print postage label")
+        + "<p class='subtitle'>Upload a postage label from eBay, Vinted or Australia Post: the PDF, a "
+          "screenshot or a photo. Check the preview, then print it on the 4x6 printer. Only a PDF's first "
+          "page is used.</p>"
+        + "<div class='panel'><input type='file' id='pl-file' accept='application/pdf,image/*'>"
+          "<div id='pl-msg' class='muted'></div><img id='pl-preview' alt='Label preview' hidden>"
+          "<button type='button' class='btn' id='pl-print' disabled>Print label</button></div>"
+        + _POSTAGE_STYLE + _POSTAGE_SCRIPT
+    )
+    return HTMLResponse(page("EzBay — Print postage label", body))
+
+
+@router.post("/labels/postage/preview")
+async def preview_postage_label(file: UploadFile = File(...), user: str = Depends(require_dashboard_user)):
+    """The exact 1-bit image /labels/postage/print would send, as a PNG."""
+    data = await _read_postage_upload(file)
+    try:
+        image = postage_label_image(data)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    buf = BytesIO()
+    image.save(buf, "PNG")
+    return Response(buf.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 @router.post("/labels/postage/print")
 async def print_postage_label(file: UploadFile = File(...), user: str = Depends(require_dashboard_user)):
-    data = await file.read(MAX_UPLOAD + 1)
-    if len(data) > MAX_UPLOAD:
-        raise HTTPException(status_code=413, detail="file is too large")
+    data = await _read_postage_upload(file)
     try:
         send_job(tspl_for_image(postage_label_image(data)))
     except RuntimeError as exc:

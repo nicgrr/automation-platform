@@ -217,7 +217,8 @@ def pick_run_page(user: str = Depends(require_dashboard_user), session: Session 
     body = (
         brand_header("Pick run")
         + f"<p class='subtitle'>{len(orders)} open order(s), {sum(l.quantity for l in lines)} item(s) to pick. "
-          "Complete each order on the <a href='/ebay-sales'>Pack Assistant</a> once it's packed.</p>"
+          "Complete each order on the <a href='/ebay-sales'>Pack Assistant</a> once it's packed. "
+          "<a class='btn small ghost' href='/labels/postage'>Print postage label</a></p>"
         + (f"<div class='pr-toolbar'>{print_all}</div>"
            f"<div class='panel'>{_orders_html(orders, tags, printed)}</div>" if orders else
            "<div class='panel'><p class='muted'>Nothing to pick. New eBay orders appear here within ten minutes.</p></div>")
