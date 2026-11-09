@@ -249,6 +249,49 @@ def _image_block(path: Path) -> dict:
     return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
 
 
+_PRINTING_PROMPT = (
+    "The first image is the owner's photo of one trading card. The numbered "
+    "references are official images of different printings that share this "
+    "card's printed code -- for example the base print and parallel/alternate-art "
+    "versions. References may carry a SAMPLE watermark. Decide which reference "
+    "is the same printing as the owner's card by comparing the artwork itself: "
+    "character pose, composition, background and the frame/border design. Ignore "
+    "glare, foil sheen, sleeves, colour cast, photo angle and the watermark. "
+    "Return match as the reference number, or 0 if no reference clearly matches "
+    "or more than one is equally plausible (for instance two references with the "
+    "same artwork). Set confident to true only when the artwork clearly matches "
+    "exactly one reference. Give a one-sentence reason naming the deciding detail."
+)
+
+
+class PrintingChoice(BaseModel):
+    match: int
+    confident: bool
+    reason: str
+
+
+def choose_printing(photo_path: Path, references: list[Path], api_key: str) -> PrintingChoice:
+    """Compare one card photo with candidate reference art; never guesses.
+
+    The caller accepts the result only when ``confident`` and ``match`` names
+    one reference, so an unclear photo stays with the owner for review.
+    """
+    content: list[dict] = [{"type": "text", "text": "Owner's photo:"}, _image_block(photo_path)]
+    for index, reference in enumerate(references, start=1):
+        content += [{"type": "text", "text": f"Reference {index}:"}, _image_block(reference)]
+    content.append({"type": "text", "text": _PRINTING_PROMPT})
+    response = _parse_message(
+        api_key,
+        model=MODEL,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": content}],
+        output_format=PrintingChoice,
+    )
+    if response.parsed_output is None:
+        raise RecognitionError("model did not return a printing choice")
+    return response.parsed_output
+
+
 def extract_card_details(front_path: Path, back_path: Path | None, api_key: str, game: str = DEFAULT_GAME) -> list[ExtractedCard]:
     content = [_image_block(front_path)]
     if back_path is not None:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .adapters.r2 import R2UploadError, is_configured as r2_is_configured, upload_card_image
@@ -32,18 +32,57 @@ def _normalise(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", ascii_value.casefold())
 
 
-def _latin_first_word(value: str | None) -> str:
-    """Return a safe catalogue-search prefix from bilingual OCR names.
+def _latin_prefixes(value: str | None) -> list[str]:
+    """Every plausible SQL name prefix: the whole name and each bracketed part.
 
-    Recognition commonly returns the printed Japanese name followed by its
-    English translation, for example ``人造人間17号 (Android 17)``.  Python's
-    unicode word matching previously chose the Japanese text as the SQL
-    prefix, even though our catalogue stores the English translation.  The
-    ASCII pass keeps the parenthesised English name available for lookup.
+    ``モンキー・D・ルフィ (Monkey D. Luffy)`` keeps a stray Latin ``D`` from the
+    katakana, so the first Latin word of the whole string is not the English
+    name. A single letter is never a useful prefix; the bracketed translation
+    is tried alongside the whole-name prefix so ``Pikachu (Full Art)`` still
+    searches ``Pikachu``.
     """
-    ascii_value = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode()
-    words = re.findall(r"[A-Za-z0-9]+", ascii_value)
-    return next((word for word in words if re.search(r"[A-Za-z]", word)), "")
+    sources = [value or "", *re.findall(r"\(([^()]*)\)", value or "")]
+    prefixes: list[str] = []
+    for source in sources:
+        ascii_value = unicodedata.normalize("NFKD", source).encode("ascii", "ignore").decode()
+        word = next((
+            word for word in re.findall(r"[A-Za-z0-9]+", ascii_value)
+            if len(re.sub(r"[^A-Za-z]", "", word)) >= 2
+        ), "")
+        if word and word not in prefixes:
+            prefixes.append(word)
+    return prefixes
+
+
+def _language_key(value: str | None) -> str:
+    key = _normalise(value)
+    return {"jp": "japanese", "jpn": "japanese", "ja": "japanese", "en": "english", "eng": "english"}.get(key, key)
+
+
+def _prefer_language(candidates, language: str | None, *, strict: bool = False):
+    """Keep rows printed in the detected language when any exist.
+
+    A Japanese photo used to compete with the English rows of the same code
+    and then lose on set-name scoring. ``strict`` drops every other language
+    even when that leaves nothing (for looser fallbacks).
+    """
+    wanted = _language_key(language)
+    if not wanted:
+        return candidates
+    same = [pair for pair in candidates if _language_key(pair[1].language) == wanted]
+    return same if (same or strict) else candidates
+
+
+def _names_close(catalogue_name: str | None, detected: str | None, threshold: float = 0.8) -> bool:
+    """Tolerate romanisation only (``Zorojuro`` / ``Zoro-Juurou``)."""
+    from difflib import SequenceMatcher
+
+    left = _name_aliases(catalogue_name) | _name_aliases(_catalogue_character_name(catalogue_name))
+    right = _name_aliases(detected)
+    return any(
+        len(a) >= 4 and len(b) >= 4 and SequenceMatcher(None, a, b).ratio() >= threshold
+        for a in left for b in right
+    )
 
 
 def _name_aliases(value: str | None) -> set[str]:
@@ -276,15 +315,15 @@ def _materialise_provider_card(
     (no credits and no network request), and only an exact name+number+set
     match is allowed to create a row.
     """
-    first_word = _latin_first_word(card.character)
+    prefixes = _latin_prefixes(card.character)
     query = (
         select(PricingProviderProduct, PricingProviderGroup, PricingProviderCategory)
         .join(PricingProviderGroup, PricingProviderGroup.id == PricingProviderProduct.group_id)
         .join(PricingProviderCategory, PricingProviderCategory.id == PricingProviderGroup.category_id)
         .where(PricingProviderProduct.product_type == "single")
     )
-    if first_word:
-        query = query.where(PricingProviderProduct.name.ilike(f"{first_word}%"))
+    if prefixes:
+        query = query.where(or_(*(PricingProviderProduct.name.ilike(f"{word}%") for word in prefixes)))
     rows = session.execute(query).all()
     wanted_names = _name_aliases(card.character)
     candidates = [
@@ -415,8 +454,18 @@ def _materialise_provider_card(
     return item, tcg
 
 
-def resolve_catalogue_card(session: Session, card: CapturedCard) -> tuple[CatalogItem, TcgCard] | str:
-    """Return one exact name+number match, or a human-readable issue."""
+def resolve_catalogue_card(
+    session: Session,
+    card: CapturedCard,
+    choose_printing=None,
+) -> tuple[CatalogItem, TcgCard] | str:
+    """Return one exact name+number match, or a human-readable issue.
+
+    ``choose_printing`` is an optional tie-break for the last step only: when
+    the remaining rows are printings of the same card in one language (base
+    print and parallels), it may return one of them (by comparing artwork) or
+    None to leave the choice to the owner.
+    """
     if not card.character:
         return "Card name is required before it can be listed."
 
@@ -455,12 +504,12 @@ def resolve_catalogue_card(session: Session, card: CapturedCard) -> tuple[Catalo
             return f"{len(unnumbered)} unnumbered catalogue matches for {card.character}; choose the set first."
         return "No printed card number was detected and no unique unnumbered registry record matched."
 
-    first_word = _latin_first_word(card.character)
+    prefixes = _latin_prefixes(card.character)
     query = select(CatalogItem, TcgCard).join(
         TcgCard, TcgCard.catalog_item_id == CatalogItem.id
     )
-    if first_word:
-        query = query.where(CatalogItem.name.ilike(f"{first_word}%"))
+    if prefixes:
+        query = query.where(or_(*(CatalogItem.name.ilike(f"{word}%") for word in prefixes)))
     rows = session.execute(query).all()
     candidates = [
         (item, tcg) for item, tcg in rows
@@ -469,6 +518,7 @@ def resolve_catalogue_card(session: Session, card: CapturedCard) -> tuple[Catalo
         ).intersection(_name_aliases(card.character))
         and _number_matches(card.card_number, tcg)
     ]
+    candidates = _prefer_language(candidates, card.language)
     if card.set_name and candidates:
         set_ids = {tcg.set_id for _item, tcg in candidates if tcg.set_id}
         sets = {
@@ -520,12 +570,41 @@ def resolve_catalogue_card(session: Session, card: CapturedCard) -> tuple[Catalo
                 ]
                 if len(ocr_candidates) == 1:
                     candidates = ocr_candidates
+            if not candidates and card.language:
+                # Same full printed code, same language, and a name that differs
+                # only by romanisation. The code and language carry the identity;
+                # the name check just stops a misread code jumping to another card.
+                romanised = [
+                    pair for pair in _prefer_language(
+                        # _number_matches, not _full_card_number: some parallels are
+                        # filed under the set they were reprinted in (ST18-004_p1
+                        # under OP12), and must stay in the running for the
+                        # artwork tie-break instead of silently losing to the base.
+                        [pair for pair in number_rows if _number_matches(card.card_number, pair[1])],
+                        card.language, strict=True,
+                    )
+                    if _names_close(pair[0].name, card.character)
+                ]
+                candidates = _collapse_equivalent_catalogue_candidates(_printing_candidates(
+                    romanised,
+                    card.rarity,
+                    name_at=lambda pair: pair[0].name,
+                    rarity_at=lambda pair: pair[1].rarity or "",
+                ))
     if not candidates:
         provider_match = _materialise_provider_card(session, card)
         if provider_match is not None:
             return provider_match
         return f"No catalogue match for {card.character} #{card.card_number}; correct the identity first."
     if len(candidates) != 1:
+        if (
+            choose_printing is not None
+            and 2 <= len(candidates) <= 6
+            and len({_language_key(tcg.language) for _item, tcg in candidates}) == 1
+        ):
+            chosen = choose_printing(candidates)
+            if chosen is not None and chosen in candidates:
+                return chosen
         return f"{len(candidates)} catalogue matches for {card.character} #{card.card_number}; choose the set first."
     return candidates[0]
 

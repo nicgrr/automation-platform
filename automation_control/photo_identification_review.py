@@ -48,6 +48,10 @@ def review(pair_id: str, q: str = '', number: str = '', language: str = '', cata
     from .product_photo_review import is_graded
     if facts.get('item_kind') == 'collectible' or is_graded(facts):
         return RedirectResponse(f'/product-photo-review/{pair.id}', 303)
+    # An automatic identification is offered for confirmation, never saved:
+    # the owner still confirms finish/quantity and ticks the check below.
+    if not catalog and not q and not number and pair.proposed_catalog_item_id and pair.status == ListingPhotoPairStatus.NEEDS_REVIEW:
+        catalog = pair.proposed_catalog_item_id
     query = q.strip() or str(facts.get('character') or '')
     statement = select(CatalogItem, TcgCard).join(TcgCard, TcgCard.catalog_item_id == CatalogItem.id)
     if query:

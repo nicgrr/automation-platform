@@ -67,3 +67,12 @@ def test_cannot_update_a_different_catalogue_record(context):
     s.add(ShopListing(id='wrong',catalog_item_id='other',title='Other',price=Decimal('1'),quantity=1,status=ShopListingStatus.ACTIVE));s.commit()
     assert c.post('/photo-review/pair/save',data={'catalog':'card','mode':'update','listing_id':'wrong','confirmed':'yes'}).status_code==400
     assert s.get(ShopListing,'wrong').ebay_photo_paths is None
+
+def test_automatic_identification_is_preselected_but_not_saved(context):
+    s,c=context
+    pair=s.get(ListingPhotoPair,'pair');pair.proposed_catalog_item_id='card';s.commit()
+    body=c.get('/photo-review/pair').text
+    assert 'Confirm Pikachu' in body and 'Save and open Listing Studio' in body
+    assert s.scalar(select(func.count()).select_from(ShopListing))==0
+    # A search the owner types still wins over the proposal.
+    assert 'Confirm Pikachu' not in c.get('/photo-review/pair?q=Raichu').text

@@ -30,6 +30,7 @@ from .audit import record_event
 from .auth import require_dashboard_user
 from .card_recognition import RecognitionError, extract_card_details, suggest_ebay_listing_copy
 from .capture_promotion import resolve_catalogue_card
+from .printing_match import photo_printing_chooser
 from .database import SessionLocal, get_session
 from .ebay_publish import (
     EBAY_MIN_FIXED_PRICE,
@@ -299,6 +300,8 @@ def _prepare_pair(pair_id: str, settings) -> None:
                             pair.issue = "Collectible detected: use Review collectible / graded card to check existing stock and confirm."
                     except Exception:
                         pair.issue = "Identity needs review. Use Review collectible / graded card for non-card items."
+                    if pair.extracted.get("item_kind") != "collectible":
+                        _detect_accessory(pair, settings)
                 return
 
             found = extracted[0]
@@ -319,7 +322,13 @@ def _prepare_pair(pair_id: str, settings) -> None:
                 language=found.language,
                 graded=found.graded,
             )
-            resolved = resolve_catalogue_card(session, capture)
+            printing_record: dict = {}
+            resolved = resolve_catalogue_card(
+                session, capture,
+                choose_printing=photo_printing_chooser(Path(pair.front_image_path), settings, printing_record),
+            )
+            if printing_record:
+                pair.extracted = {**pair.extracted, "printing_match": printing_record}
             if isinstance(resolved, str):
                 pair.status = ListingPhotoPairStatus.NEEDS_REVIEW
                 pair.issue = resolved
@@ -345,7 +354,8 @@ def _prepare_pair(pair_id: str, settings) -> None:
                 pair.status = ListingPhotoPairStatus.NEEDS_REVIEW
                 pair.proposed_catalog_item_id = item.id
                 pair.issue = (
-                    f"No active/draft CRM listing matches {item.name} #{card.number}."
+                    f"New stock: identified as {_identity_label(item, card)}. "
+                    "No CRM listing yet — open Identify to confirm finish and quantity."
                     if not candidates else
                     f"{len(candidates)} CRM listings could match {item.name} #{card.number}; choose one manually."
                 )
@@ -388,6 +398,34 @@ def _prepare_pair(pair_id: str, settings) -> None:
         finally:
             pair.updated_at = datetime.now(UTC)
             session.commit()
+
+
+def _identity_label(item: CatalogItem, card: TcgCard) -> str:
+    parts = [f"{item.name} #{card.number or ''}".strip()]
+    details = [value for value in (card.language, card.rarity, card.variant) if value]
+    return parts[0] + (f" ({', '.join(details)})" if details else "")
+
+
+def _detect_accessory(pair: ListingPhotoPair, settings) -> None:
+    """Name a sealed card-supply product (sleeves, deck boxes) instead of just
+    reporting "no card". Stock still goes through Accessories capture."""
+    from .card_recognition import extract_accessory_details
+    try:
+        found = extract_accessory_details(Path(pair.front_image_path), api_key=settings.anthropic_api_key)
+    except Exception:
+        return
+    if len(found) != 1:
+        return
+    accessory = found[0]
+    pair.extracted = {**accessory.model_dump(), "item_kind": "accessory"}
+    label = " ".join(
+        value for value in (accessory.brand, accessory.product_type, accessory.color) if value
+    ) or "card accessory"
+    size = f" ({accessory.pack_size})" if accessory.pack_size else ""
+    pair.issue = (
+        f"Accessory detected: {label}{size}. This is not a single card — "
+        "add it from Accessories > Capture to record stock."
+    )
 
 
 def _run_batch(batch_id: str, settings, user: str) -> None:
@@ -819,6 +857,9 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
     name = extracted.get("character") or "Unidentified card"
     number = extracted.get("card_number") or "?"
     item_heading = f"Item {pair.position}: {escape(name)}" if extracted.get("item_kind")=="collectible" else f"Card {pair.position}: {escape(name)} #{escape(number)}"
+    if extracted.get("item_kind") == "accessory":
+        accessory = " ".join(v for v in (extracted.get("brand"), extracted.get("product_type")) if v) or "Card accessory"
+        item_heading = f"Item {pair.position}: {escape(accessory)}"
     listing = session.get(ShopListing, pair.matched_shop_listing_id) if pair.matched_shop_listing_id else None
     placement = _placement_for_pair(session, pair.id)
     location = session.get(StorageLocation, placement.storage_location_id) if placement else None
@@ -852,6 +893,13 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
             ("Language", extracted.get("language")),
             ("Finish observed", extracted.get("foil_observation")),
         ]
+        printing = extracted.get("printing_match") or {}
+        if printing.get("outcome"):
+            facts.append((
+                "Printing check",
+                ("Matched by artwork: " if printing.get("outcome") == "matched" else f"Artwork check {printing['outcome']}: ")
+                + (printing.get("reason") or ""),
+            ))
         if extracted.get('item_kind') == 'collectible':
             facts = [("Character / figure", extracted.get('character')), ("Brand", extracted.get('brand')),
                      ("Series", extracted.get('series')), ("Variant / colourway", extracted.get('variant')),
