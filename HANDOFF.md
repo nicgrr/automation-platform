@@ -17,6 +17,15 @@ cert, drops current title/finish, graded prompt rules (label wording, subgrades,
 in title, one-line packaging without specifics). Tests: publish+graded 88, neighbours 62 passed.
 Real preview (not saved) for Klawf/Sanji/Keldeo looked correct. Needs ezbay.service restart.
 Owner then uses Listing Studio > Suggest title & description on each slab, reviews, saves.
+Follow-up (owner screenshot: Klawf Studio still "Recommended: Klawf PSA 9"): the three slabs were made
+by product_photo_review's graded path, which creates CatalogItem/stock/listing but NO TcgCard, so Studio
+can't generate copy and outgoing_ebay_title would have no card. Live CGC/Vault slabs came via
+graded_cards.prepare_graded_draft (creates TcgCard). Plan: scripts/add_slab_card_identity_20261109.py adds
+TcgCard for Klawf (sv1 SVI 217/198 IR 2023), Sanji (op-23496 PRB-01 PRB01-001 Leader Alt Art 2024), Keldeo
+(new set pokemon-jp-cp5-dream-shine "Mythical & Legendary Dream Shine Collection" CP5, 013/036 Holo,
+1st Edition, Japanese, 2016; existing jp-cp5 is named 冷酷の反逆者 — not linked), Keldeo item name ->
+"Keldeo". Additive, DB backup first, real dry run. Code: titles write Beckett as BGS. Root cause in the
+photo path (no game in facts) left for a follow-up — recommend graded slabs go through Graded cards.
 
 ## Scanner completion — Codex, 2026-11-09
 
