@@ -1,5 +1,17 @@
 # Handoff
 
+## Graded copy self-service + PSA/Beckett grading — Claude Code, 2026-11-09
+
+Branch codex/scan-studio-app (services run it), base a79a228, tracked clean.
+Owner wants to generate graded titles/descriptions without asking. Listing Studio "AI suggestion"
+fails for slabs: requires a TcgCard (photo-product slabs have none) and gets no grader/grade/cert
+(Klawf got "...NM"). Plan: for GRADED_CARD listings feed slab facts (company, grade, cert) plus the
+reviewed photo facts (character, set, number, rarity, language) and a graded-specific prompt
+(grader+grade first, label wording/subgrades read from the label photo, cert, no NM/raw wording).
+Also graded_condition() supports only CGC/Vault, so preflight blocks PSA (Klawf, Keldeo) and Beckett
+(Sanji). Add PSA/Beckett only from eBay's getItemConditionPolicies for EBAY_AU 183454 (read-only).
+No eBay writes; drafts' content is not changed by this code work.
+
 ## Scanner completion — Codex, 2026-11-09
 
 All six software areas implemented and tested. Migration20261109_01 is live
