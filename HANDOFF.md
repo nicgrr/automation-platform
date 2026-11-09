@@ -1,5 +1,23 @@
 # Handoff
 
+## Photo upload auto-identify — Claude Code, 2026-11-10
+
+Branch feat/photo-auto-identify (worktree .claude/worktrees/photo-auto-identify), base b271337 on
+codex/scan-studio-app. Owner: "go through my recent 2 photo uploads ... I want it to automatically detect
+the product". Batches ef02de56 (8 JP One Piece SRs) and df22298f (3 pairs) on 2026-11-09: 10 of 11 held for
+review although vision read every card correctly. Causes in capture_promotion.resolve_catalogue_card:
+(1) detected language is ignored, so EN+JP rows compete (Tashigi resolved to 3 ENGLISH rows); (2) the
+SQL prefix took "D" from "モンキー・D・ルフィ (Monkey D. Luffy)" so Luffy never matched; (3) romanisation
+"Zorojuro" vs catalogue "Zoro-Juurou" fails exact alias; (4) base vs Parallel 1/2 of the same code are
+indistinguishable by text, but opjp rows all have official art. Also a sleeve pack (not a card) got only
+"No card detected" — no accessory fallback.
+Plan: language preference; bracketed-translation prefixes; same-code+same-language fuzzy name (>=0.8);
+when the remaining candidates are printings of one code/language (<=6, all with art), compare the photo
+with cached reference art via Claude and accept only a confident single pick (recorded in extracted);
+accessory fallback names the product; new-stock pairs say so and the Identify page preselects the
+proposal. No schema, no nav/ui.py, no stock/price/eBay writes; owner still confirms quantity/finish.
+Status: IN PROGRESS.
+
 ## Postage label upload: preview, margin, links — Claude Code, 2026-11-09
 
 Branch feat/postage-upload (worktree .claude/worktrees/postage-upload), base 5661d12 on
