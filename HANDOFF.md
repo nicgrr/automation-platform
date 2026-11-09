@@ -1,5 +1,17 @@
 # Handoff
 
+## Deployed and photo corrections verified — Codex, 2026-11-09
+
+Migration20261109_01 applied; before/after inventory/listing counts, quantities
+and prices identical. Every inventory quantity equals its event-ledger total.
+CRM/storefront restarted. Five catalogue-photo holdovers revised via photo-only
+Trading call and live readback proved title/description/price/currency/quantity
+unchanged; rollback originals at backups/photo-only-corrections-20261109.json.
+No listings created. Next finish production HTTP verification, recheck corrected
+pixels, and close two edge cases: price override must not bypass new receipt
+approval and photo acknowledgement expires after refreshed evidence. Add tests
+for those safeguards, clean up own browser fixture/server, and final report.
+
 ## Completion deployment checkpoint — Codex, 2026-11-09
 
 Code00239c4 ready: 263 focused tests passed (108.55s), including all touched
