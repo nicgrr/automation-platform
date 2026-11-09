@@ -16,7 +16,7 @@ when the remaining candidates are printings of one code/language (<=6, all with 
 with cached reference art via Claude and accept only a confident single pick (recorded in extracted);
 accessory fallback names the product; new-stock pairs say so and the Identify page preselects the
 proposal. No schema, no nav/ui.py, no stock/price/eBay writes; owner still confirms quantity/finish.
-Status: DONE (code, NOT deployed). New automation_control/printing_match.py (reference art cached in
+Status: DEPLOYED 2026-11-10 as ezbay-v2026.11.10.01 (ezbay.service restarted, /health ok). New automation_control/printing_match.py (reference art cached in
 scan_cache_dir/catalogue_refs, downloaded once, verified as an image) + card_recognition.choose_printing.
 Real dry run on the owner's photos (no writes): 8 of 9 numbered cards now resolve; artwork picks for
 Law/Sakazuki/Zoro/Luffy/Hancock x2/Kaido checked by eye against official art — all base prints, correct.
