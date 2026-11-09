@@ -458,13 +458,15 @@ def resolve_catalogue_card(
     session: Session,
     card: CapturedCard,
     choose_printing=None,
+    candidates_out: list | None = None,
 ) -> tuple[CatalogItem, TcgCard] | str:
     """Return one exact name+number match, or a human-readable issue.
 
     ``choose_printing`` is an optional tie-break for the last step only: when
     the remaining rows are printings of the same card in one language (base
     print and parallels), it may return one of them (by comparing artwork) or
-    None to leave the choice to the owner.
+    None to leave the choice to the owner. ``candidates_out`` receives the
+    remaining rows when several are left, so the owner can pick from them.
     """
     if not card.character:
         return "Card name is required before it can be listed."
@@ -605,6 +607,8 @@ def resolve_catalogue_card(
             chosen = choose_printing(candidates)
             if chosen is not None and chosen in candidates:
                 return chosen
+        if candidates_out is not None:
+            candidates_out.extend(candidates)
         return f"{len(candidates)} catalogue matches for {card.character} #{card.card_number}; choose the set first."
     return candidates[0]
 

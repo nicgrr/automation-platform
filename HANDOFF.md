@@ -1,5 +1,16 @@
 # Handoff
 
+## Photo upload: suggested-matches dropdown — Claude Code, 2026-11-10
+
+Branch feat/photo-suggestions (worktree .claude/worktrees/photo-suggestions), base 6138f9e. Owner: "Can
+there be a drop down of the suggested cards and sets they are from?" resolve_catalogue_card gains
+candidates_out (rows left when ambiguous); _prepare_pair stores them in extracted["candidates"]. Held card
+on the upload page and the Identify page show "Suggested matches (N)" — name #number · Base print /
+Parallel N / Reprint · short set (Japanese 【code】, Promo cards) · language, artwork proposal first and
+marked "suggested". "Use this card" is a GET to /photo-review/{pair}?catalog=… (confirm step only; nothing
+saved). Pairs held before this change need Retry to get their list. No schema/nav/ui.py, no writes.
+Status: committed, NOT deployed (needs ezbay.service restart).
+
 ## Photo upload auto-identify — Claude Code, 2026-11-10
 
 Branch feat/photo-auto-identify (worktree .claude/worktrees/photo-auto-identify), base b271337 on

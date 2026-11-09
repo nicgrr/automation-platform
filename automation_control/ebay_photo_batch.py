@@ -31,6 +31,7 @@ from .auth import require_dashboard_user
 from .card_recognition import RecognitionError, extract_card_details, suggest_ebay_listing_copy
 from .capture_promotion import resolve_catalogue_card
 from .printing_match import photo_printing_chooser
+from .photo_identification_review import suggestion_picker
 from .database import SessionLocal, get_session
 from .ebay_publish import (
     EBAY_MIN_FIXED_PRICE,
@@ -323,12 +324,16 @@ def _prepare_pair(pair_id: str, settings) -> None:
                 graded=found.graded,
             )
             printing_record: dict = {}
+            alternatives: list = []
             resolved = resolve_catalogue_card(
                 session, capture,
                 choose_printing=photo_printing_chooser(Path(pair.front_image_path), settings, printing_record),
+                candidates_out=alternatives,
             )
             if printing_record:
                 pair.extracted = {**pair.extracted, "printing_match": printing_record}
+            if alternatives:
+                pair.extracted = {**pair.extracted, "candidates": [item.id for item, _card in alternatives]}
             if isinstance(resolved, str):
                 pair.status = ListingPhotoPairStatus.NEEDS_REVIEW
                 pair.issue = resolved
@@ -908,10 +913,11 @@ def _pair_card(pair: ListingPhotoPair, session: Session) -> str:
             f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>"
             for label, value in facts if value
         )
-        if rows:
+        picker = suggestion_picker(session, pair)
+        if rows or picker:
             review_facts = (
                 "<div class='review-facts'><strong>What the photos tell us</strong>"
-                f"<dl>{rows}</dl></div>"
+                f"<dl>{rows}</dl>{picker}</div>"
             )
     action = ""
     if pair.status == ListingPhotoPairStatus.READY:

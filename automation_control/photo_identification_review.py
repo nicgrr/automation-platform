@@ -40,6 +40,85 @@ def _input(label, name, value='', required=False):
     return f"<label>{escape(label)}<input name='{name}' value='{escape(str(value or ''), quote=True)}' {'required' if required else ''} maxlength='256'></label>"
 
 
+def _set_label(card_set, card) -> str:
+    """Short set label: Japanese product names become their 【code】."""
+    import re
+    name = (card_set.name if card_set else '') or ''
+    bracket = re.search(r'【([^】]+)】', name)
+    if bracket:
+        name = bracket.group(1)
+    elif 'プロモーションカード' in name:
+        name = 'Promo cards'
+    name = re.sub(r'\s*\((?:Japanese|English)\)\s*$', '', name).strip()
+    code = card.set_code or ''
+    if code and _plain(code) not in _plain(name):
+        name = f"{name} ({code})" if name else code
+    return name or 'Unknown set'
+
+
+def _printing_label(card) -> str:
+    if card.variant or card.parallel:
+        return card.variant or card.parallel
+    number, code = card.number or '', card.set_code or ''
+    if '-' in number and code and _plain(number.split('-', 1)[0]) != _plain(code):
+        return 'Reprint'
+    return 'Base print'
+
+
+def _plain(value) -> str:
+    return ''.join(ch for ch in str(value or '').casefold() if ch.isalnum())
+
+
+def suggested_matches(session, pair) -> list[tuple[str, str]]:
+    """Catalogue rows the photo could be, as (id, label), suggested one first.
+
+    Comes from the intake run: the rows left after an ambiguous match, the
+    printings the artwork check compared, and its automatic proposal.
+    """
+    facts = pair.extracted or {}
+    printing = facts.get('printing_match') or {}
+    preferred = pair.proposed_catalog_item_id or printing.get('chosen')
+    ids = [preferred] if preferred else []
+    for value in [*(facts.get('candidates') or []), *(printing.get('candidates') or [])]:
+        if value and value not in ids:
+            ids.append(value)
+    options = []
+    for catalog_id in ids[:12]:
+        item = session.get(CatalogItem, catalog_id); card = session.get(TcgCard, catalog_id)
+        if not item or not card:
+            continue
+        card_set = session.get(CardSet, card.set_id) if card.set_id else None
+        parts = [f"{item.name} #{card.number or '?'}", _printing_label(card),
+                 _set_label(card_set, card), card.language or '']
+        label = ' · '.join(part for part in parts if part)
+        if catalog_id == preferred:
+            label += ' — suggested'
+        options.append((catalog_id, label))
+    return options
+
+
+def suggestion_picker(session, pair, selected: str = '') -> str:
+    """A dropdown of suggested printings that opens the confirm step (GET only)."""
+    if pair.status != ListingPhotoPairStatus.NEEDS_REVIEW:
+        return ''
+    facts = pair.extracted or {}
+    from .product_photo_review import is_graded
+    if facts.get('item_kind') in ('collectible', 'accessory') or is_graded(facts):
+        return ''
+    options = suggested_matches(session, pair)
+    if not options:
+        return ''
+    choices = ''.join(
+        f"<option value='{escape(cid, quote=True)}'{' selected' if cid == selected else ''}>{escape(label)}</option>"
+        for cid, label in options
+    )
+    return (f"<form method='get' action='/photo-review/{escape(pair.id, quote=True)}' class='suggested-matches'>"
+            f"<label>Suggested matches ({len(options)})<select name='catalog'>{choices}</select></label>"
+            "<button class='btn small'>Use this card</button></form>"
+            "<style>.suggested-matches{display:grid;gap:8px;margin-top:10px}.suggested-matches label{display:grid;gap:4px}"
+            ".suggested-matches select{width:100%;min-width:0;padding:8px}</style>")
+
+
 @router.get('/photo-review/{pair_id}', response_class=HTMLResponse)
 def review(pair_id: str, q: str = '', number: str = '', language: str = '', catalog: str = '',
            user: str = Depends(require_dashboard_user), session: Session = Depends(get_session)):
@@ -102,6 +181,7 @@ def review(pair_id: str, q: str = '', number: str = '', language: str = '', cata
             "<div class='identify-layout'><aside class='panel'><h2>Your photo</h2>"
             f"<img class='own-front' src='/ebay-listing-bulk-photos/{pair.batch_id}/image/{pair.id}/front' alt='Your uploaded card'>"
             "<p>Compare the set, printed number and language. Reference artwork may not show the correct foil treatment.</p></aside><section>"
+            + suggestion_picker(session, pair, catalog) +
             f"<form method='get'>{_input('Search name or number','q',query)}{_input('Printed number filter','number',number)}"
             f"{_input('Language filter','language',language)}<button class='btn'>Search catalogue</button></form>"+
             selection+f"<div class='catalogue-grid'>{''.join(cards) or '<p>No matches. Refine the search or add a local entry below.</p>'}</div>"+

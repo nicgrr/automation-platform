@@ -183,3 +183,17 @@ def test_sealed_accessory_is_named_instead_of_no_card(monkeypatch):
 
     assert pair.extracted["item_kind"] == "accessory"
     assert pair.issue.startswith("Accessory detected: Pokémon Center card sleeves Eevee (65).")
+
+
+def test_ambiguous_rows_are_handed_back_for_the_owner_to_choose(session):
+    _sets(session)
+    _row(session, "law", "Trafalgar Law", "OP10", "OP10-119", "Japanese", set_id="jp", rarity="SEC")
+    _row(session, "law-p1", "Trafalgar Law", "OP10", "OP10-119", "Japanese", set_id="jp", rarity="SEC", variant="Parallel 1")
+    session.flush()
+    left = []
+
+    result = resolve_catalogue_card(session, _card("トラファルガー・ロー (Trafalgar Law)", "OP10-119", rarity="SEC"),
+                                    choose_printing=lambda _c: None, candidates_out=left)
+
+    assert isinstance(result, str)
+    assert sorted(item.id for item, _ in left) == ["law", "law-p1"]

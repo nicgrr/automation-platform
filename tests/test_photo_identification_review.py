@@ -76,3 +76,31 @@ def test_automatic_identification_is_preselected_but_not_saved(context):
     assert s.scalar(select(func.count()).select_from(ShopListing))==0
     # A search the owner types still wins over the proposal.
     assert 'Confirm Pikachu' not in c.get('/photo-review/pair?q=Raichu').text
+
+def _second_printing(s):
+    s.add(CardSet(id='promo',name='Promo cards',code='PR',game='pokemon'))
+    s.add(CatalogItem(id='card-alt',name='Pikachu',item_type=CatalogItemType.TCG_CARD))
+    s.flush();s.add(TcgCard(catalog_item_id='card-alt',game='pokemon',set_id='promo',set_code='PR',number='025',language='English',rarity='IR',variant='Parallel 1'))
+
+def test_held_card_offers_a_dropdown_of_suggested_printings_with_sets(context):
+    s,c=context
+    _second_printing(s)
+    pair=s.get(ListingPhotoPair,'pair')
+    pair.extracted={'character':'Pikachu','candidates':['card','card-alt']};s.commit()
+    body=c.get('/photo-review/pair').text
+    assert 'Suggested matches (2)' in body
+    assert 'Pikachu #025 · Base print · Test set · English' in body
+    assert 'Pikachu #025 · Parallel 1 · Promo cards · English' in body
+    # Picking one only opens the confirm step; nothing is saved by the dropdown.
+    picked=c.get('/photo-review/pair?catalog=card-alt').text
+    assert "value='card-alt' selected" in picked and 'Confirm Pikachu' in picked
+    assert s.scalar(select(func.count()).select_from(ShopListing))==0
+
+def test_artwork_proposal_is_listed_first_and_marked_suggested(context):
+    s,c=context
+    _second_printing(s)
+    pair=s.get(ListingPhotoPair,'pair');pair.proposed_catalog_item_id='card-alt'
+    pair.extracted={'character':'Pikachu','printing_match':{'candidates':['card','card-alt'],'chosen':'card-alt','outcome':'matched'}};s.commit()
+    from automation_control.photo_identification_review import suggested_matches
+    options=suggested_matches(s,pair)
+    assert [cid for cid,_ in options]==['card-alt','card'] and options[0][1].endswith('— suggested')
