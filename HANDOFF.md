@@ -1,5 +1,21 @@
 # Handoff
 
+## Completion deployment checkpoint — Codex, 2026-11-09
+
+Code00239c4 ready: 263 focused tests passed (108.55s), including all touched
+sales channels and storefront; browser12page/width combinations passed with
+continuous capture/remove/cleanup and signed-CSRF upload. Latest mobile pricing
+layout verified. Backups preserved; no tracked dirty files. Next apply source
+ledger migration20261109_01, compare stock/listing totals, restart CRM/storefront
+so both see schema and verify production routes. Live eBay readback351 complete,
+0photo URL changes, 0failures. Pixel audit340linked:335visually similar,5different.
+Visual inspection confirms those5 eBay photos are catalogue art, CRM has actual
+scans (Bulbasaur267796015379,Totodile267796015373,Oshawott267796015384,
+Trevenant267796015371,Mega Zeraora267796015382). User previously requested
+actual photos reflected on eBay and now completion; prepare backed-up photo-only
+revision using existing revise_photos, preserve prices/quantity/copy. No new
+listings or test publication; verify fresh readback and storefront afterward.
+
 ## Complete scanner workflow — Codex, 2026-11-09
 
 User requested finishing all six remaining areas. Branch codex/scan-studio-app
