@@ -42,10 +42,14 @@ def balances(session,inventory_id):
 def panel(session,inventory_id):
     if not inventory_id:return ''
     from html import escape
+    from .models import ListingPhotoPair,ListingPhotoBatch
     lots=balances(session,inventory_id)
     body="<details><summary>Stock by source</summary><p>Allocation rule: newest photographed copies first when stock reduces. Other additions/returns stay unassigned. This is an accounting allocation; it cannot identify which identical physical copy was picked.</p><ul>"
     for lot in lots:
         label={'baseline':'Existing stock at tracking start','unassigned':'Other additions / returns','photo_batch':'Photographed intake'}.get(lot['source'],lot['source'])
-        if lot['pair_id']:label+=f" · {lot['pair_id'][:8]}"
+        if lot['pair_id']:
+            pair=session.get(ListingPhotoPair,lot['pair_id'])
+            batch=session.get(ListingPhotoBatch,pair.batch_id) if pair else None
+            label+=f" · {batch.started_at.strftime('%Y-%m-%d %H:%M')} UTC, photo {pair.position}" if batch else f" · {lot['pair_id'][:8]}"
         body+=f"<li>{escape(label)}: {lot['remaining']} remaining of {lot['added']}</li>"
     return body+'</ul></details>'

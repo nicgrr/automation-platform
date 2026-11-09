@@ -12,7 +12,9 @@ from automation_control.models import ShopListing,ShopListingStatus,CatalogItem,
 from automation_control.channel_verification import linked_id
 from automation_control.listing_quality import listing_photo_sources
 
-async def run(output):
+async def run(output, listing_ids=None):
+    from automation_control.classification import load_pipeline_config
+    own_photo_host=urlsplit(load_pipeline_config().images.base_url).hostname
     sem=asyncio.Semaphore(6);cache={}
     async with httpx.AsyncClient(timeout=20,follow_redirects=False) as client:
         async def image(value):
@@ -20,8 +22,8 @@ async def run(output):
             try:
                 if value.startswith('https://'):
                     host=urlsplit(value).hostname or ''
-                    # Only fetch eBay's public photo CDN. Other hosts need manual review.
-                    if not (host=='i.ebayimg.com' or host.endswith('.ebayimg.com')):return None
+                    # Only fetch eBay's public CDN or the configured photo bucket.
+                    if not (host==own_photo_host or host=='i.ebayimg.com' or host.endswith('.ebayimg.com')):return None
                     async with sem:
                         async with client.stream('GET',value) as response:
                             response.raise_for_status();data=b''
@@ -39,6 +41,7 @@ async def run(output):
         with SessionLocal() as session:
             targets=[]
             for listing in session.scalars(select(ShopListing).where(ShopListing.status.in_([ShopListingStatus.ACTIVE,ShopListingStatus.DRAFT]))):
+                if listing_ids and listing.id not in listing_ids:continue
                 item_id=linked_id(session,listing)
                 remote=session.scalar(select(EbayListing).where(EbayListing.ebay_listing_id==item_id)) if item_id else None
                 if not remote or remote.listing_status!='Active':continue
@@ -69,5 +72,6 @@ async def run(output):
 
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--output',required=True)
-    asyncio.run(run(parser.parse_args().output))
+    parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--listing-id',action='append')
+    args=parser.parse_args()
+    asyncio.run(run(args.output,args.listing_id))

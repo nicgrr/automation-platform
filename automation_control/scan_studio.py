@@ -239,6 +239,7 @@ async def check_ebay(listing_id: str, user: str = Depends(require_dashboard_user
     from .models import ShopListing
     from .channel_verification import refresh_one
     from .config import get_settings
+    import httpx
     from .adapters.ebay import EbayApiError
     from .ebay_oauth import OAuthError
     from urllib.parse import urlencode
@@ -247,7 +248,7 @@ async def check_ebay(listing_id: str, user: str = Depends(require_dashboard_user
     try:
         await refresh_one(session,listing,get_settings())
         query={'notice':'Fresh eBay readback saved. Compare details and photos below.'}
-    except (ValueError,EbayApiError,OAuthError):
+    except (ValueError,EbayApiError,OAuthError,httpx.HTTPError):
         session.rollback()
         query={'error':'Could not verify eBay. Check the account connection and linked item; no listing was changed.'}
     return RedirectResponse(f'/shop-listings/{listing_id}/ebay-preview?'+urlencode(query),303)

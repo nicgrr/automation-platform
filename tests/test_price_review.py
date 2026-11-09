@@ -20,3 +20,11 @@ def test_invalid_price_and_stale_form_preserve_price(db,price):
     with pytest.raises(ValueError):approve(db,listing,price,'single','owner',fingerprint(db,listing))
     assert listing.price==0
     with pytest.raises(ValueError):approve(db,listing,'8.99','single','owner','stale')
+
+def test_publish_override_cannot_bypass_review(db):
+    from automation_control.ebay_publish import publication_preflight
+    from tests.test_ebay_publish import _configured_settings
+    listing=apply(db);db.commit()
+    approve(db,listing,'8.99','single','owner',fingerprint(db,listing));db.commit()
+    check=publication_preflight(db,listing,_configured_settings(),price_override=Decimal('9.99'))
+    assert any('approve the overridden price' in error for error in check.errors)

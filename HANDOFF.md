@@ -1,5 +1,22 @@
 # Handoff
 
+## Scanner completion — Codex, 2026-11-09
+
+All six software areas implemented and tested. Migration20261109_01 is live
+and balances inventory without changing stock/prices. 263 regression tests
+passed; 73 final publication/approval/photo guards and22 final small guard tests
+passed. Six screens at phone390/desktop1440 and continuous camera2captures,
+remove, cleanup, signed-CSRF upload transition passed. Physical iPhone hardware
+not directly tested. End-to-end fixture used fake eBay only; no test listings.
+Readback351active and340linked image audits done. Five catalogue-photo holdovers
+corrected photo-only; exact-byte equality now verified for all5 against saved
+scans. eBay titles/descriptions/prices/quantities unchanged. Production routes
+200 and storefront projection uses refreshed photos. Fixtures/server and test
+cookies cleaned up. docs/SCAN_STUDIO_WORKFLOW.md documents policies and tests.
+Final step: commit latest guards, restart CRM, smoke-check production again.
+No user confirmation required for remaining software; user can begin new uploads
+and review prices/physical identities normally. Existing backups preserved.
+
 ## Deployed and photo corrections verified — Codex, 2026-11-09
 
 Migration20261109_01 applied; before/after inventory/listing counts, quantities

@@ -281,6 +281,9 @@ def publication_preflight(
 
     from .listing_price_approval import blockers as price_review_blockers
     errors.extend(price_review_blockers(session,listing))
+    from .listing_price_approval import required as price_review_required
+    if price_override is not None and price_override != listing.price and price_review_required(session,listing):
+        errors.append("Save and approve the overridden price before publishing this Scan Studio listing.")
     catalog_item = session.get(CatalogItem, listing.catalog_item_id)
     tcg_card = session.get(TcgCard, listing.catalog_item_id)
     category_id = None

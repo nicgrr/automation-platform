@@ -67,3 +67,16 @@ def test_fresh_readback_updates_only_cache(data,monkeypatch):
     assert l.price==Decimal('8.99') and l.quantity==2
     assert row.raw_snapshot['image_urls']==details.picture_urls
     assert 'Compare saved photos' in comparison_html(s,l)
+
+def test_photo_review_fingerprint_changes_with_refresh_or_saved_content(data,tmp_path):
+    from automation_control.channel_verification import photo_evidence
+    s,l=data
+    photo=tmp_path/'card.jpg';photo.write_bytes(b'first actual photo')
+    l.ebay_photo_paths=[str(photo)];s.commit()
+    remote=EbayListing(ebay_listing_id='123',title='Card',currency='AUD',current_price_minor=899,quantity=2,listing_status='Active',raw_snapshot={'image_urls':['https://i.ebayimg.com/card.jpg'],'details_imported_at':'first'})
+    a=photo_evidence(s,l,remote)[2]
+    photo.write_bytes(b'replacement actual photo')
+    b=photo_evidence(s,l,remote)[2]
+    remote.raw_snapshot={**remote.raw_snapshot,'details_imported_at':'second'}
+    c=photo_evidence(s,l,remote)[2]
+    assert len({a,b,c})==3

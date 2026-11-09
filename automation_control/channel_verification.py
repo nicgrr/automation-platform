@@ -48,7 +48,7 @@ def photo_evidence(session,listing,row):
         try: digest=hashlib.sha256(Path(source.value).read_bytes()).hexdigest() if not source.is_remote else source.value
         except OSError:digest='missing:'+source.value
         signatures.append(digest)
-    payload={'local':signatures,'remote':remote,'item_id':row.ebay_listing_id}
+    payload={'local':signatures,'remote':remote,'item_id':row.ebay_listing_id,'readback':(row.raw_snapshot or {}).get('details_imported_at')}
     signature=hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
     return sources,remote,signature
 
